@@ -21,8 +21,19 @@ import (
 )
 
 // TestEnv wires a real gateway Server (with the full transform pipeline) to a
-// VirtualServer. It manages config, routing rules, and provides SendAs() for
-// full round-trip testing.
+// VirtualServer (mock provider). It manages config, routing rules, and provides
+// SendAs() for full round-trip testing.
+//
+// **Routing Architecture**:
+//
+//	Client Request → Gateway (/tingly/{scenario}/v1/...)
+//	              → Protocol Transform
+//	              → Provider Request (virtual-server-url/v1/...)
+//	              → VirtualServer (mock provider response)
+//
+// The gateway handles /tingly/{scenario}/v1/... routes, transforms the request
+// to provider format, and forwards to the virtual server which speaks provider
+// native APIs (/v1/chat/completions, /v1/messages, etc.).
 type TestEnv struct {
 	appConfig *config.AppConfig
 	ginEngine interface {
@@ -34,7 +45,23 @@ type TestEnv struct {
 
 	mu          sync.Mutex
 	routeModels map[string]string // key → requestModel
+	setupRoutes map[string]bool   // track which routes have been set up
 	configDir   string            // config directory for cleanup (CLI mode only)
+}
+
+// TestEnvOption is a functional option for configuring TestEnv.
+type TestEnvOption func(*testEnvConfig)
+
+type testEnvConfig struct {
+	recordDir string
+}
+
+// NewTestEnvOptionWithRecordDir creates an option to set the record directory.
+// If empty, recording is disabled.
+func NewTestEnvOptionWithRecordDir(dir string) TestEnvOption {
+	return func(cfg *testEnvConfig) {
+		cfg.recordDir = dir
+	}
 }
 
 // NewTestEnv creates a TestEnv with a fresh gateway config and a new VirtualServer.
@@ -65,6 +92,7 @@ func NewTestEnv(t *testing.T) *TestEnv {
 		virtual:       server_validate.NewVirtualServer(t),
 		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
 		routeModels:   make(map[string]string),
+		setupRoutes:   make(map[string]bool),
 	}
 }
 
@@ -87,7 +115,13 @@ func (env *TestEnv) Close() {
 
 // NewTestEnvForCLI creates a TestEnv for CLI use (without testing.T).
 // Resources must be cleaned up via explicit Close() call.
-func NewTestEnvForCLI() (*TestEnv, error) {
+func NewTestEnvForCLI(opts ...TestEnvOption) (*TestEnv, error) {
+	// Apply options
+	cfg := &testEnvConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	configDir, err := os.MkdirTemp("", "pv-cli-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp config dir: %w", err)
@@ -99,7 +133,13 @@ func NewTestEnvForCLI() (*TestEnv, error) {
 		return nil, fmt.Errorf("create app config: %w", err)
 	}
 
-	gatewayServer := server.NewServer(appConfig.GetGlobalConfig(), server.WithAdaptor(false))
+	// Build server options
+	serverOpts := []server.ServerOption{server.WithAdaptor(false)}
+	if cfg.recordDir != "" {
+		serverOpts = append(serverOpts, server.WithRecordDir(cfg.recordDir))
+	}
+
+	gatewayServer := server.NewServer(appConfig.GetGlobalConfig(), serverOpts...)
 	router := gatewayServer.GetRouter()
 	ts := httptest.NewServer(router)
 
@@ -117,6 +157,7 @@ func NewTestEnvForCLI() (*TestEnv, error) {
 		virtual:       virtual,
 		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
 		routeModels:   make(map[string]string),
+		setupRoutes:   make(map[string]bool),
 		configDir:     configDir, // Store for cleanup
 	}, nil
 }
@@ -131,12 +172,35 @@ func (env *TestEnv) VirtualCallCount() int { return env.virtual.CallCount() }
 // to the virtual server acting as a target protocol provider.
 //
 // The virtual server is pre-registered with the scenario's mock responses.
+// If the route has already been set up, this is a no-op (idempotent).
+//
+// **Routing Flow**:
+// 1. Client sends request to gateway: POST /tingly/{scenario}/v1/chat/completions
+// 2. Gateway transforms request to provider format based on source protocol
+// 3. Gateway forwards to provider: POST {virtualURL}/v1/chat/completions
+// 4. VirtualServer (provider mock) returns pre-configured scenario response
+//
+// The provider's APIBase includes the /v1 suffix for OpenAI-style providers
+// to match actual provider API structure.
 func (env *TestEnv) SetupRoute(source, target protocol.APIType, s Scenario) {
+	key := routeKey(source, target, s.Name)
+
+	env.mu.Lock()
+	if env.setupRoutes[key] {
+		env.mu.Unlock()
+		return
+	}
+	env.setupRoutes[key] = true
+	env.mu.Unlock()
+
 	env.virtual.RegisterScenario(s.toVirtualServerScenario())
 
 	virtualURL := env.virtual.URL()
-	providerName := fmt.Sprintf("virtual-%s-%s", target, s.Name)
-	providerModel := fmt.Sprintf("virtual-model-%s", s.Name)
+
+	// Make provider UUID unique per source+target+scenario to avoid conflicts
+	providerUUID := fmt.Sprintf("virtual-%s-%s-%s", source, target, s.Name)
+	providerName := providerUUID // Use UUID as name for uniqueness
+	providerModel := fmt.Sprintf("virtual-model-%s-%s", target, s.Name)
 	requestModel := fmt.Sprintf("pv-%s-to-%s-%s", source, target, s.Name)
 
 	apiStyle := targetToAPIStyle(target)
@@ -181,7 +245,6 @@ func (env *TestEnv) SetupRoute(source, target protocol.APIType, s Scenario) {
 	}
 	_ = env.appConfig.GetGlobalConfig().AddRequestConfig(rule)
 
-	key := routeKey(source, target, s.Name)
 	env.mu.Lock()
 	env.routeModels[key] = requestModel
 	env.mu.Unlock()
@@ -193,12 +256,12 @@ func (env *TestEnv) SetupRoute(source, target protocol.APIType, s Scenario) {
 // Streaming requests use the real httptest.Server (env.gatewayServer) because
 // httptest.ResponseRecorder does not support Gin's streaming/SSE machinery.
 // Non-streaming requests use the recorder for simplicity.
-func (env *TestEnv) SendAs(t *testing.T, source protocol.APIType, s Scenario, streaming bool) *RoundTripResult {
+func (env *TestEnv) SendAs(t *testing.T, source, target protocol.APIType, s Scenario, streaming bool) *RoundTripResult {
 	t.Helper()
 
-	requestModel := env.findRouteModel(source, s.Name)
+	requestModel := env.findRouteModel(source, target, s.Name)
 	if requestModel == "" {
-		t.Fatalf("no route configured for source=%s scenario=%s — call SetupRoute first", source, s.Name)
+		t.Fatalf("no route configured for source=%s target=%s scenario=%s — call SetupRoute first", source, target, s.Name)
 	}
 
 	path, body := buildRequest(source, requestModel, streaming)
@@ -256,10 +319,10 @@ func (env *TestEnv) SendAs(t *testing.T, source protocol.APIType, s Scenario, st
 // Streaming requests use the real httptest.Server (env.gatewayServer) because
 // httptest.ResponseRecorder does not support Gin's streaming/SSE machinery.
 // Non-streaming requests use the recorder for simplicity.
-func (env *TestEnv) SendAsCLI(source protocol.APIType, s Scenario, streaming bool) (*RoundTripResult, error) {
-	requestModel := env.findRouteModel(source, s.Name)
+func (env *TestEnv) SendAsCLI(source, target protocol.APIType, s Scenario, streaming bool) (*RoundTripResult, error) {
+	requestModel := env.findRouteModel(source, target, s.Name)
 	if requestModel == "" {
-		return nil, fmt.Errorf("no route configured for source=%s scenario=%s — call SetupRoute first", source, s.Name)
+		return nil, fmt.Errorf("no route configured for source=%s target=%s scenario=%s — call SetupRoute first", source, target, s.Name)
 	}
 
 	path, body := buildRequest(source, requestModel, streaming)
@@ -316,18 +379,11 @@ func routeKey(source, target protocol.APIType, scenario string) string {
 	return fmt.Sprintf("%s|%s|%s", source, target, scenario)
 }
 
-func (env *TestEnv) findRouteModel(source protocol.APIType, scenarioName string) string {
+func (env *TestEnv) findRouteModel(source, target protocol.APIType, scenarioName string) string {
 	env.mu.Lock()
 	defer env.mu.Unlock()
-	prefix := fmt.Sprintf("%s|", source)
-	suffix := fmt.Sprintf("|%s", scenarioName)
-	for k, v := range env.routeModels {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix &&
-			len(k) >= len(suffix) && k[len(k)-len(suffix):] == suffix {
-			return v
-		}
-	}
-	return ""
+	key := routeKey(source, target, scenarioName)
+	return env.routeModels[key]
 }
 
 func buildRequest(source protocol.APIType, model string, streaming bool) (path string, body []byte) {
@@ -385,6 +441,8 @@ func targetToAPIStyle(target protocol.APIType) protocol.APIStyle {
 		return protocol.APIStyleAnthropic
 	case protocol.TypeGoogle:
 		return protocol.APIStyleGoogle
+	case protocol.TypeOpenAIResponses:
+		return protocol.APIStyleOpenAI // Responses API uses OpenAI style
 	default:
 		return protocol.APIStyleOpenAI
 	}
@@ -403,6 +461,8 @@ func sourceToStyle(source protocol.APIType) protocol.APIStyle {
 	switch source {
 	case protocol.TypeAnthropicV1, protocol.TypeAnthropicBeta:
 		return protocol.APIStyleAnthropic
+	case protocol.TypeOpenAIResponses:
+		return protocol.APIStyleOpenAI // Responses API uses OpenAI style
 	default:
 		return protocol.APIStyleOpenAI
 	}
@@ -416,6 +476,7 @@ func parseFromJSON(raw []byte, style protocol.APIStyle) sse.ParsedResult {
 	var r *sse.ParsedResult
 	switch style {
 	case protocol.APIStyleOpenAI:
+		// Check if this is a Responses API response by looking for "output" field
 		if _, hasOutput := m["output"]; hasOutput {
 			r = sse.ParseOpenAIResponsesResult(m)
 		} else {
@@ -436,7 +497,12 @@ func assembleFromEvents(events []string, style protocol.APIStyle) sse.ParsedResu
 	var r *sse.ParsedResult
 	switch style {
 	case protocol.APIStyleOpenAI:
-		r = sse.AssembleOpenAIStream(events)
+		// Try to assemble as Responses API first
+		r = sse.AssembleOpenAIResponsesStream(events)
+		// If that failed, try Chat Completions
+		if r == nil || len(r.Content) == 0 {
+			r = sse.AssembleOpenAIStream(events)
+		}
 	case protocol.APIStyleAnthropic:
 		r = sse.AssembleAnthropicStream(events)
 	case protocol.APIStyleGoogle:
