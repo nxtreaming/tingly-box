@@ -1,4 +1,4 @@
-package bot
+package feature
 
 import (
 	"fmt"
@@ -29,6 +29,24 @@ func BuildActionKeyboard() *imbot.KeyboardBuilder {
 			imbot.CallbackButton("📁 CD", imbot.FormatCallbackData("action", "bind")),
 			imbot.CallbackButton("🔧 Project", imbot.FormatCallbackData("action", "project")),
 		)
+}
+
+// BuildActionCard builds the generic action card for post-completion menu
+func BuildActionCard() imbot.Card {
+	return imbot.NewCard("remote_control_action_menu").
+		AddActions(
+			imbot.CallbackCardAction("clear", "🗑 Clear",
+				imbot.FormatCallbackData("action", "clear")).
+				WithStyle(imbot.CardActionStyleDanger).
+				Build(),
+			imbot.CallbackCardAction("bind", "📁 CD",
+				imbot.FormatCallbackData("action", "bind")).
+				Build(),
+			imbot.CallbackCardAction("project", "🔧 Project",
+				imbot.FormatCallbackData("action", "project")).
+				Build(),
+		).
+		Build()
 }
 
 // BuildCancelKeyboard builds a simple cancel keyboard

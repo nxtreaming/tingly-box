@@ -13,6 +13,7 @@ import (
 	"github.com/tingly-dev/tingly-box/agentboot"
 	"github.com/tingly-dev/tingly-box/agentboot/ask"
 	"github.com/tingly-dev/tingly-box/imbot"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/session"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/smart_guide"
 	"github.com/tingly-dev/tingly-box/internal/tbclient"
@@ -25,7 +26,7 @@ type BotHandler struct {
 	chatStore        ChatStoreInterface // Use interface for flexibility
 	sessionMgr       *session.Manager
 	agentBoot        *agentboot.AgentBoot
-	directoryBrowser *DirectoryBrowser
+	directoryBrowser *feature.DirectoryBrowser
 	manager          *imbot.Manager
 	imPrompter       *IMPrompter
 	fileStore        *FileStore
@@ -63,6 +64,9 @@ type BotHandler struct {
 
 	// commandAdapter bridges BotHandler to the command system
 	commandAdapter BotHandlerAdapter
+
+	// feishuCardRenderer converts imbot.Card to Feishu card JSON
+	feishuCardRenderer *feature.FeishuCardRenderer
 }
 
 // PendingBind represents a pending bind confirmation request
@@ -102,7 +106,7 @@ func NewBotHandler(
 	chatStore ChatStoreInterface,
 	sessionMgr *session.Manager,
 	agentBoot *agentboot.AgentBoot,
-	directoryBrowser *DirectoryBrowser,
+	directoryBrowser *feature.DirectoryBrowser,
 	manager *imbot.Manager,
 	tbClient tbclient.TBClient,
 ) *BotHandler {
@@ -182,6 +186,7 @@ func NewBotHandler(
 		pendingBinds:        make(map[string]*PendingBind),
 		actionMenuMessageID: make(map[string]string),
 		verbose:             true, // Default to verbose mode
+		feishuCardRenderer:  feature.NewFeishuCardRenderer(),
 	}
 
 	// Initialize AgentRouter with dependencies
@@ -579,7 +584,7 @@ func (h *BotHandler) sendTextWithReply(hCtx HandlerContext, text string, replyTo
 // The platform's BaseBot.ChunkText() doesn't support "last chunk only" metadata yet.
 // TODO: Add platform support for metadata that only applies to the last chunk.
 func (h *BotHandler) sendTextWithActionKeyboard(hCtx HandlerContext, text string, replyTo string) {
-	kb := BuildActionKeyboard()
+	kb := feature.BuildActionKeyboard()
 	tgKeyboard := imbot.BuildTelegramActionKeyboard(kb.Build())
 
 	// Extract context_token from incoming message metadata (required by Weixin)
@@ -589,6 +594,8 @@ func (h *BotHandler) sendTextWithActionKeyboard(hCtx HandlerContext, text string
 			contextToken = ct
 		}
 	}
+
+	actionCard := feature.BuildActionCard()
 
 	// Use public ChunkText API with smart break-point detection
 	chunks := hCtx.Bot.ChunkText(text)
@@ -601,10 +608,20 @@ func (h *BotHandler) sendTextWithActionKeyboard(hCtx HandlerContext, text string
 		}
 		// Only attach keyboard to the last chunk
 		if i == len(chunks)-1 {
-			opts.Metadata = map[string]interface{}{
+			metadata := map[string]interface{}{
 				"replyMarkup":        tgKeyboard,
+				"card":               actionCard,
 				"_trackActionMenuID": true,
 			}
+
+			// For Feishu/Lark, add card_json
+			if hCtx.Platform == imbot.PlatformFeishu || hCtx.Platform == imbot.PlatformLark {
+				if cardJSON, err := h.feishuCardRenderer.Render(actionCard); err == nil {
+					metadata["card_json"] = cardJSON
+				}
+			}
+
+			opts.Metadata = metadata
 		}
 		// Forward context_token for Weixin
 		if contextToken != "" {
@@ -782,7 +799,7 @@ func (h *BotHandler) handleBindInteractive(hCtx HandlerContext) {
 	logrus.Infof("Bind flow started for chat %s", hCtx.ChatID)
 
 	// Send directory browser
-	_, err = SendDirectoryBrowser(h.ctx, hCtx.Bot, h.directoryBrowser, hCtx.ChatID, "")
+	_, err = feature.SendDirectoryBrowser(h.ctx, hCtx.Bot, h.directoryBrowser, hCtx.ChatID, "")
 	if err != nil {
 		logrus.WithError(err).Error("Failed to send directory browser")
 		h.SendText(hCtx, fmt.Sprintf("Failed to send directory browser: %v", err))
