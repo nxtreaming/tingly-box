@@ -27,3 +27,15 @@ type OpenCodeConfigPreviewResponse struct {
 	ScriptUnix string `json:"scriptUnix"`
 	Message    string `json:"message,omitempty"`
 }
+
+// RestoreConfigResponse is the response for the restore endpoints. It mirrors
+// the agent.RestoreAgentResult so callers can drive UI from the same data
+// the CLI prints.
+type RestoreConfigResponse struct {
+	Success           bool     `json:"success"`
+	AgentType         string   `json:"agentType"`
+	RestoredFiles     []string `json:"restoredFiles"`
+	PreRestoreBackups []string `json:"preRestoreBackups"`
+	Failures          []string `json:"failures,omitempty"`
+	Message           string   `json:"message"`
+}

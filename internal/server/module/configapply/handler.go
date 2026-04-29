@@ -402,6 +402,65 @@ func (h *Handler) ApplyOpenCodeConfigFromState(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// RestoreClaudeConfig rolls back Claude Code config files to their most
+// recent backup. Mirrors the CLI 'agent restore claude-code' flow.
+func (h *Handler) RestoreClaudeConfig(c *gin.Context) {
+	h.restoreAgent(c, agent.AgentTypeClaudeCode)
+}
+
+// RestoreOpenCodeConfig rolls back OpenCode config files to their most
+// recent backup. Mirrors the CLI 'agent restore opencode' flow.
+func (h *Handler) RestoreOpenCodeConfig(c *gin.Context) {
+	h.restoreAgent(c, agent.AgentTypeOpenCode)
+}
+
+// restoreAgent runs the shared restore flow for the given agent type and
+// writes the appropriate JSON response.
+func (h *Handler) restoreAgent(c *gin.Context, agentType agent.AgentType) {
+	if h.config == nil {
+		c.JSON(http.StatusInternalServerError, RestoreConfigResponse{
+			Success: false,
+			Message: "Global config not available",
+		})
+		return
+	}
+
+	host := h.host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	apply := agent.NewAgentApply(h.config, host)
+
+	result, err := apply.RestoreAgent(&agent.RestoreAgentRequest{
+		AgentType: agentType,
+		Force:     true,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, RestoreConfigResponse{
+			Success:   false,
+			AgentType: string(agentType),
+			Message:   "Restore failed: " + err.Error(),
+		})
+		return
+	}
+
+	resp := RestoreConfigResponse{
+		Success:           result.Success,
+		AgentType:         string(result.AgentType),
+		RestoredFiles:     result.RestoredFiles,
+		PreRestoreBackups: result.PreRestoreBackups,
+		Failures:          result.Failures,
+		Message:           result.Message,
+	}
+	if !result.Success {
+		// Still return 200 so the structured payload reaches the client; the
+		// "success" field and Failures already convey the error state.
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // GetOpenCodeConfigPreview generates OpenCode configuration preview from system state
 // This endpoint returns the config JSON for display purposes without applying it
 func (h *Handler) GetOpenCodeConfigPreview(c *gin.Context) {

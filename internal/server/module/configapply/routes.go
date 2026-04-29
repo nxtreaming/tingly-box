@@ -36,4 +36,17 @@ func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 		swagger.WithTags("config"),
 		swagger.WithResponseModel(OpenCodeConfigPreviewResponse{}),
 	)
+
+	// Config restore endpoints - roll back to the most recent on-disk backup.
+	router.POST("/config/restore/claude", handler.RestoreClaudeConfig,
+		swagger.WithDescription("Restore Claude Code configuration from the most recent backup"),
+		swagger.WithTags("config"),
+		swagger.WithResponseModel(RestoreConfigResponse{}),
+	)
+
+	router.POST("/config/restore/opencode", handler.RestoreOpenCodeConfig,
+		swagger.WithDescription("Restore OpenCode configuration from the most recent backup"),
+		swagger.WithTags("config"),
+		swagger.WithResponseModel(RestoreConfigResponse{}),
+	)
 }

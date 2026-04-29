@@ -28,8 +28,96 @@ config files and to TinglyBox routing rules.`,
 	cmd.AddCommand(agentApplyCommand(appManager))
 	cmd.AddCommand(agentListCommand(appManager))
 	cmd.AddCommand(agentShowCommand(appManager))
+	cmd.AddCommand(agentRestoreCommand(appManager))
 
 	return cmd
+}
+
+// agentRestoreCommand creates the restore subcommand. It rolls back an agent's
+// on-disk config files to their most recent backup, taking a "pre-restore"
+// safety snapshot of each live file first.
+func agentRestoreCommand(appManager *AppManager) *cobra.Command {
+	var req agent.RestoreAgentRequest
+
+	cmd := &cobra.Command{
+		Use:   "restore [agent-type]",
+		Short: "Restore agent configuration from the most recent backup",
+		Long: `Restore an agent's config files from the most recent backup created by
+'agent apply'. A pre-restore safety snapshot is taken of each live file
+before the restore overwrites it, so you can roll the restore back if
+something looks wrong.
+
+Routing rules are not part of the backup. After a restore, run 'agent apply'
+to bring routing rules back in sync if needed.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reader := bufio.NewReader(os.Stdin)
+
+			if len(args) == 0 {
+				agentType, err := promptForAgentTypeChoice(reader)
+				if err != nil {
+					return err
+				}
+				req.AgentType = agentType
+			} else {
+				req.AgentType = agent.AgentType(args[0])
+				if !req.AgentType.IsValid() {
+					fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", args[0])
+					return cmd.Usage()
+				}
+			}
+
+			info, ok := agent.GetAgentInfo(req.AgentType)
+			if !ok {
+				return fmt.Errorf("no info registered for agent type: %s", req.AgentType)
+			}
+
+			if !req.Force {
+				fmt.Println("\nFiles that will be restored from their most recent backup:")
+				for _, f := range info.ConfigFiles {
+					fmt.Printf("  - %s\n", f)
+				}
+				fmt.Print("\nProceed? [y/N]: ")
+				input, err := reader.ReadString('\n')
+				if err != nil {
+					return err
+				}
+				input = strings.TrimSpace(strings.ToLower(input))
+				if input != "y" && input != "yes" {
+					return fmt.Errorf("cancelled by user")
+				}
+			}
+
+			return executeAgentRestore(appManager, &req)
+		},
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			types := []string{string(agent.AgentTypeClaudeCode), string(agent.AgentTypeOpenCode)}
+			return types, cobra.ShellCompDirectiveNoFileComp
+		},
+	}
+
+	cmd.Flags().BoolVar(&req.Force, "force", false, "Skip confirmation prompt")
+
+	return cmd
+}
+
+// executeAgentRestore performs the agent restore and prints the result.
+func executeAgentRestore(appManager *AppManager, req *agent.RestoreAgentRequest) error {
+	globalConfig := appManager.GetGlobalConfig()
+	host := "127.0.0.1"
+
+	agentApply := agent.NewAgentApply(globalConfig, host)
+	result, err := agentApply.RestoreAgent(req)
+	if err != nil {
+		return fmt.Errorf("failed to restore configuration: %w", err)
+	}
+
+	fmt.Println("\n" + result.Message)
+
+	if !result.Success {
+		return fmt.Errorf("restore did not complete successfully")
+	}
+	return nil
 }
 
 // agentApplyCommand creates the apply subcommand

@@ -6,10 +6,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/tingly-dev/tingly-box/internal"
 )
+
+// defaultBackupRetention is the default number of backup files to keep per
+// original config file. Older backups beyond this count are removed by
+// rotateBackups after each new backup is created.
+const defaultBackupRetention = 3
+
+// backupTimestampLayout matches the timestamp format embedded in backup
+// filenames produced by generateBackupPath.
+const backupTimestampLayout = "20060102-150405"
 
 // ApplyResult contains the result of applying a configuration
 type ApplyResult struct {
@@ -52,9 +63,17 @@ func generateBackupPath(originalPath string) string {
 	return filepath.Join(backupDir, fmt.Sprintf("%s.bak-%s%s", base, timestamp, ext))
 }
 
-// backupFile creates a backup of the existing file
+// backupFile creates a backup of the existing file and rotates older backups
+// matching the same originalPath, keeping at most defaultBackupRetention copies.
+// Rotation failures are logged but do not fail the backup itself, since the
+// fresh backup has already been written successfully.
 func backupFile(path string) (string, error) {
-	// Read the original file
+	return backupFileWithRetention(path, defaultBackupRetention)
+}
+
+// backupFileWithRetention is like backupFile but allows overriding the
+// retention count. retention <= 0 falls back to defaultBackupRetention.
+func backupFileWithRetention(path string, retention int) (string, error) {
 	src, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to open original file: %w", err)
@@ -63,7 +82,6 @@ func backupFile(path string) (string, error) {
 
 	backupPath := generateBackupPath(path)
 
-	// Ensure backup directory exists
 	if err := os.MkdirAll(filepath.Dir(backupPath), 0755); err != nil {
 		return "", fmt.Errorf("failed to create backup directory: %w", err)
 	}
@@ -78,7 +96,167 @@ func backupFile(path string) (string, error) {
 		return "", fmt.Errorf("failed to copy to backup: %w", err)
 	}
 
+	if retention <= 0 {
+		retention = defaultBackupRetention
+	}
+	// Best-effort rotation: a failure here must not invalidate the
+	// freshly-written backup that the caller now depends on.
+	_ = rotateBackups(path, retention)
+
 	return backupPath, nil
+}
+
+// BackupInfo describes a single backup file for an original config path.
+type BackupInfo struct {
+	Path      string    `json:"path"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// ListBackups returns all backup files for originalPath in <dir>/backup/,
+// ordered newest-first. Files that do not match the
+// "<base>.bak-<timestamp><ext>" pattern are ignored.
+func ListBackups(originalPath string) ([]BackupInfo, error) {
+	dir := filepath.Dir(originalPath)
+	base := filepath.Base(originalPath)
+	ext := filepath.Ext(originalPath)
+	backupDir := filepath.Join(dir, "backup")
+	prefix := base + ".bak-"
+
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read backup directory: %w", err)
+	}
+
+	var backups []BackupInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ext) {
+			continue
+		}
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ext)
+		ts, err := time.ParseInLocation(backupTimestampLayout, stamp, time.Local)
+		if err != nil {
+			continue
+		}
+		backups = append(backups, BackupInfo{
+			Path:      filepath.Join(backupDir, name),
+			Timestamp: ts,
+		})
+	}
+
+	sort.Slice(backups, func(i, j int) bool {
+		return backups[i].Timestamp.After(backups[j].Timestamp)
+	})
+	return backups, nil
+}
+
+// rotateBackups deletes older backups for originalPath, keeping at most the
+// `keep` most recent ones. keep <= 0 falls back to defaultBackupRetention.
+func rotateBackups(originalPath string, keep int) error {
+	if keep <= 0 {
+		keep = defaultBackupRetention
+	}
+	backups, err := ListBackups(originalPath)
+	if err != nil {
+		return err
+	}
+	if len(backups) <= keep {
+		return nil
+	}
+	var firstErr error
+	for _, b := range backups[keep:] {
+		if err := os.Remove(b.Path); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// RestoreResult describes the outcome of restoring a single config file.
+type RestoreResult struct {
+	Success          bool   `json:"success"`
+	OriginalPath     string `json:"originalPath"`
+	RestoredFrom     string `json:"restoredFrom,omitempty"`
+	PreRestoreBackup string `json:"preRestoreBackup,omitempty"`
+	Message          string `json:"message"`
+}
+
+// RestoreLatestBackup restores originalPath from its most recent backup.
+// If originalPath currently exists, a "pre-restore" backup of the live file
+// is created first (and is itself subject to rotation) so the restore is
+// reversible.
+func RestoreLatestBackup(originalPath string) (*RestoreResult, error) {
+	result := &RestoreResult{OriginalPath: originalPath}
+
+	backups, err := ListBackups(originalPath)
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to list backups: %v", err)
+		return result, err
+	}
+	if len(backups) == 0 {
+		result.Message = fmt.Sprintf("No backup found for %s", originalPath)
+		return result, fmt.Errorf("no backup found for %s", originalPath)
+	}
+
+	latest := backups[0]
+	result.RestoredFrom = latest.Path
+
+	if _, err := os.Stat(originalPath); err == nil {
+		preBackup, err := backupFile(originalPath)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create pre-restore backup: %v", err)
+			return result, err
+		}
+		result.PreRestoreBackup = preBackup
+	} else if !os.IsNotExist(err) {
+		result.Message = fmt.Sprintf("Failed to stat original file: %v", err)
+		return result, err
+	}
+
+	if err := ensureDir(originalPath); err != nil {
+		result.Message = fmt.Sprintf("Failed to ensure target directory: %v", err)
+		return result, err
+	}
+
+	if err := copyFile(latest.Path, originalPath); err != nil {
+		result.Message = fmt.Sprintf("Failed to restore from backup: %v", err)
+		return result, err
+	}
+
+	result.Success = true
+	if result.PreRestoreBackup != "" {
+		result.Message = fmt.Sprintf("Restored %s from %s (pre-restore backup: %s)",
+			originalPath, latest.Path, result.PreRestoreBackup)
+	} else {
+		result.Message = fmt.Sprintf("Restored %s from %s", originalPath, latest.Path)
+	}
+	return result, nil
+}
+
+// copyFile copies src to dst, truncating dst if it exists.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ensureDir ensures the directory for the given path exists
@@ -91,8 +269,9 @@ func ensureDir(path string) error {
 type ApplyOption func(*applyOptions)
 
 type applyOptions struct {
-	backup bool
-	extras map[string]any
+	backup    bool
+	retention int
+	extras    map[string]any
 }
 
 // WithBackup enables or disables backup when applying settings.
@@ -100,6 +279,14 @@ type applyOptions struct {
 func WithBackup(enable bool) ApplyOption {
 	return func(opts *applyOptions) {
 		opts.backup = enable
+	}
+}
+
+// WithBackupRetention overrides the default number of backups to keep
+// after rotation. n <= 0 means use the package default.
+func WithBackupRetention(n int) ApplyOption {
+	return func(opts *applyOptions) {
+		opts.retention = n
 	}
 }
 
@@ -155,7 +342,7 @@ func ApplyClaudeSettingsToPath(targetPath string, env map[string]string, opts ..
 
 		// Only create backup if enabled
 		if applyOpts.backup {
-			backupPath, err := backupFile(targetPath)
+			backupPath, err := backupFileWithRetention(targetPath, applyOpts.retention)
 			if err != nil {
 				result.Message = fmt.Sprintf("Failed to create backup: %v", err)
 				return result, nil
