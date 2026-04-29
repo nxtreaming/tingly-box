@@ -26,6 +26,11 @@ type ImBotSettingsRecord struct {
 	SmartGuideProvider string `gorm:"column:smartguide_provider"` // Provider UUID
 	SmartGuideModel    string `gorm:"column:smartguide_model"`    // Model identifier
 
+	// RequirePairing enforces TOFU pairing-code binding for direct messages.
+	// Nil for legacy rows is treated as false (opt-in migration); the bot
+	// create wizard sets this to true for newly created bots.
+	RequirePairing *bool `gorm:"column:require_pairing"`
+
 	CreatedAt time.Time `gorm:"column:created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"`
 }

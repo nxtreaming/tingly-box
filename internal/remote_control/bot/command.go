@@ -20,6 +20,7 @@ func RegisterBuiltinCommands(registry *imbot.CommandRegistry, botHandler BotHand
 	commands := []imbot.Command{
 		newHelpCommand(botHandler),
 		newBindCommand(botHandler),
+		newPairBindCommand(botHandler),
 		newClearCommand(botHandler),
 		newInterruptCommand(botHandler),
 		newProjectCommand(botHandler),
@@ -110,6 +111,11 @@ type BotHandlerAdapter interface {
 
 	// ListProjectPaths lists all project paths for a user
 	ListProjectPaths(ownerID, platform string) ([]string, error)
+
+	// VerifyAndPair verifies a one-time pairing code and, on success, records
+	// the chat as paired with the bot. Implementations should also emit the
+	// matching audit events (success / failure).
+	VerifyAndPair(botUUID, chatID, senderID, platform, code string) error
 }
 
 // SessionInfo holds session information.
@@ -139,7 +145,6 @@ func newHelpCommand(adapter BotHandlerAdapter) imbot.Command {
 
 func newBindCommand(adapter BotHandlerAdapter) imbot.Command {
 	return imbot.NewCommand("cmd-bind", "cd", "Bind and cd into a project directory").
-		WithAliases("bind").
 		WithHandler(func(ctx *imbot.HandlerContext, args []string) error {
 			if len(args) < 1 {
 				return adapter.SendText(ctx.ChatID, "Usage: /cd <project_path>")
@@ -584,5 +589,38 @@ func newMockCommand(adapter BotHandlerAdapter) imbot.Command {
 		}).
 		Hidden().
 		WithCategory("advanced").
+		MustBuild()
+}
+
+// newPairBindCommand registers the `/bind <code>` command used by an end-user
+// to pair their direct chat with the bot. It is the only command an unpaired
+// chat is allowed to invoke when RequirePairing is on.
+func newPairBindCommand(adapter BotHandlerAdapter) imbot.Command {
+	return imbot.NewCommand("cmd-pair-bind", "bind",
+		"Pair this chat with the bot using the operator's pairing code").
+		WithHandler(func(ctx *imbot.HandlerContext, args []string) error {
+			if !ctx.IsDirectMessage {
+				return adapter.SendText(ctx.ChatID, "/bind only works in a direct message.")
+			}
+			if len(args) < 1 {
+				return adapter.SendText(ctx.ChatID, "Usage: /bind <code>")
+			}
+			code := strings.TrimSpace(args[0])
+			if code == "" {
+				return adapter.SendText(ctx.ChatID, "Usage: /bind <code>")
+			}
+			botUUID := ""
+			if ctx.Bot != nil {
+				botUUID = ctx.Bot.UUID()
+			}
+			if err := adapter.VerifyAndPair(botUUID, ctx.ChatID, ctx.SenderID,
+				string(ctx.Platform), code); err != nil {
+				return adapter.SendText(ctx.ChatID, "❌ "+err.Error())
+			}
+			return adapter.SendText(ctx.ChatID,
+				"✅ Paired. You can now send commands to this bot.")
+		}).
+		WithCategory("system").
+		WithPriority(95).
 		MustBuild()
 }

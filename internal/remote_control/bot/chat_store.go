@@ -36,8 +36,18 @@ type BotSetting struct {
 	SmartGuideProvider string `json:"smartguide_provider,omitempty"` // Provider UUID
 	SmartGuideModel    string `json:"smartguide_model,omitempty"`    // Model identifier
 
+	// RequirePairing enforces a TOFU pairing-code handshake before any DM is
+	// processed. Nil is treated as false so legacy bots keep working until the
+	// operator opts in. New bots created via the wizard set this to true.
+	RequirePairing *bool `json:"require_pairing,omitempty"`
+
 	CreatedAt string `json:"created_at,omitempty"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+// IsRequirePairing reports whether this bot requires per-chat pairing.
+func (b BotSetting) IsRequirePairing() bool {
+	return b.RequirePairing != nil && *b.RequirePairing
 }
 
 // Chat represents all state associated with a chat (direct or group)
@@ -48,6 +58,14 @@ type Chat struct {
 	OwnerID     string `json:"owner_id,omitempty"`
 
 	// Session removed - sessions are now managed by SessionManager with (ChatID, Agent, Project) binding
+
+	// Pairing (TOFU) — applies to direct messages only. Group chats continue
+	// to use the IsWhitelisted gate, but the operator who whitelisted the
+	// group must themselves be paired in DM with the same bot.
+	IsPaired       bool      `json:"is_paired,omitempty"`
+	PairedBotUUID  string    `json:"paired_bot_uuid,omitempty"`
+	PairedSenderID string    `json:"paired_sender_id,omitempty"`
+	PairedAt       time.Time `json:"paired_at,omitempty"`
 
 	// Group-specific
 	IsWhitelisted bool   `json:"is_whitelisted"`
@@ -128,6 +146,17 @@ type ChatStoreInterface interface {
 		AddedBy   string
 		CreatedAt string
 	}, error)
+
+	// SetPaired marks a chat as paired with a specific bot UUID and sender.
+	// The chat is created if it does not yet exist.
+	SetPaired(chatID, platform, botUUID, senderID string) error
+
+	// ClearPaired removes the pairing on a chat. Other state on the chat is
+	// preserved.
+	ClearPaired(chatID string) error
+
+	// IsChatPaired reports whether the chat is paired with the given bot UUID.
+	IsChatPaired(chatID, botUUID string) bool
 }
 
 // Ensure ChatStoreJSON implements the interface
@@ -456,4 +485,55 @@ func (s *ChatStoreJSON) ListWhitelistedGroups() ([]struct {
 	}
 
 	return results, nil
+}
+
+// ============== Pairing (TOFU) ==============
+
+// SetPaired marks the given chat as paired with botUUID/senderID.
+func (s *ChatStoreJSON) SetPaired(chatID, platform, botUUID, senderID string) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("chat store is not initialized")
+	}
+	if chatID == "" || botUUID == "" {
+		return fmt.Errorf("chat_id and bot_uuid are required")
+	}
+
+	chat, err := s.GetOrCreateChat(chatID, platform)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	chat.IsPaired = true
+	chat.PairedBotUUID = botUUID
+	chat.PairedSenderID = senderID
+	chat.PairedAt = now
+	if platform != "" {
+		chat.Platform = platform
+	}
+	return s.UpsertChat(chat)
+}
+
+// ClearPaired removes any pairing recorded on the chat.
+func (s *ChatStoreJSON) ClearPaired(chatID string) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("chat store is not initialized")
+	}
+	return s.UpdateChat(chatID, func(chat *Chat) {
+		chat.IsPaired = false
+		chat.PairedBotUUID = ""
+		chat.PairedSenderID = ""
+		chat.PairedAt = time.Time{}
+	})
+}
+
+// IsChatPaired reports whether the chat is paired with the given bot UUID.
+func (s *ChatStoreJSON) IsChatPaired(chatID, botUUID string) bool {
+	if s == nil || s.store == nil {
+		return false
+	}
+	chat := s.store.Get(chatID)
+	if chat == nil {
+		return false
+	}
+	return chat.IsPaired && chat.PairedBotUUID == botUUID
 }

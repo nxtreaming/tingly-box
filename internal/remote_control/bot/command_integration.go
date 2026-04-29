@@ -231,6 +231,11 @@ func (a *botHandlerAdapter) StartInteractiveBind(chatID string) error {
 	return nil
 }
 
+// VerifyAndPair runs pairing-code verification and persists the binding.
+func (a *botHandlerAdapter) VerifyAndPair(botUUID, chatID, senderID, platform, code string) error {
+	return a.handler.VerifyAndPair(botUUID, chatID, senderID, platform, code)
+}
+
 // InitCommandRegistry initializes the command registry with built-in commands.
 func (h *BotHandler) InitCommandRegistry() error {
 	registry := imbot.NewCommandRegistry()

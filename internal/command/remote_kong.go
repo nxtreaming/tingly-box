@@ -11,6 +11,7 @@ type RemoteCmdKong struct {
 	Start   RemoteStartCmdKong  `kong:"cmd,help='Start a remote session'"`
 	Config  RemoteConfigCmdKong `kong:"cmd,help='Configure remote settings'"`
 	Add     RemoteAddCmdKong    `kong:"cmd,help='Add a new bot configuration'"`
+	Pair    RemotePairCmdKong   `kong:"cmd,help='Manage TOFU pairing for an imbot'"`
 }
 
 // RemoteListCmdKong lists remote sessions
@@ -86,5 +87,64 @@ type RemoteAddCmdKong struct{}
 func (r *RemoteAddCmdKong) Run(appManager *AppManager) error {
 	cmd := RemoteCommand(appManager)
 	cmd.SetArgs([]string{"add"})
+	return cmd.Execute()
+}
+
+// RemotePairCmdKong manages TOFU pairing for imbots
+type RemotePairCmdKong struct {
+	Enable  RemotePairEnableCmdKong  `kong:"cmd,help='Turn on RequirePairing for a bot'"`
+	Disable RemotePairDisableCmdKong `kong:"cmd,help='Turn off RequirePairing for a bot'"`
+	Revoke  RemotePairRevokeCmdKong  `kong:"cmd,help='Forget the pairing for a specific chat'"`
+	Status  RemotePairStatusCmdKong  `kong:"cmd,help='Show pairing status for a bot'"`
+}
+
+func (r *RemotePairCmdKong) Run(appManager *AppManager) error {
+	cmd := RemoteCommand(appManager)
+	cmd.SetArgs([]string{"pair"})
+	return cmd.Execute()
+}
+
+// RemotePairEnableCmdKong turns on RequirePairing for a bot
+type RemotePairEnableCmdKong struct {
+	BotUUID string `kong:"arg,help='Bot UUID'"`
+}
+
+func (r *RemotePairEnableCmdKong) Run(appManager *AppManager) error {
+	cmd := RemoteCommand(appManager)
+	cmd.SetArgs([]string{"pair", "enable", r.BotUUID})
+	return cmd.Execute()
+}
+
+// RemotePairDisableCmdKong turns off RequirePairing for a bot
+type RemotePairDisableCmdKong struct {
+	BotUUID string `kong:"arg,help='Bot UUID'"`
+}
+
+func (r *RemotePairDisableCmdKong) Run(appManager *AppManager) error {
+	cmd := RemoteCommand(appManager)
+	cmd.SetArgs([]string{"pair", "disable", r.BotUUID})
+	return cmd.Execute()
+}
+
+// RemotePairRevokeCmdKong forgets the pairing for a specific chat
+type RemotePairRevokeCmdKong struct {
+	BotUUID string `kong:"arg,help='Bot UUID'"`
+	ChatID  string `kong:"arg,help='Chat ID to unpair'"`
+}
+
+func (r *RemotePairRevokeCmdKong) Run(appManager *AppManager) error {
+	cmd := RemoteCommand(appManager)
+	cmd.SetArgs([]string{"pair", "revoke", r.BotUUID, r.ChatID})
+	return cmd.Execute()
+}
+
+// RemotePairStatusCmdKong shows pairing status for a bot
+type RemotePairStatusCmdKong struct {
+	BotUUID string `kong:"arg,help='Bot UUID'"`
+}
+
+func (r *RemotePairStatusCmdKong) Run(appManager *AppManager) error {
+	cmd := RemoteCommand(appManager)
+	cmd.SetArgs([]string{"pair", "status", r.BotUUID})
 	return cmd.Execute()
 }

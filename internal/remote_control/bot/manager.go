@@ -3,11 +3,13 @@ package bot
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/imbot"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/audit"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 
 	"github.com/tingly-dev/tingly-box/agentboot"
@@ -17,7 +19,7 @@ import (
 )
 
 // runBotWithSettings starts a bot using JSON file storage for chat state
-func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string, sessionMgr *session.Manager, agentBoot *agentboot.AgentBoot, tbClient tbclient.TBClient) error {
+func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string, sessionMgr *session.Manager, agentBoot *agentboot.AgentBoot, tbClient tbclient.TBClient, pairing *PairingManager, auditLog *audit.Logger) error {
 	// Create a JSON-based chat store
 	chatStore, err := NewChatStoreJSON(dataPath)
 	if err != nil {
@@ -69,11 +71,29 @@ func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string
 	}
 
 	// Register unified message handler with platform parameter
-	handler := NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient)
+	handler := NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient, pairing, auditLog)
 	manager.OnMessage(handler.HandleMessage)
 
 	if err := manager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start bot manager: %w", err)
+	}
+
+	// Mint and surface a pairing code if pairing is required for this bot.
+	if setting.IsRequirePairing() && pairing != nil {
+		code, expiresAt := pairing.Mint(setting.UUID)
+		if code != "" {
+			logrus.WithFields(logrus.Fields{
+				"uuid":       setting.UUID,
+				"name":       setting.Name,
+				"platform":   setting.Platform,
+				"expires_at": expiresAt.Format(time.RFC3339),
+			}).Warnf("Pairing code: %s — DM /bind %s within %s",
+				code, code, time.Until(expiresAt).Round(time.Second))
+			fmt.Fprintf(os.Stderr,
+				"\n[tingly-box] Bot %q (%s) pairing code: %s  (expires %s)\nIn the bot DM, send: /bind %s\n\n",
+				setting.Name, setting.Platform, code,
+				expiresAt.Format(time.RFC3339), code)
+		}
 	}
 
 	// Setup menu button after bot is connected
@@ -152,17 +172,46 @@ type Manager struct {
 	agentBoot  *agentboot.AgentBoot
 	msgHandler agentboot.MessageHandler
 	tbClient   tbclient.TBClient // TB Client for SmartGuide model configuration
+	pairing    *PairingManager   // Pairing-code (TOFU) manager
+	audit      *audit.Logger     // Audit logger for security events
 }
 
 // NewManager creates a new bot manager with a settings store
 func NewManager(store SettingsStore, sessionMgr *session.Manager, agentBoot *agentboot.AgentBoot,
 ) *Manager {
+	auditLog := audit.NewLogger(audit.Config{Console: true})
 	return &Manager{
 		running:    make(map[string]*runningBot),
 		store:      store,
 		sessionMgr: sessionMgr,
 		agentBoot:  agentBoot,
+		audit:      auditLog,
+		pairing:    NewPairingManager(auditLog),
 	}
+}
+
+// PairingManager returns the manager's PairingManager instance. Used by CLI
+// helpers that mint, rotate, or revoke pairing codes.
+func (m *Manager) PairingManager() *PairingManager {
+	return m.pairing
+}
+
+// AuditLogger returns the manager's audit logger.
+func (m *Manager) AuditLogger() *audit.Logger {
+	return m.audit
+}
+
+// ChatStore opens (and the caller must Close) a chat store backed by the
+// manager's data path. Used by the CLI to read/clear pairings without
+// touching a running bot's store.
+func (m *Manager) ChatStore() (ChatStoreInterface, error) {
+	m.mu.RLock()
+	dataPath := m.dataPath
+	m.mu.RUnlock()
+	if dataPath == "" {
+		return nil, fmt.Errorf("data path not configured")
+	}
+	return NewChatStoreJSON(dataPath)
 }
 
 // SetTBClient sets the TBClient for SmartGuide configuration
@@ -228,6 +277,7 @@ func (m *Manager) Start(parentCtx context.Context, uuid string) error {
 		Enabled:            record.Enabled,
 		SmartGuideProvider: record.SmartGuideProvider,
 		SmartGuideModel:    record.SmartGuideModel,
+		RequirePairing:     record.RequirePairing,
 	}
 
 	platform = s.Platform
@@ -288,9 +338,11 @@ func (m *Manager) Start(parentCtx context.Context, uuid string) error {
 	m.running[uuid] = &runningBot{cancel: cancel, doneChan: doneChan}
 
 	// Start bot in goroutine (dataPath and tbClient already captured above)
+	pairing := m.pairing
+	auditLog := m.audit
 	go func() {
 		defer close(doneChan) // Signal that goroutine is done
-		if err := runBotWithSettings(ctx, s, dataPath, m.sessionMgr, m.agentBoot, tbClient); err != nil {
+		if err := runBotWithSettings(ctx, s, dataPath, m.sessionMgr, m.agentBoot, tbClient, pairing, auditLog); err != nil {
 			logrus.WithError(err).WithField("uuid", uuid).Warn("Bot stopped with error")
 		}
 

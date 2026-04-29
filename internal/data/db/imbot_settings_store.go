@@ -32,10 +32,12 @@ type Settings struct {
 	DefaultAgent  string            `json:"default_agent,omitempty"` // Default Agent UUID
 	Enabled       bool              `json:"enabled"`
 	// SmartGuide model configuration (required for @tb agent)
-	SmartGuideProvider string    `json:"smartguide_provider,omitempty"` // Provider UUID
-	SmartGuideModel    string    `json:"smartguide_model,omitempty"`    // Model identifier
-	CreatedAt          time.Time `json:"created_at,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at,omitempty"`
+	SmartGuideProvider string `json:"smartguide_provider,omitempty"` // Provider UUID
+	SmartGuideModel    string `json:"smartguide_model,omitempty"`    // Model identifier
+	// RequirePairing enforces TOFU pairing for DMs. Nil = legacy/opt-in.
+	RequirePairing *bool     `json:"require_pairing,omitempty"`
+	CreatedAt      time.Time `json:"created_at,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at,omitempty"`
 }
 
 // ImBotSettingsStore persists ImBot settings in SQLite using GORM.
@@ -183,6 +185,7 @@ func (s *ImBotSettingsStore) CreateSettings(settings Settings) (Settings, error)
 		Enabled:            settings.Enabled,
 		SmartGuideProvider: settings.SmartGuideProvider,
 		SmartGuideModel:    settings.SmartGuideModel,
+		RequirePairing:     settings.RequirePairing,
 		CreatedAt:          settings.CreatedAt,
 		UpdatedAt:          settings.UpdatedAt,
 	}
@@ -248,6 +251,9 @@ func (s *ImBotSettingsStore) UpdateSettings(uuid string, settings Settings) erro
 	}
 	if settings.SmartGuideModel != "" {
 		updates["smartguide_model"] = settings.SmartGuideModel
+	}
+	if settings.RequirePairing != nil {
+		updates["require_pairing"] = settings.RequirePairing
 	}
 
 	// Always update enabled and updated_at if explicitly set
@@ -326,6 +332,7 @@ func recordToSettings(record ImBotSettingsRecord) (Settings, error) {
 		Enabled:            record.Enabled,
 		SmartGuideProvider: record.SmartGuideProvider,
 		SmartGuideModel:    record.SmartGuideModel,
+		RequirePairing:     record.RequirePairing,
 		CreatedAt:          record.CreatedAt,
 		UpdatedAt:          record.UpdatedAt,
 		Auth:               make(map[string]string),

@@ -13,6 +13,7 @@ import (
 	"github.com/tingly-dev/tingly-box/agentboot"
 	"github.com/tingly-dev/tingly-box/agentboot/ask"
 	"github.com/tingly-dev/tingly-box/imbot"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/audit"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/session"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/smart_guide"
@@ -67,6 +68,12 @@ type BotHandler struct {
 
 	// feishuCardRenderer converts imbot.Card to Feishu card JSON
 	feishuCardRenderer *feature.FeishuCardRenderer
+
+	// pairing handles TOFU pairing-code verification for direct messages.
+	pairing *PairingManager
+
+	// audit emits security events (pairing attempts, rejections, …).
+	audit *audit.Logger
 }
 
 // PendingBind represents a pending bind confirmation request
@@ -109,6 +116,8 @@ func NewBotHandler(
 	directoryBrowser *feature.DirectoryBrowser,
 	manager *imbot.Manager,
 	tbClient tbclient.TBClient,
+	pairing *PairingManager,
+	auditLog *audit.Logger,
 ) *BotHandler {
 	// Create IM prompter for permission requests
 	imPrompter := NewIMPrompter(manager)
@@ -187,6 +196,8 @@ func NewBotHandler(
 		actionMenuMessageID: make(map[string]string),
 		verbose:             true, // Default to verbose mode
 		feishuCardRenderer:  feature.NewFeishuCardRenderer(),
+		pairing:             pairing,
+		audit:               auditLog,
 	}
 
 	// Initialize AgentRouter with dependencies
@@ -308,12 +319,41 @@ func (h *BotHandler) HandleMessage(msg imbot.Message, platform imbot.Platform, b
 		if h.botSetting.ChatIDLock != "" && chatID != h.botSetting.ChatIDLock {
 			return
 		}
+		// Pairing gate: when RequirePairing is enabled, only paired chats may
+		// reach the regular handlers. Unpaired chats are limited to /bind.
+		if h.botSetting.IsRequirePairing() && !h.chatStore.IsChatPaired(chatID, botUUID) {
+			text := strings.TrimSpace(msg.GetText())
+			if !isBindCommand(text) {
+				h.auditWarn("imbot.pair.unpaired_message", msg.Sender.ID,
+					"rejected unpaired direct message", map[string]interface{}{
+						"bot_uuid": botUUID,
+						"chat_id":  chatID,
+						"platform": string(platform),
+					})
+				h.SendText(hCtx, pairingHintMessage())
+				return
+			}
+			// fall through; the /bind handler verifies the code
+		}
 	case msg.IsGroupMessage():
 		logrus.Infof("Group chat ID: %s", chatID)
 		// Check whitelist first
 		if !h.chatStore.IsWhitelisted(chatID) {
 			logrus.Debugf("Group %s is not whitelisted, ignoring message", chatID)
 			h.SendText(hCtx, fmt.Sprintf("This group is not enabled. Please DM the bot with `%s %s` to enable.", cmdJoinPrimary, chatID))
+			return
+		}
+		// When pairing is required, the operator who whitelisted the group
+		// must themselves be paired in DM.
+		if h.botSetting.IsRequirePairing() && !h.isWhitelisterPaired(chatID, botUUID) {
+			h.auditWarn("imbot.pair.unpaired_message", msg.Sender.ID,
+				"rejected group whitelisted by unpaired operator",
+				map[string]interface{}{
+					"bot_uuid": botUUID,
+					"chat_id":  chatID,
+					"platform": string(platform),
+				})
+			h.SendText(hCtx, "🔒 This group's operator has not paired with the bot. Ask them to send /bind <code> in a DM first.")
 			return
 		}
 	default:

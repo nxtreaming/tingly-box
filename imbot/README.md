@@ -382,6 +382,73 @@ if fsBot, ok := imbot.AsFeishuBot(bot); ok {
 }
 ```
 
+## Security: Pairing (TOFU)
+
+Bot tokens are bearer credentials: anyone who learns them can DM the bot.
+By default the remote-control service trusts every chat that reaches the
+bot. To prevent a leaked token from granting command access, each bot can
+require a one-time pairing handshake (trust-on-first-use).
+
+When `RequirePairing` is enabled on a bot:
+
+1. On bot start the server prints a fresh pairing code to its log and
+   stderr. Operators see something like:
+
+   ```
+   [tingly-box] Bot "personal-tg" (telegram) pairing code: K7P2-QX9M
+   (expires 2026-04-28T11:51:00Z)
+   In the bot DM, send: /bind K7P2-QX9M
+   ```
+
+2. From the bot's direct message the operator sends `/bind K7P2-QX9M`. On
+   success the chat is recorded as the bot's owner and `✅ Paired` is
+   replied. The code is single-use; a server restart mints a new one.
+
+3. Any subsequent message from an *unpaired* DM is dropped with a one-line
+   hint instructing the user to ask the operator for a fresh code. Group
+   chats keep using the existing `/join <chatID>` whitelist, but the
+   operator who whitelisted the group must themselves be paired.
+
+Properties:
+
+- Codes are 8-character base32 with a dash for readability (`K7P2-QX9M`).
+- Codes live only in memory — restart invalidates outstanding codes.
+- Codes are time-limited (default 10 min) and single-use.
+- Comparison is constant-time (`subtle.ConstantTimeCompare`).
+- After 5 wrong attempts in a row the bot is locked out for 10 min.
+- Every attempt (success, mismatch, expired, locked) is recorded by the
+  audit logger as `imbot.pair.*` events.
+
+### Operator commands
+
+```bash
+# Turn pairing on / off (persisted; takes effect on next bot start)
+tingly-box remote pair enable  <bot-uuid>
+tingly-box remote pair disable <bot-uuid>
+
+# Show whether RequirePairing is on and where to find the active code
+tingly-box remote pair status  <bot-uuid>
+
+# Forget a paired chat (the chat must /bind again)
+tingly-box remote pair revoke  <bot-uuid> <chat-id>
+```
+
+To rotate the pairing code, restart the bot — the server will print a
+fresh code on stderr.
+
+### Migration
+
+For backwards compatibility, existing bots default to `RequirePairing =
+false` (the legacy behavior). New bots created via the wizard set
+`RequirePairing = true`. We recommend running
+
+```bash
+tingly-box remote pair enable <bot-uuid>
+```
+
+against every bot you operate, then restarting it to harden the
+deployment.
+
 ## Error Handling
 
 ```go

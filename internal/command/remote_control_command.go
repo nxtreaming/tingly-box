@@ -17,6 +17,7 @@ import (
 	"github.com/tingly-dev/tingly-box/agentboot/claude"
 	"github.com/tingly-dev/tingly-box/imbot"
 	"github.com/tingly-dev/tingly-box/internal/data/db"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/audit"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/session"
@@ -35,6 +36,7 @@ func RemoteCommand(appManager *AppManager) *cobra.Command {
 	cmd.AddCommand(remoteStartCommand(appManager))
 	cmd.AddCommand(remoteConfigCommand(appManager))
 	cmd.AddCommand(remoteAddCommand(appManager))
+	cmd.AddCommand(remotePairCommand(appManager))
 
 	return cmd
 }
@@ -558,6 +560,7 @@ func runStandaloneBot(ctx context.Context, appManager *AppManager, setting db.Se
 		Enabled:            setting.Enabled,
 		SmartGuideProvider: provider,
 		SmartGuideModel:    model,
+		RequirePairing:     setting.RequirePairing,
 	}
 
 	// Create session store (minimal for standalone bot)
@@ -657,12 +660,34 @@ func runBotWithSettingsInternal(ctx context.Context, appManager *AppManager, set
 		}
 	}
 
+	// Standalone bots get their own PairingManager + audit logger so that
+	// /bind works the same way as in server mode.
+	auditLog := audit.NewLogger(audit.Config{Console: true})
+	pairing := bot.NewPairingManager(auditLog)
+
 	// Register unified message handler
-	handler := bot.NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient)
+	handler := bot.NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient, pairing, auditLog)
 	manager.OnMessage(handler.HandleMessage)
 
 	if err := manager.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start bot manager: %w", err)
+	}
+
+	// If this bot opted into pairing, mint a code now and surface it.
+	if setting.IsRequirePairing() {
+		code, expiresAt := pairing.Mint(setting.UUID)
+		if code != "" {
+			logrus.WithFields(logrus.Fields{
+				"uuid":       setting.UUID,
+				"name":       setting.Name,
+				"platform":   setting.Platform,
+				"expires_at": expiresAt.Format(time.RFC3339),
+			}).Warnf("Pairing code: %s — DM /bind %s", code, code)
+			fmt.Fprintf(os.Stderr,
+				"\n[tingly-box] Bot %q (%s) pairing code: %s  (expires %s)\nIn the bot DM, send: /bind %s\n\n",
+				setting.Name, setting.Platform, code,
+				expiresAt.Format(time.RFC3339), code)
+		}
 	}
 
 	// Setup menu button after bot is connected
