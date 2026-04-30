@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/browser"
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/ai"
+	"github.com/tingly-dev/tingly-box/ai/oauth"
 	"github.com/tingly-dev/tingly-box/internal/client"
 	"github.com/tingly-dev/tingly-box/internal/constant"
 	"github.com/tingly-dev/tingly-box/internal/data"
@@ -39,7 +41,6 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/virtualserver"
 	"github.com/tingly-dev/tingly-box/pkg/auth"
 	"github.com/tingly-dev/tingly-box/pkg/network"
-	pkgoauth "github.com/tingly-dev/tingly-box/pkg/oauth"
 	pkgobs "github.com/tingly-dev/tingly-box/pkg/obs"
 	pkgotel "github.com/tingly-dev/tingly-box/pkg/otel"
 	"github.com/tingly-dev/tingly-box/pkg/otel/tracker"
@@ -68,7 +69,7 @@ type Server struct {
 	clientPool *client.ClientPool
 
 	// OAuth manager
-	oauthManager *pkgoauth.Manager
+	oauthManager *oauth.Manager
 
 	// OAuth handler (module)
 	oauthHandler *oauthmodule.Handler
@@ -83,7 +84,7 @@ type Server struct {
 	oauthCallbackServer *http.Server
 
 	// Dynamic callback servers (one per active OAuth flow)
-	callbackServers   map[string]*pkgoauth.CallbackServer
+	callbackServers   map[string]*oauth.CallbackServer
 	callbackServersMu sync.RWMutex
 
 	// template manager for provider templates
@@ -618,15 +619,15 @@ func NewServer(cfg *config.Config, opts ...ServerOption) *Server {
 
 	// Initialize OAuth manager and handler
 	// Note: BaseURL will be dynamically updated for providers with port constraints
-	registry := pkgoauth.DefaultRegistry()
-	oauthConfig := &pkgoauth.Config{
+	registry := oauth.DefaultRegistry()
+	oauthConfig := &oauth.Config{
 		BaseURL:           fmt.Sprintf("http://localhost:%d", cfg.GetServerPort()),
-		ProviderConfigs:   make(map[pkgoauth.ProviderType]*pkgoauth.ProviderConfig),
-		TokenStorage:      pkgoauth.NewMemoryTokenStorage(),
+		ProviderConfigs:   make(map[ai.Issuer]*oauth.ProviderConfig),
+		TokenStorage:      oauth.NewMemoryTokenStorage(),
 		StateExpiry:       10 * time.Minute,
 		TokenExpiryBuffer: 5 * time.Minute,
 	}
-	oauthManager := pkgoauth.NewManager(oauthConfig, registry)
+	oauthManager := oauth.NewManager(oauthConfig, registry)
 
 	// Initialize token refresher for OAuth auto-refresh
 	tokenRefresher := background.NewTokenRefresher(oauthManager, cfg)
@@ -735,7 +736,7 @@ func NewServer(cfg *config.Config, opts ...ServerOption) *Server {
 	server.setupConfigWatcher()
 
 	// Initialize dynamic callback servers map
-	server.callbackServers = make(map[string]*pkgoauth.CallbackServer)
+	server.callbackServers = make(map[string]*oauth.CallbackServer)
 
 	// Set up health monitor probe function using existing probe infrastructure
 	if server.healthMonitor != nil {
@@ -886,7 +887,7 @@ func (s *Server) startDynamicCallbackServer(sessionID string, port int) error {
 				continue
 			}
 
-			_ = s.oauthManager.UpdateSessionStatus(existingSessionID, pkgoauth.SessionStatusFailed, "", "Superseded by a new OAuth authorization attempt")
+			_ = s.oauthManager.UpdateSessionStatus(existingSessionID, oauth.SessionStatusFailed, "", "Superseded by a new OAuth authorization attempt")
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := existingServer.Stop(ctx); err != nil {
 				cancel()
@@ -909,13 +910,15 @@ func (s *Server) startDynamicCallbackServer(sessionID string, port int) error {
 		logrus.Debugf("[OAuth] Callback received: %s %s", r.Method, r.URL.Path)
 		logrus.Debugf("[OAuth] Query params: %v", r.URL.Query())
 
+		callbackOpts := oauthmodule.OAuthOptionsForSession(s.oauthManager, sessionID, fmt.Sprintf("http://localhost:%d", port))
+
 		// Delegate to the OAuth callback handler
 		// We need to directly call the oauth manager since gin won't work here
-		token, err := s.oauthManager.HandleCallback(r.Context(), r)
+		token, err := s.oauthManager.HandleCallback(r.Context(), r, callbackOpts...)
 		if err != nil {
 			logrus.Debugf("[OAuth] Callback error: %v", err)
 			if sessionID != "" {
-				_ = s.oauthManager.UpdateSessionStatus(sessionID, pkgoauth.SessionStatusFailed, "", err.Error())
+				_ = s.oauthManager.UpdateSessionStatus(sessionID, oauth.SessionStatusFailed, "", err.Error())
 				s.stopDynamicCallbackServerAfterResponse(sessionID)
 			}
 			w.Header().Set("Content-Type", "text/html")
@@ -933,7 +936,7 @@ func (s *Server) startDynamicCallbackServer(sessionID string, port int) error {
 				failedSessionID = sessionID
 			}
 			if failedSessionID != "" {
-				_ = s.oauthManager.UpdateSessionStatus(failedSessionID, pkgoauth.SessionStatusFailed, "", err.Error())
+				_ = s.oauthManager.UpdateSessionStatus(failedSessionID, oauth.SessionStatusFailed, "", err.Error())
 			}
 			s.stopDynamicCallbackServerAfterResponse(sessionID)
 			w.Header().Set("Content-Type", "text/html")
@@ -944,7 +947,7 @@ func (s *Server) startDynamicCallbackServer(sessionID string, port int) error {
 
 		// Update session status to success if session ID exists
 		if token.SessionID != "" {
-			_ = s.oauthManager.UpdateSessionStatus(token.SessionID, pkgoauth.SessionStatusSuccess, providerUUID, "")
+			_ = s.oauthManager.UpdateSessionStatus(token.SessionID, oauth.SessionStatusSuccess, providerUUID, "")
 		}
 
 		logrus.Debugf("[OAuth] Callback successful for provider %s, created provider %s", token.Provider, providerUUID)
@@ -969,14 +972,14 @@ func (s *Server) startDynamicCallbackServer(sessionID string, port int) error {
         <h1>OAuth Authorization Successful!</h1>
         <p>You can close this window and return to the application.</p>
         <h2>Provider: %s</h2>
-        <p>Token: %s...</p>
+        <p>Token: %s</p>
     </div>
 </body>
-</html>`, string(token.Provider), token.AccessToken[:20])
+</html>`, string(token.Provider), oauthmodule.SafeTokenPreview(token.AccessToken))
 	}
 
 	// Create a new callback server with the handler
-	callbackServer := pkgoauth.NewCallbackServer(handlerFunc)
+	callbackServer := oauth.NewCallbackServer(handlerFunc)
 
 	// Start the callback server on the specified port
 	if err := callbackServer.Start(port); err != nil {
@@ -1024,9 +1027,6 @@ func (s *Server) stopDynamicCallbackServer(sessionID string) {
 
 	// Remove from map
 	delete(s.callbackServers, sessionID)
-
-	// Reset proxy URL after OAuth flow completes
-	s.oauthManager.ResetProxyURL()
 
 	logrus.Debugf("[OAuth] Stopped dynamic callback server for session %s", sessionID)
 }

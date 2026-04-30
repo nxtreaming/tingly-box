@@ -3,11 +3,9 @@
 package ai
 
 import (
+	"encoding/json"
 	"time"
 )
-
-// CodexAPIBase is the API base URL for ChatGPT/Codex OAuth provider
-const CodexAPIBase = "https://chatgpt.com/backend-api"
 
 // AuthType represents the authentication type for a provider
 type AuthType string
@@ -19,12 +17,58 @@ const (
 
 // OAuthDetail contains OAuth-specific authentication information
 type OAuthDetail struct {
-	AccessToken  string                 `json:"access_token"`  // OAuth access token
-	ProviderType string                 `json:"provider_type"` // anthropic, google, etc. for token manager lookup
-	UserID       string                 `json:"user_id"`       // OAuth user identifier
-	RefreshToken string                 `json:"refresh_token"` // Token for refreshing access token
-	ExpiresAt    string                 `json:"expires_at"`    // Token expiration time (RFC3339)
-	ExtraFields  map[string]interface{} `json:"extra_fields"`  // Any extra field for some special clients
+	AccessToken  string                 `json:"access_token"`           // OAuth access token
+	Issuer       Issuer                 `json:"issuer"`                 // OAuth issuer: claude_code, github, google, etc. for token manager lookup
+	UserID       string                 `json:"user_id"`                // OAuth user identifier
+	RefreshToken string                 `json:"refresh_token"`          // Token for refreshing access token
+	ExpiresAt    string                 `json:"expires_at"`             // Token expiration time (RFC3339)
+	ExtraFields  map[string]interface{} `json:"extra_fields,omitempty"` // Any extra field for some special clients
+
+	// Deprecated: Use Issuer instead. Kept for backward compatibility.
+	ProviderType string `json:"provider_type,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for OAuthDetail to handle backward compatibility.
+// It reads the deprecated provider_type field and maps it to Issuer.
+func (o *OAuthDetail) UnmarshalJSON(data []byte) error {
+	// Define a type alias to avoid infinite recursion
+	type alias OAuthDetail
+	tmp := struct {
+		alias
+	}{
+		alias: alias(*o),
+	}
+
+	if err := json.Unmarshal(data, &tmp); err != nil {
+		return err
+	}
+
+	// Copy fields back
+	*o = OAuthDetail(tmp.alias)
+
+	// Backward compatibility: if ProviderType is set but Issuer is not, copy ProviderType to Issuer
+	if o.ProviderType != "" && o.Issuer == "" {
+		o.Issuer = Issuer(o.ProviderType)
+	}
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler for OAuthDetail.
+// It writes both issuer (preferred) and provider_type (deprecated) for compatibility.
+func (o *OAuthDetail) MarshalJSON() ([]byte, error) {
+	// Define a type alias to avoid infinite recursion
+	type alias OAuthDetail
+
+	// For backward compatibility, if Issuer is set, also write it to provider_type
+	tmp := struct {
+		alias
+		ProviderType string `json:"provider_type,omitempty"`
+	}{
+		alias:        alias(*o),
+		ProviderType: string(o.Issuer), // Write Issuer to provider_type for compatibility
+	}
+
+	return json.Marshal(tmp)
 }
 
 // IsExpired checks if the OAuth token is expired
@@ -38,6 +82,19 @@ func (o *OAuthDetail) IsExpired() bool {
 		return false
 	}
 	return time.Now().Add(5 * time.Minute).After(expiryTime) // Consider expired if within 5 minutes
+}
+
+// GetIssuer returns the OAuth issuer, with backward compatibility for ProviderType.
+// It returns Issuer if set, otherwise falls back to the deprecated ProviderType.
+func (o *OAuthDetail) GetIssuer() Issuer {
+	if o == nil {
+		return ""
+	}
+	if o.Issuer != "" {
+		return o.Issuer
+	}
+	// Backward compatibility: fall back to ProviderType
+	return Issuer(o.ProviderType)
 }
 
 // Provider represents an AI model api key and provider configuration
@@ -101,7 +158,7 @@ func (p *Provider) IsOAuthToken() bool {
 // IsClaudeCodeProvider checks if this provider is using Claude Code OAuth
 func (p *Provider) IsClaudeCodeProvider() bool {
 	if p.AuthType == AuthTypeOAuth && p.OAuthDetail != nil {
-		return p.OAuthDetail.ProviderType == "claude_code"
+		return p.OAuthDetail.GetIssuer() == IssuerClaudeCode
 	}
 	return false
 }
@@ -109,7 +166,7 @@ func (p *Provider) IsClaudeCodeProvider() bool {
 // IsCodexProvider checks if this provider is using Codex OAuth
 func (p *Provider) IsCodexProvider() bool {
 	if p.AuthType == AuthTypeOAuth && p.OAuthDetail != nil {
-		return p.OAuthDetail.ProviderType == "codex"
+		return p.OAuthDetail.GetIssuer() == IssuerCodex
 	}
 	if p.APIBase == CodexAPIBase {
 		return true

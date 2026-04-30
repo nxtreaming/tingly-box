@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/ai"
+	"github.com/tingly-dev/tingly-box/ai/oauth"
 	"github.com/tingly-dev/tingly-box/internal/typ"
-	oauth2 "github.com/tingly-dev/tingly-box/pkg/oauth"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 
 // tokenManager defines the interface for token refresh operations
 type tokenManager interface {
-	RefreshToken(ctx context.Context, userID string, providerType oauth2.ProviderType, refreshToken string, opts ...oauth2.Option) (*oauth2.Token, error)
+	RefreshToken(ctx context.Context, userID string, issuer ai.Issuer, refreshToken string, opts ...oauth.Option) (*oauth.Token, error)
 }
 
 // providerConfig defines the interface for provider config operations used by OAuthRefresher
@@ -45,7 +46,7 @@ type OAuthRefresher struct {
 }
 
 // NewTokenRefresher creates a new token refresher
-func NewTokenRefresher(manager *oauth2.Manager, serverConfig providerConfig) *OAuthRefresher {
+func NewTokenRefresher(manager *oauth.Manager, serverConfig providerConfig) *OAuthRefresher {
 	return &OAuthRefresher{
 		manager:       manager,
 		serverConfig:  serverConfig,
@@ -194,7 +195,7 @@ func (tr *OAuthRefresher) refreshProviderToken(provider *typ.Provider) {
 		"provider":  provider.Name,
 	})
 
-	providerType, err := oauth2.ParseProviderType(provider.OAuthDetail.ProviderType)
+	issuer, err := oauth.ParseProviderType(provider.OAuthDetail.ProviderType)
 	if err != nil {
 		logger.WithError(err).Error("Invalid provider type")
 		return
@@ -203,9 +204,9 @@ func (tr *OAuthRefresher) refreshProviderToken(provider *typ.Provider) {
 	token, err := tr.manager.RefreshToken(
 		context.Background(),
 		provider.OAuthDetail.UserID,
-		providerType,
+		issuer,
 		provider.OAuthDetail.RefreshToken,
-		oauth2.WithProxyString(provider.ProxyURL),
+		oauth.WithProxyString(provider.ProxyURL),
 	)
 
 	if err != nil {

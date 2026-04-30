@@ -14,11 +14,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/ai"
+	"github.com/tingly-dev/tingly-box/ai/oauth"
 
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
 	"github.com/tingly-dev/tingly-box/internal/typ"
-	oauth2 "github.com/tingly-dev/tingly-box/pkg/oauth"
 )
 
 // CallbackServerManager manages dynamic callback servers for OAuth
@@ -29,13 +30,13 @@ type CallbackServerManager interface {
 
 // Handler handles OAuth-related HTTP requests
 type Handler struct {
-	oauthManager          *oauth2.Manager
+	oauthManager          *oauth.Manager
 	config                *config.Config
 	callbackServerManager CallbackServerManager
 }
 
 // NewHandler creates a new OAuth handler
-func NewHandler(oauthManager *oauth2.Manager, cfg *config.Config) *Handler {
+func NewHandler(oauthManager *oauth.Manager, cfg *config.Config) *Handler {
 	return &Handler{
 		oauthManager: oauthManager,
 		config:       cfg,
@@ -48,8 +49,8 @@ func (h *Handler) SetCallbackServerManager(csm CallbackServerManager) {
 }
 
 // CreateProviderFromToken is exported for use by the server's root OAuth callback
-func (h *Handler) CreateProviderFromToken(token *oauth2.Token, providerType oauth2.ProviderType, customName, sessionID string) (string, error) {
-	return h.createProviderFromToken(token, providerType, customName, sessionID)
+func (h *Handler) CreateProviderFromToken(token *oauth.Token, issuer ai.Issuer, customName, sessionID string) (string, error) {
+	return h.createProviderFromToken(token, issuer, customName, sessionID)
 }
 
 // =============================================
@@ -80,8 +81,8 @@ func (h *Handler) ListOAuthProviders(c *gin.Context) {
 // GetOAuthProvider returns a specific OAuth provider configuration
 // GET /api/v1/oauth/providers/:type
 func (h *Handler) GetOAuthProvider(c *gin.Context) {
-	providerType := oauth2.ProviderType(c.Param("type"))
-	config, ok := h.oauthManager.GetRegistry().Get(providerType)
+	issuer := ai.Issuer(c.Param("type"))
+	config, ok := h.oauthManager.GetRegistry().Get(issuer)
 	if !ok {
 		c.JSON(http.StatusNotFound, OAuthErrorResponse{
 			Success: false,
@@ -105,7 +106,7 @@ func (h *Handler) GetOAuthProvider(c *gin.Context) {
 // UpdateOAuthProvider updates an OAuth provider configuration
 // PUT /api/v1/oauth/providers/:type
 func (h *Handler) UpdateOAuthProvider(c *gin.Context) {
-	providerType := oauth2.ProviderType(c.Param("type"))
+	issuer := ai.Issuer(c.Param("type"))
 
 	var req OAuthUpdateProviderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -116,7 +117,7 @@ func (h *Handler) UpdateOAuthProvider(c *gin.Context) {
 		return
 	}
 
-	config, ok := h.oauthManager.GetRegistry().Get(providerType)
+	config, ok := h.oauthManager.GetRegistry().Get(issuer)
 	if !ok {
 		c.JSON(http.StatusNotFound, OAuthErrorResponse{
 			Success: false,
@@ -126,7 +127,7 @@ func (h *Handler) UpdateOAuthProvider(c *gin.Context) {
 	}
 
 	// Update configuration
-	newConfig := &oauth2.ProviderConfig{
+	newConfig := &oauth.ProviderConfig{
 		Type:         config.Type,
 		DisplayName:  config.DisplayName,
 		ClientID:     req.ClientID,
@@ -145,22 +146,22 @@ func (h *Handler) UpdateOAuthProvider(c *gin.Context) {
 	// Log the action
 	logrus.WithFields(logrus.Fields{
 		"action":   "update_oauth_provider",
-		"provider": providerType,
+		"provider": issuer,
 	}).Info("OAuth provider updated")
 
 	c.JSON(http.StatusOK, OAuthUpdateProviderResponse{
 		Success: true,
 		Message: "Provider configuration updated",
-		Type:    string(providerType),
+		Type:    string(issuer),
 	})
 }
 
 // DeleteOAuthProvider deletes an OAuth provider configuration
 // DELETE /api/v1/oauth/providers/:type
 func (h *Handler) DeleteOAuthProvider(c *gin.Context) {
-	providerType := oauth2.ProviderType(c.Param("type"))
+	issuer := ai.Issuer(c.Param("type"))
 
-	config, ok := h.oauthManager.GetRegistry().Get(providerType)
+	config, ok := h.oauthManager.GetRegistry().Get(issuer)
 	if !ok {
 		c.JSON(http.StatusNotFound, OAuthErrorResponse{
 			Success: false,
@@ -170,7 +171,7 @@ func (h *Handler) DeleteOAuthProvider(c *gin.Context) {
 	}
 
 	// Clear credentials by registering with empty secrets
-	h.oauthManager.GetRegistry().Register(&oauth2.ProviderConfig{
+	h.oauthManager.GetRegistry().Register(&oauth.ProviderConfig{
 		Type:         config.Type,
 		DisplayName:  config.DisplayName,
 		ClientID:     "",
@@ -187,13 +188,13 @@ func (h *Handler) DeleteOAuthProvider(c *gin.Context) {
 	// Log the action
 	logrus.WithFields(logrus.Fields{
 		"action":   "delete_oauth_provider",
-		"provider": providerType,
+		"provider": issuer,
 	}).Info("OAuth provider deleted")
 
 	c.JSON(http.StatusOK, OAuthUpdateProviderResponse{
 		Success: true,
 		Message: "Provider configuration deleted",
-		Type:    string(providerType),
+		Type:    string(issuer),
 	})
 }
 
@@ -236,7 +237,7 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 		}
 	}
 
-	providerType, err := oauth2.ParseProviderType(req.Provider)
+	issuer, err := oauth.ParseProviderType(req.Provider)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 			Success: false,
@@ -246,7 +247,7 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 	}
 
 	// Check if provider uses device code flow
-	config, ok := h.oauthManager.GetRegistry().Get(providerType)
+	config, ok := h.oauthManager.GetRegistry().Get(issuer)
 	if !ok {
 		c.JSON(http.StatusNotFound, OAuthErrorResponse{
 			Success: false,
@@ -261,16 +262,16 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 
 	// If no manual proxy URL, try to auto-detect from existing providers
 	if proxyURL == "" {
-		providerToBase := map[oauth2.ProviderType]string{
-			oauth2.ProviderCodex:       "openai",
-			oauth2.ProviderKimi:        "moonshot",
-			oauth2.ProviderOpenAI:      "openai",
-			oauth2.ProviderClaudeCode:  "anthropic",
-			oauth2.ProviderGemini:      "google",
-			oauth2.ProviderAntigravity: "google",
+		providerToBase := map[ai.Issuer]string{
+			ai.IssuerCodex:       "openai",
+			ai.IssuerKimiCode:    "moonshot",
+			ai.IssuerOpenAI:      "openai",
+			ai.IssuerClaudeCode:  "anthropic",
+			ai.IssuerGemini:      "google",
+			ai.IssuerAntigravity: "google",
 		}
 
-		if baseProvider, ok := providerToBase[providerType]; ok {
+		if baseProvider, ok := providerToBase[issuer]; ok {
 			providers := h.config.ListProviders()
 			for _, p := range providers {
 				isOpenAIProvider := p.APIStyle == protocol.APIStyleOpenAI ||
@@ -296,21 +297,17 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 		}
 	}
 
-	// Set proxy URL on OAuth manager for token exchange
-	// This must be done before the callback happens so the token exchange uses the proxy
+	// Validate proxy URL before storing it on the session. Token exchange reads it
+	// from session state instead of mutating shared OAuth manager config.
 	if proxyURL != "" {
-		parsedURL, err := url.Parse(proxyURL)
-		if err != nil {
+		if _, err := url.Parse(proxyURL); err != nil {
 			c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 				Success: false,
 				Error:   "Invalid proxy URL: " + err.Error(),
 			})
 			return
 		}
-		h.oauthManager.SetProxyURL(parsedURL)
-		log.Printf("[OAuth] Proxy URL configured: %s", proxyURL)
-	} else {
-		h.oauthManager.ResetProxyURL()
+		log.Printf("[OAuth] Proxy URL configured for session: %s", proxyURL)
 	}
 
 	// Generate session ID for this OAuth flow
@@ -319,13 +316,13 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 	// Create OAuth session for token exchange using the generated sessionID
 	// This ensures frontend polling and OAuth callback use the same session
 	now := time.Now()
-	oauthSession := &oauth2.SessionState{
+	oauthSession := &oauth.SessionState{
 		SessionID: sessionID,
-		Status:    oauth2.SessionStatusPending,
-		Provider:  providerType,
+		Status:    oauth.SessionStatusPending,
+		Provider:  issuer,
 		UserID:    userID,
 		CreatedAt: now,
-		ExpiresAt: now.Add(oauth2.DefaultSessionExpiry), // Use unified session expiration
+		ExpiresAt: now.Add(oauth.DefaultSessionExpiry), // Use unified session expiration
 	}
 	// Store proxy URL if provided
 	if proxyURL != "" {
@@ -333,9 +330,10 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 	}
 	h.oauthManager.StoreSession(oauthSession)
 
-	// Start dynamic callback server if provider has port constraints (like Codex)
+	callbackBaseURL := ""
 	if len(config.CallbackPorts) > 0 && h.callbackServerManager != nil {
 		callbackPort := config.CallbackPorts[0]
+		callbackBaseURL = fmt.Sprintf("http://localhost:%d", callbackPort)
 		if err := h.callbackServerManager.StartDynamicCallbackServer(sessionID, callbackPort); err != nil {
 			c.JSON(http.StatusInternalServerError, OAuthErrorResponse{
 				Success: false,
@@ -343,14 +341,12 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 			})
 			return
 		}
-
-		// Update OAuth manager's BaseURL to use the callback server's port
-		h.oauthManager.SetBaseURL(fmt.Sprintf("http://localhost:%d", callbackPort))
 	}
 
+	deviceOpts := OAuthOptions(proxyURL, callbackBaseURL)
 	// Handle device code flow
-	if config.OAuthMethod == oauth2.OAuthMethodDeviceCode || config.OAuthMethod == oauth2.OAuthMethodDeviceCodePKCE {
-		deviceCodeData, err := h.oauthManager.InitiateDeviceCodeFlow(c.Request.Context(), userID, providerType, req.Redirect, req.Name)
+	if config.OAuthMethod == oauth.OAuthMethodDeviceCode || config.OAuthMethod == oauth.OAuthMethodDeviceCodePKCE {
+		deviceCodeData, err := h.oauthManager.InitiateDeviceCodeFlow(c.Request.Context(), userID, issuer, req.Redirect, req.Name, deviceOpts...)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 				Success: false,
@@ -360,7 +356,7 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 		}
 
 		// Start polling for token in background
-		go h.pollForDeviceCodeToken(c.Request.Context(), deviceCodeData, providerType, req.Name, sessionID)
+		go h.pollForDeviceCodeToken(c.Request.Context(), deviceCodeData, issuer, req.Name, sessionID, proxyURL)
 
 		// Return device code flow response
 		resp := OAuthAuthorizeResponse{
@@ -374,14 +370,14 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 		resp.Data.VerificationURIComplete = deviceCodeData.VerificationURIComplete
 		resp.Data.ExpiresIn = deviceCodeData.ExpiresIn
 		resp.Data.Interval = deviceCodeData.Interval
-		resp.Data.Provider = string(providerType)
+		resp.Data.Provider = string(issuer)
 
 		c.JSON(http.StatusOK, resp)
 		return
 	}
 
 	// Handle standard authorization code flow
-	authURL, state, err := h.oauthManager.GetAuthURL(userID, providerType, req.Redirect, req.Name, sessionID)
+	authURL, state, err := h.oauthManager.GetAuthURL(userID, issuer, req.Redirect, req.Name, sessionID, OAuthOptions(proxyURL, callbackBaseURL)...)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 			Success: false,
@@ -403,28 +399,28 @@ func (h *Handler) AuthorizeOAuth(c *gin.Context) {
 }
 
 // pollForDeviceCodeToken polls for token in background after device code flow initiation
-func (h *Handler) pollForDeviceCodeToken(ctx context.Context, deviceCodeData *oauth2.DeviceCodeData, providerType oauth2.ProviderType, customName, sessionID string) {
-	fmt.Printf("[OAuth] Starting device code polling for %s in background\n", providerType)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+func (h *Handler) pollForDeviceCodeToken(ctx context.Context, deviceCodeData *oauth.DeviceCodeData, issuer ai.Issuer, customName, sessionID, proxyURL string) {
+	fmt.Printf("[OAuth] Starting device code polling for %s in background\n", issuer)
+	ctx, cancel := context.WithTimeout(context.Background(), oauth.DefaultSessionExpiry)
 	defer cancel()
 
-	token, err := h.oauthManager.PollForToken(ctx, deviceCodeData, nil)
+	token, err := h.oauthManager.PollForToken(ctx, deviceCodeData, nil, OAuthOptions(proxyURL, "")...)
 	if err != nil {
-		fmt.Printf("[OAuth] Device code polling failed for %s: %v\n", providerType, err)
-		_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth2.SessionStatusFailed, "", err.Error())
+		fmt.Printf("[OAuth] Device code polling failed for %s: %v\n", issuer, err)
+		_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth.SessionStatusFailed, "", err.Error())
 		return
 	}
 
-	fmt.Printf("[OAuth] Device code polling succeeded for %s, creating provider\n", providerType)
-	providerUUID, err := h.createProviderFromToken(token, providerType, customName, sessionID)
+	fmt.Printf("[OAuth] Device code polling succeeded for %s, creating provider\n", issuer)
+	providerUUID, err := h.createProviderFromToken(token, issuer, customName, sessionID)
 	if err != nil {
-		fmt.Printf("[OAuth] Failed to create provider for %s: %v\n", providerType, err)
-		_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth2.SessionStatusFailed, "", err.Error())
+		fmt.Printf("[OAuth] Failed to create provider for %s: %v\n", issuer, err)
+		_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth.SessionStatusFailed, "", err.Error())
 		return
 	}
 
 	// Update session status to success
-	_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth2.SessionStatusSuccess, providerUUID, "")
+	_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth.SessionStatusSuccess, providerUUID, "")
 }
 
 // =============================================
@@ -474,8 +470,8 @@ func (h *Handler) GetOAuthToken(c *gin.Context) {
 	}
 
 	// Fall back to old API (provider + user_id) for backward compatibility
-	providerType := oauth2.ProviderType(c.Query("provider"))
-	if providerType == "" {
+	issuer := ai.Issuer(c.Query("provider"))
+	if issuer == "" {
 		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 			Success: false,
 			Error:   "provider parameter is required",
@@ -485,9 +481,9 @@ func (h *Handler) GetOAuthToken(c *gin.Context) {
 
 	userID := c.Query("user_id")
 
-	token, err := h.oauthManager.GetToken(c.Request.Context(), userID, providerType)
+	token, err := h.oauthManager.GetToken(c.Request.Context(), userID, issuer)
 	if err != nil {
-		if err == oauth2.ErrTokenNotFound {
+		if err == oauth.ErrTokenNotFound {
 			c.JSON(http.StatusNotFound, OAuthErrorResponse{
 				Success: false,
 				Error:   "No token found for this provider",
@@ -552,7 +548,7 @@ func (h *Handler) RefreshOAuthToken(c *gin.Context) {
 		return
 	}
 
-	providerType, err := oauth2.ParseProviderType(provider.OAuthDetail.ProviderType)
+	issuer, err := oauth.ParseProviderType(provider.OAuthDetail.ProviderType)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 			Success: false,
@@ -565,9 +561,9 @@ func (h *Handler) RefreshOAuthToken(c *gin.Context) {
 	token, err := h.oauthManager.RefreshToken(
 		c.Request.Context(),
 		provider.OAuthDetail.UserID,
-		providerType,
+		issuer,
 		provider.OAuthDetail.RefreshToken,
-		oauth2.WithProxyString(provider.ProxyURL),
+		oauth.WithProxyString(provider.ProxyURL),
 	)
 
 	if err != nil {
@@ -642,8 +638,8 @@ func (h *Handler) RevokeOAuthToken(c *gin.Context) {
 	}
 
 	// Fall back to old API (provider + user_id) for backward compatibility
-	providerType := oauth2.ProviderType(c.Query("provider"))
-	if providerType == "" {
+	issuer := ai.Issuer(c.Query("provider"))
+	if issuer == "" {
 		c.JSON(http.StatusBadRequest, OAuthErrorResponse{
 			Success: false,
 			Error:   "provider parameter is required",
@@ -653,9 +649,9 @@ func (h *Handler) RevokeOAuthToken(c *gin.Context) {
 
 	userID := c.Query("user_id")
 
-	err := h.oauthManager.RevokeToken(userID, providerType)
+	err := h.oauthManager.RevokeToken(userID, issuer)
 	if err != nil {
-		if err == oauth2.ErrTokenNotFound {
+		if err == oauth.ErrTokenNotFound {
 			c.JSON(http.StatusNotFound, OAuthErrorResponse{
 				Success: false,
 				Error:   "No token found for this provider",
@@ -672,7 +668,7 @@ func (h *Handler) RevokeOAuthToken(c *gin.Context) {
 	// Log the action
 	logrus.WithFields(logrus.Fields{
 		"action":   "revoke_oauth_token",
-		"provider": providerType,
+		"provider": issuer,
 	}).Info("OAuth token revoked")
 
 	c.JSON(http.StatusOK, OAuthMessageResponse{
@@ -828,7 +824,7 @@ func (h *Handler) CancelOAuthSession(c *gin.Context) {
 
 	// Use oauth.Manager's session storage to mark session as failed
 	// Note: We use "failed" status for cancelled sessions since there's no "cancelled" status in oauth.Manager
-	if err := h.oauthManager.UpdateSessionStatus(req.SessionID, oauth2.SessionStatusFailed, "", "User cancelled"); err != nil {
+	if err := h.oauthManager.UpdateSessionStatus(req.SessionID, oauth.SessionStatusFailed, "", "User cancelled"); err != nil {
 		log.Printf("[OAuth] Failed to cancel session %s: %v", req.SessionID, err)
 		// Don't return error - session might not exist, which is fine
 	} else {
@@ -859,17 +855,19 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 	// Retrieve state data BEFORE calling HandleCallback, because HandleCallback
 	// deletes the state data after validation. We need sessionID for error handling.
 	var sessionID string
+	var callbackOpts []oauth.Option
 	if stateData, err := h.oauthManager.GetStateData(state); err == nil {
 		sessionID = stateData.SessionID
+		callbackOpts = OAuthOptionsForSession(h.oauthManager, sessionID, "")
 	}
 
 	// Delegate to the oauth handler's callback, now returns name in token
-	token, err := h.oauthManager.HandleCallback(c.Request.Context(), c.Request)
+	token, err := h.oauthManager.HandleCallback(c.Request.Context(), c.Request, callbackOpts...)
 	if err != nil {
 		// Fail the session if we have a sessionID from the state data
 		if sessionID != "" {
 			log.Printf("[OAuth] Callback failed, failing session %s: %v", sessionID, err)
-			_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth2.SessionStatusFailed, "", err.Error())
+			_ = h.oauthManager.UpdateSessionStatus(sessionID, oauth.SessionStatusFailed, "", err.Error())
 		}
 		c.HTML(http.StatusBadRequest, "oauth_error.html", gin.H{
 			"error": err.Error(),
@@ -884,7 +882,7 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 	providerUUID, err := h.createProviderFromToken(token, token.Provider, "", token.SessionID)
 	if err != nil {
 		log.Printf("[OAuth] Failed to create provider for token.SessionID %s: %v", token.SessionID, err)
-		_ = h.oauthManager.UpdateSessionStatus(token.SessionID, oauth2.SessionStatusFailed, "", err.Error())
+		_ = h.oauthManager.UpdateSessionStatus(token.SessionID, oauth.SessionStatusFailed, "", err.Error())
 		c.HTML(http.StatusInternalServerError, "oauth_error.html", gin.H{
 			"error": fmt.Sprintf("Failed to create provider: %v", err),
 		})
@@ -896,7 +894,7 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 	// Update session status to success if session ID exists
 	if token.SessionID != "" {
 		log.Printf("[OAuth] Completing session %s with provider UUID %s", token.SessionID, providerUUID)
-		_ = h.oauthManager.UpdateSessionStatus(token.SessionID, oauth2.SessionStatusSuccess, providerUUID, "")
+		_ = h.oauthManager.UpdateSessionStatus(token.SessionID, oauth.SessionStatusSuccess, providerUUID, "")
 	} else {
 		log.Printf("[OAuth] WARNING: token.SessionID is empty, cannot complete session!")
 	}
@@ -913,8 +911,8 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 	// Return success HTML page to inform the user
 	c.HTML(http.StatusOK, "oauth_success.html", gin.H{
 		"provider":      string(token.Provider),
-		"provider_name": "",                             // Will be shown with UUID in the page
-		"access_token":  token.AccessToken[:20] + "...", // Partially show token
+		"provider_name": "",                                  // Will be shown with UUID in the page
+		"access_token":  SafeTokenPreview(token.AccessToken), // Partially show token
 		"token_type":    token.TokenType,
 	})
 }
@@ -924,7 +922,7 @@ func (h *Handler) OAuthCallback(c *gin.Context) {
 // =============================================
 
 // createProviderFromToken creates a provider from OAuth token
-func (h *Handler) createProviderFromToken(token *oauth2.Token, providerType oauth2.ProviderType, customName, sessionID string) (string, error) {
+func (h *Handler) createProviderFromToken(token *oauth.Token, issuer ai.Issuer, customName, sessionID string) (string, error) {
 	// Get custom name from token (stored in state during authorize)
 	if customName == "" {
 		customName = token.Name
@@ -944,7 +942,7 @@ func (h *Handler) createProviderFromToken(token *oauth2.Token, providerType oaut
 
 	// Generate provider name using smart naming strategy
 	// Priority: customName > email username > display name > timestamp
-	providerName := generateProviderName(providerType, token, customName)
+	providerName := generateProviderName(issuer, token, customName)
 
 	// Generate UUID for the provider
 	providerUUID, err := uuid.NewUUID()
@@ -957,30 +955,30 @@ func (h *Handler) createProviderFromToken(token *oauth2.Token, providerType oaut
 	var apiStyle protocol.APIStyle
 
 	// If token contains ResourceURL from OAuth response, use it
-	if token.ResourceURL != "" && providerType == oauth2.ProviderQwenCode {
+	if token.ResourceURL != "" && issuer == ai.IssuerQwenCode {
 		apiBase = normalizeAPIBase(token.ResourceURL, "/v1")
 		apiStyle = protocol.APIStyleOpenAI
 	} else {
-		switch providerType {
-		case oauth2.ProviderClaudeCode:
+		switch issuer {
+		case ai.IssuerClaudeCode:
 			apiBase = "https://api.anthropic.com"
 			apiStyle = protocol.APIStyleAnthropic
-		case oauth2.ProviderQwenCode:
+		case ai.IssuerQwenCode:
 			apiBase = "https://portal.qwen.ai/v1"
 			apiStyle = protocol.APIStyleOpenAI
-		case oauth2.ProviderGoogle:
+		case ai.IssuerGoogle:
 			apiBase = "https://generativelanguage.googleapis.com"
 			apiStyle = protocol.APIStyleOpenAI
-		case oauth2.ProviderAntigravity:
+		case ai.IssuerAntigravity:
 			apiBase = "https://cloudcode-pa.googleapis.com"
 			apiStyle = protocol.APIStyleGoogle
-		case oauth2.ProviderOpenAI:
+		case ai.IssuerOpenAI:
 			apiBase = "https://api.openai.com/v1"
 			apiStyle = protocol.APIStyleOpenAI
-		case oauth2.ProviderCodex:
+		case ai.IssuerCodex:
 			apiBase = protocol.CodexAPIBase
 			apiStyle = protocol.APIStyleOpenAI
-		case oauth2.ProviderKimi:
+		case ai.IssuerKimiCode:
 			apiBase = "https://api.moonshot.cn/v1"
 			apiStyle = protocol.APIStyleOpenAI
 		default:
@@ -1005,7 +1003,7 @@ func (h *Handler) createProviderFromToken(token *oauth2.Token, providerType oaut
 		AuthType: typ.AuthTypeOAuth,
 		OAuthDetail: &typ.OAuthDetail{
 			AccessToken:  token.AccessToken,
-			ProviderType: string(providerType),
+			ProviderType: string(issuer),
 			UserID:       uuid.New().String(),
 			RefreshToken: token.RefreshToken,
 			ExpiresAt:    expiresAt,
@@ -1049,7 +1047,7 @@ func (h *Handler) createProviderFromToken(token *oauth2.Token, providerType oaut
 // generateProviderName generates a human-readable provider name from token metadata
 // Priority: customName > email > display name > timestamp
 // Note: Account ID is NOT used for naming (sensitive information)
-func generateProviderName(providerType oauth2.ProviderType, token *oauth2.Token, customName string) string {
+func generateProviderName(issuer ai.Issuer, token *oauth.Token, customName string) string {
 	// Priority 1: Custom name from user
 	if customName != "" {
 		return customName
@@ -1074,7 +1072,7 @@ func generateProviderName(providerType oauth2.ProviderType, token *oauth2.Token,
 
 	// Priority 4: Timestamp-based fallback (format: YYYYMMDD-HHMM)
 	timestamp := time.Now().Format("20060102-1504")
-	return fmt.Sprintf("%s-%s", providerType, timestamp)
+	return fmt.Sprintf("%s-%s", issuer, timestamp)
 }
 
 // generateRandomSuffix generates a random alphanumeric suffix of specified length
@@ -1082,6 +1080,34 @@ func generateRandomSuffix(length int) string {
 	bytes := make([]byte, length/2+1)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)[:length]
+}
+
+func SafeTokenPreview(token string) string {
+	if len(token) <= 20 {
+		return token
+	}
+	return token[:20] + "..."
+}
+
+func OAuthOptions(proxyURL, baseURL string) []oauth.Option {
+	var opts []oauth.Option
+	if proxyURL != "" {
+		opts = append(opts, oauth.WithProxyURLString(proxyURL))
+	}
+	if baseURL != "" {
+		opts = append(opts, oauth.WithBaseURL(baseURL))
+	}
+	return opts
+}
+
+func OAuthOptionsForSession(manager *oauth.Manager, sessionID, baseURL string) []oauth.Option {
+	var proxyURL string
+	if sessionID != "" {
+		if session, err := manager.GetSession(sessionID); err == nil && session != nil {
+			proxyURL = session.ProxyURL
+		}
+	}
+	return OAuthOptions(proxyURL, baseURL)
 }
 
 // normalizeAPIBase normalizes an API base URL

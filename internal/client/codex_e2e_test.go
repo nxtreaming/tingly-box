@@ -11,10 +11,10 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tingly-dev/tingly-box/ai"
 
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/typ"
-	"github.com/tingly-dev/tingly-box/pkg/oauth"
 )
 
 // TestE2E_CodexRoundTripper tests the ChatGPT backend API with OpenAI client streaming support.
@@ -47,7 +47,7 @@ func TestE2E_CodexRoundTripper(t *testing.T) {
 		AuthType: typ.AuthTypeOAuth,
 		Timeout:  int64((60 * time.Second).Seconds()),
 		OAuthDetail: &typ.OAuthDetail{
-			ProviderType: string(oauth.ProviderCodex),
+			ProviderType: string(ai.IssuerCodex),
 			AccessToken:  accessToken,
 			ExtraFields:  make(map[string]interface{}),
 		},
