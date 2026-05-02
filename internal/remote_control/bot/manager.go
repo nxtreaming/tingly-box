@@ -21,7 +21,7 @@ import (
 )
 
 // runBotWithSettings starts a bot using JSON file storage for chat state
-func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string, sessionMgr *session.Manager, agentBoot *agentboot.AgentBoot, tbClient tbclient.TBClient, pairing *PairingManager, auditLog *audit.Logger) error {
+func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string, sessionMgr *session.Manager, agentBoot *agentboot.AgentBoot, tbClient tbclient.TBClient, pairing *PairingManager, auditLog *audit.Logger, store SettingsStore) error {
 	// Create a JSON-based chat store
 	chatStore, err := NewChatStoreJSON(dataPath)
 	if err != nil {
@@ -73,7 +73,7 @@ func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string
 	}
 
 	// Register unified message handler with platform parameter
-	handler := NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient, pairing, auditLog)
+	handler := NewBotHandler(ctx, setting, chatStore, sessionMgr, agentBoot, directoryBrowser, manager, tbClient, pairing, auditLog, store)
 	manager.OnMessage(handler.HandleMessage)
 
 	if err := manager.Start(ctx); err != nil {
@@ -337,7 +337,26 @@ func (m *Manager) Start(parentCtx context.Context, uuid string) error {
 	tbClient := m.tbClient
 	dataPath := m.dataPath
 
-	if s.SmartGuideProvider == "" || s.SmartGuideModel == "" {
+	// Update SmartGuide routing rule when bot starts
+	// This ensures the route rule is always in sync with the current settings
+	if s.SmartGuideProvider != "" && s.SmartGuideModel != "" && tbClient != nil {
+		if err := tbClient.EnsureSmartGuideRuleForBot(parentCtx, s.UUID, s.Name, s.SmartGuideProvider, s.SmartGuideModel); err != nil {
+			logrus.WithError(err).WithFields(logrus.Fields{
+				"uuid":     uuid,
+				"name":     name,
+				"provider": s.SmartGuideProvider,
+				"model":    s.SmartGuideModel,
+			}).Error("Failed to update SmartGuide routing rule during bot start")
+			// Don't fail startup, SmartGuide will use fallback or error at execution time
+		} else {
+			logrus.WithFields(logrus.Fields{
+				"uuid":     uuid,
+				"name":     name,
+				"provider": s.SmartGuideProvider,
+				"model":    s.SmartGuideModel,
+			}).Info("SmartGuide routing rule updated during bot start")
+		}
+	} else if s.SmartGuideProvider == "" || s.SmartGuideModel == "" {
 		logrus.WithFields(logrus.Fields{
 			"uuid":     uuid,
 			"name":     name,
@@ -359,9 +378,10 @@ func (m *Manager) Start(parentCtx context.Context, uuid string) error {
 	// Start bot in goroutine (dataPath and tbClient already captured above)
 	pairing := m.pairing
 	auditLog := m.audit
+	store := m.store
 	go func() {
 		defer close(doneChan) // Signal that goroutine is done
-		if err := runBotWithSettings(ctx, s, dataPath, m.sessionMgr, m.agentBoot, tbClient, pairing, auditLog); err != nil {
+		if err := runBotWithSettings(ctx, s, dataPath, m.sessionMgr, m.agentBoot, tbClient, pairing, auditLog, store); err != nil {
 			logrus.WithError(err).WithField("uuid", uuid).Warn("Bot stopped with error")
 		}
 
@@ -383,6 +403,15 @@ func (m *Manager) Stop(uuid string) {
 		logrus.WithField("uuid", uuid).Info("Stopping bot")
 		rb.stopped = true // Mark as stopping
 		rb.cancel()
+
+		// Clean up SmartGuide routing rule when bot stops
+		if m.tbClient != nil {
+			if err := m.tbClient.DeleteSmartGuideRuleForBot(context.Background(), uuid); err != nil {
+				logrus.WithError(err).WithField("uuid", uuid).Warn("Failed to delete SmartGuide routing rule")
+			} else {
+				logrus.WithField("uuid", uuid).Info("SmartGuide routing rule deleted")
+			}
+		}
 		// Don't delete from map yet - let the goroutine clean up
 	}
 }
