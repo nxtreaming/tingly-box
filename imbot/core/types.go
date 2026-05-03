@@ -15,7 +15,6 @@ const (
 	PlatformBlueBubbles Platform = "bluebubbles"
 	PlatformFeishu      Platform = "feishu"
 	PlatformLark        Platform = "lark"
-	PlatformWebChat     Platform = "webchat"
 	PlatformDingTalk    Platform = "dingtalk"
 	PlatformWeixin      Platform = "weixin"
 	PlatformWecom       Platform = "wecom"
@@ -230,13 +229,6 @@ func GetPlatformCapabilities(platform Platform) *PlatformCapabilities {
 			Features:   []string{"reactions", "delete", "threads", "nativeCommands", "mentions", "interactiveCards"},
 			TextLimit:  40000,
 			RateLimit:  50,
-		},
-		PlatformWebChat: {
-			ChatTypes:  []ChatType{ChatTypeDirect, ChatTypeGroup},
-			MediaTypes: []string{"image", "video", "audio", "document", "sticker"},
-			Features:   []string{"reactions", "edit", "delete", "threads", "polls", "inlineKeyboards", "messageEditing"},
-			TextLimit:  4096,
-			RateLimit:  60,
 		},
 		PlatformDingTalk: {
 			ChatTypes:  []ChatType{ChatTypeDirect, ChatTypeGroup},

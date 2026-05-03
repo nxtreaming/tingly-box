@@ -133,7 +133,6 @@ const (
 	PlatformBlueBubbles = core.PlatformBlueBubbles
 	PlatformFeishu      = core.PlatformFeishu
 	PlatformLark        = core.PlatformLark
-	PlatformWebChat     = core.PlatformWebChat
 	PlatformDingTalk    = core.PlatformDingTalk
 	PlatformWeixin      = core.PlatformWeixin
 	PlatformWecom       = core.PlatformWecom

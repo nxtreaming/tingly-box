@@ -109,7 +109,7 @@ func (e *TestEnv) AddTinglyBotWithUUID(uuid string) *tingly.InProcessTransport {
 		UUID:     uuid,
 		Platform: core.PlatformTingly,
 		Enabled:  true,
-		Auth:     core.AuthConfig{Type: "qr"},
+		Auth:     core.AuthConfig{Type: "none"},
 	}
 	if err := e.manager.AddBot(cfg); err != nil {
 		tingly.Unregister(uuid)

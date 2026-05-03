@@ -162,9 +162,9 @@ func buildAuthConfig(setting BotSetting) imbot.AuthConfig {
 			AuthDir:   auth["user_id"], // Store user_id in AuthDir for Weixin
 		}
 	case "tingly":
-		// Tingly is tokenless. Reuse "qr" auth type, which accepts empty fields.
+		// Tingly is tokenless.
 		return imbot.AuthConfig{
-			Type:  "qr",
+			Type:  "none",
 			Token: auth["token"], // optional shared secret, may be empty
 		}
 	default:

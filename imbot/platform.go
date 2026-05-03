@@ -198,7 +198,7 @@ var PlatformConfigs = map[string]PlatformAuthConfig{
 	},
 	"tingly": {
 		Platform:    "tingly",
-		AuthType:    "qr", // tokenless; reuses the "qr" auth type for empty credentials
+		AuthType:    "none",
 		DisplayName: "Tingly",
 		Category:    "im",
 		Fields:      []FieldSpec{}, // No required credentials

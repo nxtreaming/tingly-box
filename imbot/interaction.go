@@ -68,7 +68,6 @@ func NewHandler(manager BotManager) *Handler {
 	h.RegisterAdapter(core.PlatformDiscord, NewDiscordAdapter())
 	h.RegisterAdapter(core.PlatformFeishu, NewFeishuAdapter())
 	h.RegisterAdapter(core.PlatformTingly, NewTinglyAdapter())
-	h.RegisterAdapter(core.PlatformWebChat, NewTinglyAdapter())
 
 	return h
 }

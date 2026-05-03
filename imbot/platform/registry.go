@@ -101,10 +101,6 @@ func (r *Registry) RegisterBuiltinPlatforms() {
 	// Tingly: full-featured platform that doubles as the E2E test harness.
 	r.Register(core.PlatformTingly, tingly.NewBotFromConfig)
 
-	// WebChat: legacy mock platform name; delegates to tingly so any code
-	// still using "webchat" gets the new full-featured implementation.
-	r.Register(core.PlatformWebChat, tingly.NewBotFromConfig)
-
 	// DingTalk
 	r.Register(core.PlatformDingTalk, func(config *core.Config) (core.Bot, error) {
 		return dingtalk.NewDingTalkBot(config)

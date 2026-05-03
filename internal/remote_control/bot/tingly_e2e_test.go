@@ -24,7 +24,7 @@ func bootHelper(t *testing.T, requirePairing bool) (*testenv.TestEnv, *bot.TestH
 		UUID:           uuid,
 		Name:           "tingly-test",
 		Platform:       "tingly",
-		AuthType:       "qr",
+		AuthType:       "none",
 		Auth:           map[string]string{},
 		Enabled:        true,
 		RequirePairing: &rp,
