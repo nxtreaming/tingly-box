@@ -6,47 +6,82 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 )
 
-// ProviderCommand represents the unified provider management command
-// It provides both interactive mode (no args) and subcommands for specific operations
-func ProviderCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "provider [command] [args]",
-		Short: "Manage AI provider configurations",
-		Long: `Manage AI provider configurations.
+// ============== Kong Command Structures ==============
 
-When run without arguments, enters interactive mode for provider management.
-Available operations in interactive mode:
-  - Add new providers
-  - List all providers
-  - Update existing providers
-  - Delete providers
-  - View provider details
-
-Subcommands can be used for direct operations:
-  add    Add a new provider
-  list   List all providers
-  delete Delete a provider by name
-  update Update an existing provider
-  get    Get provider details by name`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// No subcommand provided, run interactive mode
-			return runProviderInteractiveMode(appManager)
-		},
-	}
-
-	// Add subcommands
-	cmd.AddCommand(providerAddCommand(appManager))
-	cmd.AddCommand(providerListCommand(appManager))
-	cmd.AddCommand(providerDeleteCommand(appManager))
-	cmd.AddCommand(providerUpdateCommand(appManager))
-	cmd.AddCommand(providerGetCommand(appManager))
-
-	return cmd
+// ProviderCmdKong is the Kong version of provider command with subcommands.
+// The default behavior (no subcommand) is to list providers.
+type ProviderCmdKong struct {
+	List    ProviderListCmdKong    `kong:"cmd,name='list',default='1',hidden,help='List all providers (default)'"`
+	Add     ProviderAddCmdKong     `kong:"cmd,help='Add a new provider'"`
+	Delete  ProviderDeleteCmdKong  `kong:"cmd,help='Delete a provider (interactive)'"`
+	Update  ProviderUpdateCmdKong  `kong:"cmd,help='Update a provider (interactive)'"`
+	Details ProviderDetailsCmdKong `kong:"cmd,help='View provider details'"`
 }
+
+// ProviderListCmdKong lists all providers
+type ProviderListCmdKong struct{}
+
+func (p *ProviderListCmdKong) Run(appManager *AppManager) error {
+	return runProviderList(appManager)
+}
+
+// ProviderAddCmdKong adds a new provider with optional positional args
+type ProviderAddCmdKong struct {
+	Name     string `kong:"arg,optional,help='Provider name'"`
+	BaseURL  string `kong:"arg,optional,help='API base URL'"`
+	Token    string `kong:"arg,optional,help='API token'"`
+	APIStyle string `kong:"arg,optional,help='API style (openai, anthropic)'"`
+}
+
+func (p *ProviderAddCmdKong) Run(appManager *AppManager) error {
+	args := []string{}
+	if p.Name != "" {
+		args = append(args, p.Name)
+	}
+	if p.BaseURL != "" {
+		args = append(args, p.BaseURL)
+	}
+	if p.Token != "" {
+		args = append(args, p.Token)
+	}
+	if p.APIStyle != "" {
+		args = append(args, p.APIStyle)
+	}
+	return runAdd(appManager, args)
+}
+
+// ProviderDeleteCmdKong deletes a provider in interactive mode
+type ProviderDeleteCmdKong struct{}
+
+func (p *ProviderDeleteCmdKong) Run(appManager *AppManager) error {
+	return runProviderDeleteInteractive(appManager, bufio.NewReader(os.Stdin))
+}
+
+// ProviderUpdateCmdKong updates a provider in interactive mode
+type ProviderUpdateCmdKong struct{}
+
+func (p *ProviderUpdateCmdKong) Run(appManager *AppManager) error {
+	return runProviderUpdateInteractive(appManager, bufio.NewReader(os.Stdin))
+}
+
+// ProviderDetailsCmdKong displays provider details (without name drops to interactive)
+type ProviderDetailsCmdKong struct {
+	Name string `kong:"arg,optional,help='Provider name'"`
+}
+
+func (p *ProviderDetailsCmdKong) Run(appManager *AppManager) error {
+	if p.Name == "" {
+		return runProviderGetInteractive(appManager, bufio.NewReader(os.Stdin))
+	}
+	return runProviderGet(appManager, p.Name)
+}
+
+// ============== Business Logic Functions ==============
+
+type APIStyle = protocol.APIStyle
 
 // runProviderInteractiveMode runs the interactive provider management interface
 func runProviderInteractiveMode(appManager *AppManager) error {
@@ -116,96 +151,12 @@ func showProviderMenu() {
 	fmt.Println(strings.Repeat("=", 60))
 }
 
-// providerAddCommand creates the add subcommand
-func providerAddCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "add [name] [baseurl] [token] [api_style]",
-		Short: "Add a new provider",
-		Long: `Add a new AI provider with name, API base URL, token, and optional API style.
-
-Examples:
-  provider add openai https://api.openai.com/v1 your-token-here openai
-  provider add anthropic https://api.anthropic.com your-token-here anthropic
-
-Or run without arguments for interactive mode.`,
-		Args: cobra.MaximumNArgs(4),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAdd(appManager, args)
-		},
-	}
-	return cmd
-}
-
-// providerListCommand creates the list subcommand
-func providerListCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all providers",
-		Long:  "Display all configured AI providers with their details.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProviderList(appManager)
-		},
-	}
-	return cmd
-}
-
-// providerDeleteCommand creates the delete subcommand
-func providerDeleteCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "Delete a provider",
-		Long: `Delete an AI provider in interactive mode.
-
-You will be prompted to select which provider to delete.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProviderDeleteInteractive(appManager, bufio.NewReader(os.Stdin))
-		},
-	}
-	return cmd
-}
-
-// providerUpdateCommand creates the update subcommand
-func providerUpdateCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "update",
-		Short: "Update a provider",
-		Long: `Update an AI provider in interactive mode.
-
-You will be prompted to select which provider to update and what to change.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runProviderUpdateInteractive(appManager, bufio.NewReader(os.Stdin))
-		},
-	}
-	return cmd
-}
-
-// providerGetCommand creates the get subcommand
-func providerGetCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "get [name]",
-		Short: "Get provider details",
-		Long: `Display detailed information about a specific provider.
-
-If no name is provided, enters interactive mode to select a provider.
-
-Example: provider get openai`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return runProviderGetInteractive(appManager, bufio.NewReader(os.Stdin))
-			}
-			return runProviderGet(appManager, args[0])
-		},
-	}
-	return cmd
-}
-
 // runProviderList lists all providers
 func runProviderList(appManager *AppManager) error {
 	providers := appManager.ListProviders()
 
 	if len(providers) == 0 {
-		fmt.Println("No providers configured. Use 'provider add' to add a provider.")
+		fmt.Println("No providers configured. Use 'config add' to add a provider.")
 		return nil
 	}
 
@@ -239,7 +190,7 @@ func runProviderUpdateInteractive(appManager *AppManager, reader *bufio.Reader) 
 	providers := appManager.ListProviders()
 
 	if len(providers) == 0 {
-		fmt.Println("No providers configured. Use 'provider add' to add a provider first.")
+		fmt.Println("No providers configured. Use 'config add' to add a provider first.")
 		return nil
 	}
 

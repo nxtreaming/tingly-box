@@ -7,115 +7,71 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/cobra"
 	"github.com/tingly-dev/tingly-box/ai/quota/fetcher"
 
 	"github.com/tingly-dev/tingly-box/ai/quota"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
-// QuotaCommand represents the quota management command
-func QuotaCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "quota [command]",
-		Short: "Manage provider quota/usage information",
-		Long: `Manage and view provider quota/usage information.
+// ============== Kong Command Structures ==============
 
-Displays current token usage, limits, and costs for configured AI providers.
-Supports both listing all providers and viewing specific provider details.`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// No subcommand provided, default to list
-			return runQuotaList(appManager)
-		},
-	}
-
-	// Add subcommands
-	cmd.AddCommand(quotaListCommand(appManager))
-	cmd.AddCommand(quotaGetCommand(appManager))
-	cmd.AddCommand(quotaRefreshCommand(appManager))
-	cmd.AddCommand(quotaSummaryCommand(appManager))
-
-	return cmd
+// QuotaCmdKong is the Kong version of quota command with streamlined behavior.
+// The default behavior (no subcommand) is to list all quotas.
+type QuotaCmdKong struct {
+	// List quotas (default behavior) - this is the default command
+	List    QuotaListCmdKong    `kong:"cmd,name='list',default='1',hidden,help='List all provider quotas (default)'"`
+	Get     QuotaGetCmdKong     `kong:"cmd,help='Get provider quota details'"`
+	Refresh QuotaRefreshCmdKong `kong:"cmd,help='Refresh quota data'"`
+	Summary QuotaSummaryCmdKong `kong:"cmd,help='Show quota summary'"`
 }
 
-// quotaListCommand creates the list subcommand
-func quotaListCommand(appManager *AppManager) *cobra.Command {
-	var refresh bool
-
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all provider quotas",
-		Long:  "Display quota/usage information for all configured providers.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if refresh {
-				return runQuotaRefresh(appManager)
-			}
-			return runQuotaList(appManager)
-		},
-	}
-
-	cmd.Flags().BoolVarP(&refresh, "refresh", "r", false, "Refresh quota data before listing")
-
-	return cmd
+// QuotaListCmdKong lists all provider quotas with optional refresh
+type QuotaListCmdKong struct {
+	Refresh bool `kong:"flag,name='refresh',short='r',help='Refresh before listing'"`
 }
 
-// quotaGetCommand creates the get subcommand
-func quotaGetCommand(appManager *AppManager) *cobra.Command {
-	var refresh bool
-
-	cmd := &cobra.Command{
-		Use:   "get [provider]",
-		Short: "Get provider quota details",
-		Long: `Display detailed quota/usage information for a specific provider.
-
-If no provider name is given, enters interactive mode to select one.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return runQuotaGetInteractive(appManager)
-			}
-			return runQuotaGet(appManager, args[0], refresh)
-		},
+func (q *QuotaListCmdKong) Run(appManager *AppManager) error {
+	if q.Refresh {
+		return runQuotaRefresh(appManager)
 	}
-
-	cmd.Flags().BoolVarP(&refresh, "refresh", "r", false, "Refresh quota data before displaying")
-
-	return cmd
+	return runQuotaList(appManager)
 }
 
-// quotaRefreshCommand creates the refresh subcommand
-func quotaRefreshCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "refresh [provider]",
-		Short: "Refresh provider quota data",
-		Long: `Fetch fresh quota/usage data from provider APIs.
-
-If no provider name is given, refreshes all providers.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return runQuotaRefresh(appManager)
-			}
-			return runQuotaRefreshProvider(appManager, args[0])
-		},
-	}
-
-	return cmd
+// QuotaRefreshCmdKong refreshes quota data
+// Supports optional provider argument to refresh specific provider
+type QuotaRefreshCmdKong struct {
+	Provider string `kong:"arg,optional,help='Provider name or UUID to refresh (refreshes all if omitted)'"`
 }
 
-// quotaSummaryCommand creates the summary subcommand
-func quotaSummaryCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "summary",
-		Short: "Show quota summary",
-		Long:  "Display a summary of quota usage across all providers.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runQuotaSummary(appManager)
-		},
+func (q *QuotaRefreshCmdKong) Run(appManager *AppManager) error {
+	if q.Provider == "" {
+		return runQuotaRefresh(appManager)
 	}
-
-	return cmd
+	return runQuotaRefreshProvider(appManager, q.Provider)
 }
+
+// QuotaSummaryCmdKong shows quota summary
+type QuotaSummaryCmdKong struct{}
+
+func (q *QuotaSummaryCmdKong) Run(appManager *AppManager) error {
+	return runQuotaSummary(appManager)
+}
+
+// QuotaGetCmdKong shows details for a specific provider
+// This was merged into the list command, but we keep a separate command for explicit "get" usage
+type QuotaGetCmdKong struct {
+	Provider string `kong:"arg,optional,help='Provider name or UUID'"`
+	Refresh  bool   `kong:"flag,name='refresh',short='r',help='Refresh before displaying'"`
+}
+
+func (q *QuotaGetCmdKong) Run(appManager *AppManager) error {
+	if q.Provider == "" {
+		return runQuotaGetInteractive(appManager)
+	}
+	return runQuotaGet(appManager, q.Provider, q.Refresh)
+}
+
+// ============== Business Logic Functions ==============
 
 // findProvider finds a provider by name or UUID (exact match).
 func findProvider(appManager *AppManager, nameOrUUID string) (*typ.Provider, error) {

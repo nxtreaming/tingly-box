@@ -8,98 +8,173 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/tingly-dev/tingly-box/internal/agent"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
-// AgentCommand creates the agent management command
-func AgentCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "Agent configuration management",
-		Long: `Manage AI agent configurations for Claude Code, OpenCode, and more.
+// ============== Kong Command Structures ==============
 
-This command allows you to quickly apply configurations for various AI agents
-by selecting a provider and model. Configuration is applied both to the agent's
-config files and to TinglyBox routing rules.`,
-	}
-
-	cmd.AddCommand(agentApplyCommand(appManager))
-	cmd.AddCommand(agentListCommand(appManager))
-	cmd.AddCommand(agentShowCommand(appManager))
-	cmd.AddCommand(agentRestoreCommand(appManager))
-
-	return cmd
+// AgentCmdKong is the Kong version of agent command with flag-based operations.
+// The default behavior (no subcommand) is to list agents.
+type AgentCmdKong struct {
+	// Flag-based operations (primary interface)
+	List    AgentListFlagCmdKong    `kong:"cmd,name='list',default='1',hidden,help='List configured agents (default)'"`
+	Apply   AgentApplyFlagCmdKong   `kong:"cmd,help='Apply agent configuration'"`
+	Show    AgentShowFlagCmdKong    `kong:"cmd,help='Show agent configuration details'"`
+	Restore AgentRestoreFlagCmdKong `kong:"cmd,help='Restore agent configuration from backup'"`
 }
 
-// agentRestoreCommand creates the restore subcommand. It rolls back an agent's
-// on-disk config files to their most recent backup, taking a "pre-restore"
-// safety snapshot of each live file first.
-func agentRestoreCommand(appManager *AppManager) *cobra.Command {
+// AgentListFlagCmdKong lists configured agents (default behavior)
+type AgentListFlagCmdKong struct{}
+
+func (a *AgentListFlagCmdKong) Run(appManager *AppManager) error {
+	return listAgentTypes()
+}
+
+// AgentApplyFlagCmdKong applies agent configuration via flags
+type AgentApplyFlagCmdKong struct {
+	AgentType  string `kong:"arg,optional,help='Agent type (claude-code, opencode, codex)'"`
+	Provider   string `kong:"flag,name='provider',help='Provider UUID'"`
+	Model      string `kong:"flag,name='model',help='Model name'"`
+	Unified    bool   `kong:"flag,name='unified',default='true',help='Unified mode (claude-code only)'"`
+	StatusLine bool   `kong:"flag,name='status-line',help='Install status line integration (claude-code only)'"`
+	Force      bool   `kong:"flag,name='force',help='Skip confirmation'"`
+	Preview    bool   `kong:"flag,name='preview',help='Preview without applying'"`
+}
+
+func (a *AgentApplyFlagCmdKong) Run(appManager *AppManager) error {
+	var req agent.ApplyAgentRequest
+	req.AgentType = agent.AgentType(a.AgentType)
+	req.Provider = a.Provider
+	req.Model = a.Model
+	req.Unified = a.Unified
+	req.InstallStatusLine = a.StatusLine
+	req.Force = a.Force
+	req.Preview = a.Preview
+
+	reader := bufio.NewReader(os.Stdin)
+
+	// Handle agent type: empty vs invalid vs valid
+	if a.AgentType == "" {
+		// No agent type specified, prompt for selection
+		agentType, err := promptForAgentTypeChoice(reader)
+		if err != nil {
+			return err
+		}
+		req.AgentType = agentType
+	} else if !req.AgentType.IsValid() {
+		// Invalid agent type provided - fail fast
+		fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", a.AgentType)
+		fmt.Fprintln(os.Stderr, "Available agent types:")
+		fmt.Fprintln(os.Stderr, "  claude-code - Claude Code CLI agent (@cc)")
+		fmt.Fprintln(os.Stderr, "  opencode   - OpenCode editor agent (@oc)")
+		fmt.Fprintln(os.Stderr, "  codex      - Codex agent (@cx)")
+		return fmt.Errorf("unknown agent type: %s", a.AgentType)
+	}
+
+	// Interactive prompts if provider/model not specified
+	if req.Provider == "" || req.Model == "" {
+		if err := promptForAgentConfig(reader, appManager, &req); err != nil {
+			return err
+		}
+	}
+
+	// Show preview if requested
+	if req.Preview {
+		return showPreview(appManager, &req)
+	}
+
+	// Confirm if not forced
+	if !req.Force {
+		if err := confirmApply(reader, &req); err != nil {
+			return err
+		}
+	}
+
+	// Apply configuration
+	return executeAgentApply(appManager, &req)
+}
+
+// AgentShowFlagCmdKong shows agent configuration details via flags
+type AgentShowFlagCmdKong struct {
+	AgentType string `kong:"arg,optional,help='Agent type to show'"`
+}
+
+func (a *AgentShowFlagCmdKong) Run(appManager *AppManager) error {
+	reader := bufio.NewReader(os.Stdin)
+
+	// Handle agent type: empty vs invalid vs valid
+	if a.AgentType == "" {
+		// No agent type specified, prompt for selection
+		agentType, err := promptForAgentTypeChoice(reader)
+		if err != nil {
+			return err
+		}
+		return showAgentConfig(appManager, agentType)
+	}
+
+	agentType := agent.AgentType(a.AgentType)
+	if !agentType.IsValid() {
+		// Invalid agent type provided - fail fast
+		fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", a.AgentType)
+		return fmt.Errorf("unknown agent type: %s", a.AgentType)
+	}
+
+	return showAgentConfig(appManager, agentType)
+}
+
+// AgentRestoreFlagCmdKong restores agent configuration from backup
+type AgentRestoreFlagCmdKong struct {
+	AgentType string `kong:"arg,optional,help='Agent type to restore'"`
+	Force     bool   `kong:"flag,name='force',help='Skip confirmation prompt'"`
+}
+
+func (a *AgentRestoreFlagCmdKong) Run(appManager *AppManager) error {
 	var req agent.RestoreAgentRequest
+	req.AgentType = agent.AgentType(a.AgentType)
+	req.Force = a.Force
 
-	cmd := &cobra.Command{
-		Use:   "restore [agent-type]",
-		Short: "Restore agent configuration from the most recent backup",
-		Long: `Restore an agent's config files from the most recent backup created by
-'agent apply'. A pre-restore safety snapshot is taken of each live file
-before the restore overwrites it, so you can roll the restore back if
-something looks wrong.
+	reader := bufio.NewReader(os.Stdin)
 
-Routing rules are not part of the backup. After a restore, run 'agent apply'
-to bring routing rules back in sync if needed.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reader := bufio.NewReader(os.Stdin)
-
-			if len(args) == 0 {
-				agentType, err := promptForAgentTypeChoice(reader)
-				if err != nil {
-					return err
-				}
-				req.AgentType = agentType
-			} else {
-				req.AgentType = agent.AgentType(args[0])
-				if !req.AgentType.IsValid() {
-					fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", args[0])
-					return cmd.Usage()
-				}
-			}
-
-			info, ok := agent.GetAgentInfo(req.AgentType)
-			if !ok {
-				return fmt.Errorf("no info registered for agent type: %s", req.AgentType)
-			}
-
-			if !req.Force {
-				fmt.Println("\nFiles that will be restored from their most recent backup:")
-				for _, f := range info.ConfigFiles {
-					fmt.Printf("  - %s\n", f)
-				}
-				fmt.Print("\nProceed? [y/N]: ")
-				input, err := reader.ReadString('\n')
-				if err != nil {
-					return err
-				}
-				input = strings.TrimSpace(strings.ToLower(input))
-				if input != "y" && input != "yes" {
-					return fmt.Errorf("cancelled by user")
-				}
-			}
-
-			return executeAgentRestore(appManager, &req)
-		},
-		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			types := []string{string(agent.AgentTypeClaudeCode), string(agent.AgentTypeOpenCode)}
-			return types, cobra.ShellCompDirectiveNoFileComp
-		},
+	// Handle agent type: empty vs invalid vs valid
+	if a.AgentType == "" {
+		// No agent type specified, prompt for selection
+		agentType, err := promptForAgentTypeChoice(reader)
+		if err != nil {
+			return err
+		}
+		req.AgentType = agentType
+	} else if !req.AgentType.IsValid() {
+		// Invalid agent type provided - fail fast
+		fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", a.AgentType)
+		return fmt.Errorf("unknown agent type: %s", a.AgentType)
 	}
 
-	cmd.Flags().BoolVar(&req.Force, "force", false, "Skip confirmation prompt")
+	info, ok := agent.GetAgentInfo(req.AgentType)
+	if !ok {
+		return fmt.Errorf("no info registered for agent type: %s", req.AgentType)
+	}
 
-	return cmd
+	if !req.Force {
+		fmt.Println("\nFiles that will be restored from their most recent backup:")
+		for _, f := range info.ConfigFiles {
+			fmt.Printf("  - %s\n", f)
+		}
+		fmt.Print("\nProceed? [y/N]: ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		input = strings.TrimSpace(strings.ToLower(input))
+		if input != "y" && input != "yes" {
+			return fmt.Errorf("cancelled by user")
+		}
+	}
+
+	return executeAgentRestore(appManager, &req)
 }
+
+// ============== Business Logic Functions ==============
 
 // executeAgentRestore performs the agent restore and prints the result.
 func executeAgentRestore(appManager *AppManager, req *agent.RestoreAgentRequest) error {
@@ -118,114 +193,6 @@ func executeAgentRestore(appManager *AppManager, req *agent.RestoreAgentRequest)
 		return fmt.Errorf("restore did not complete successfully")
 	}
 	return nil
-}
-
-// agentApplyCommand creates the apply subcommand
-func agentApplyCommand(appManager *AppManager) *cobra.Command {
-	var req agent.ApplyAgentRequest
-
-	cmd := &cobra.Command{
-		Use:   "apply [agent-type]",
-		Short: "Apply agent configuration",
-		Long: `Apply configuration for an AI agent.
-
-This command configures both the agent's config files and TinglyBox routing rules.
-You can specify agent type as argument, or enter interactive mode to select from available agents.
-You can also specify provider and model via flags, or use interactive prompts.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			reader := bufio.NewReader(os.Stdin)
-
-			// If no agent type specified, prompt for selection
-			if len(args) == 0 {
-				agentType, err := promptForAgentTypeChoice(reader)
-				if err != nil {
-					return err
-				}
-				req.AgentType = agentType
-			} else {
-				req.AgentType = agent.AgentType(args[0])
-
-				// Validate agent type
-				if !req.AgentType.IsValid() {
-					fmt.Fprintf(os.Stderr, "Unknown agent type: %s\n\n", args[0])
-					return cmd.Usage()
-				}
-			}
-
-			// Interactive prompts if provider/model not specified
-			if req.Provider == "" || req.Model == "" {
-				if err := promptForAgentConfig(reader, appManager, &req); err != nil {
-					return err
-				}
-			}
-
-			// Show preview if requested
-			if req.Preview {
-				return showPreview(appManager, &req)
-			}
-
-			// Confirm if not forced
-			if !req.Force {
-				if err := confirmApply(reader, &req); err != nil {
-					return err
-				}
-			}
-
-			// Apply configuration
-			return executeAgentApply(appManager, &req)
-		},
-		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			// Suggest agent types
-			types := []string{string(agent.AgentTypeClaudeCode), string(agent.AgentTypeOpenCode)}
-			return types, cobra.ShellCompDirectiveNoFileComp
-		},
-	}
-
-	cmd.Flags().StringVar(&req.Provider, "provider", "", "Provider UUID (optional, prompts if empty)")
-	cmd.Flags().StringVar(&req.Model, "model", "", "Model name (optional, prompts if empty)")
-	cmd.Flags().BoolVar(&req.Unified, "unified", true, "Unified mode (claude-code only: single config for all models)")
-	cmd.Flags().BoolVar(&req.InstallStatusLine, "status-line", false, "Install status line integration (claude-code only)")
-	cmd.Flags().BoolVar(&req.Force, "force", false, "Skip confirmation prompt")
-	cmd.Flags().BoolVar(&req.Preview, "preview", false, "Preview configuration without applying")
-
-	return cmd
-}
-
-// agentListCommand creates the list subcommand
-func agentListCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List available agent types",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return listAgentTypes()
-		},
-	}
-
-	return cmd
-}
-
-// agentShowCommand creates the show subcommand
-func agentShowCommand(appManager *AppManager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "show <agent-type>",
-		Short: "Show current configuration for an agent type",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			agentType := agent.AgentType(args[0])
-			if !agentType.IsValid() {
-				return fmt.Errorf("unknown agent type: %s", args[0])
-			}
-			return showAgentConfig(appManager, agentType)
-		},
-		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-			types := []string{string(agent.AgentTypeClaudeCode), string(agent.AgentTypeOpenCode)}
-			return types, cobra.ShellCompDirectiveNoFileComp
-		},
-	}
-
-	return cmd
 }
 
 // promptForAgentTypeChoice prompts user to select an agent type
