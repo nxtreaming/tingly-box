@@ -14,6 +14,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import LanguageIcon from '@mui/icons-material/Language';
 import DescriptionIcon from '@mui/icons-material/Description';
+import AddIcon from '@mui/icons-material/Add';
 import ProviderIcon from '@/components/ProviderIcon';
 import {useProviderTemplates, type UniqueProvider} from '@/services/serviceProviders';
 import type {EnhancedProviderFormData} from '@/components/ProviderFormDialog';
@@ -21,6 +22,66 @@ import type {EnhancedProviderFormData} from '@/components/ProviderFormDialog';
 interface BrowseProvidersProps {
     onPick: (prefill: EnhancedProviderFormData) => void;
 }
+
+// Empty form data for custom provider entry
+const emptyForm = (): EnhancedProviderFormData => ({
+    name: '',
+    apiBase: '',
+    apiStyle: undefined,
+    token: '',
+    enabled: true,
+    noKeyRequired: false,
+    proxyUrl: '',
+});
+
+// Common card styles to ensure consistent dimensions
+const cardSx = {
+    borderRadius: 2,
+    height: 80,
+    display: 'flex',
+    flexDirection: 'column' as const,
+};
+
+const cardActionAreaSx = {
+    height: 80,
+    p: 1.5,
+    display: 'flex',
+    alignItems: 'center',
+};
+
+// Custom provider card component
+const CustomProviderCard: React.FC<{ onPick: () => void }> = ({ onPick }) => {
+    const { t } = useTranslation();
+    return (
+        <Card
+            variant="outlined"
+            sx={{
+                ...cardSx,
+                borderStyle: 'dashed',
+                borderColor: 'primary.main',
+                bgcolor: 'primary.50',
+                transition: 'all 0.2s',
+                '&:hover': {
+                    bgcolor: 'primary.100',
+                    borderColor: 'primary.dark',
+                },
+            }}
+        >
+            <CardActionArea onClick={onPick} sx={cardActionAreaSx}>
+                <Stack direction="row" spacing={1.5} alignItems="center" width="100%">
+                    <AddIcon sx={{ color: 'primary.main', fontSize: 32 }} />
+                    <Typography
+                        variant="subtitle2"
+                        fontWeight={600}
+                        color="primary.main"
+                    >
+                        {t('onboarding.browse.customProvider', { defaultValue: 'Custom Provider' })}
+                    </Typography>
+                </Stack>
+            </CardActionArea>
+        </Card>
+    );
+};
 
 const BrowseProviders: React.FC<BrowseProvidersProps> = ({onPick}) => {
     const {t} = useTranslation();
@@ -75,28 +136,30 @@ const BrowseProviders: React.FC<BrowseProvidersProps> = ({onPick}) => {
                 />
             </Box>
 
-            {filtered.length === 0 ? (
-                <Box sx={{py: 6, textAlign: 'center'}}>
-                    <Typography variant="body2" color="text.secondary">
-                        {t('onboarding.browse.empty', {defaultValue: 'No providers match your filters.'})}
-                    </Typography>
-                </Box>
-            ) : (
-                <Box
-                    sx={{
-                        display: 'grid',
-                        gap: 1.5,
-                        gridTemplateColumns: {
-                            xs: '1fr',
-                            sm: 'repeat(2, 1fr)',
-                            md: 'repeat(3, 1fr)',
-                            xl: 'repeat(4, 1fr)',
-                        },
-                    }}
-                >
-                    {filtered.map(p => (
-                        <Card key={p.id} variant="outlined" sx={{borderRadius: 2}}>
-                            <CardActionArea onClick={() => handlePick(p)} sx={{p: 1.5}}>
+            <Box
+                sx={{
+                    display: 'grid',
+                    gap: 1.5,
+                    gridTemplateColumns: {
+                        xs: '1fr',
+                        sm: 'repeat(2, 1fr)',
+                        md: 'repeat(3, 1fr)',
+                        xl: 'repeat(4, 1fr)',
+                    },
+                }}
+            >
+                {/* Custom provider card - always visible, even when no providers match search */}
+                <CustomProviderCard onPick={() => onPick(emptyForm())} />
+                {filtered.length === 0 ? (
+                    <Box sx={{py: 6, textAlign: 'center', gridColumn: '1 / -1'}}>
+                        <Typography variant="body2" color="text.secondary">
+                            {t('onboarding.browse.empty', {defaultValue: 'No providers match your filters.'})}
+                        </Typography>
+                    </Box>
+                ) : (
+                    filtered.map(p => (
+                        <Card key={p.id} variant="outlined" sx={cardSx}>
+                            <CardActionArea onClick={() => handlePick(p)} sx={cardActionAreaSx}>
                                 <Stack direction="row" spacing={1.5} alignItems="center" justifyContent="space-between" width="100%">
                                     <Stack direction="row" spacing={1.5} alignItems="center">
                                         <ProviderIcon identifier={p.icon || p.id} size={32}/>
@@ -163,9 +226,9 @@ const BrowseProviders: React.FC<BrowseProvidersProps> = ({onPick}) => {
                                 </Stack>
                             </CardActionArea>
                         </Card>
-                    ))}
-                </Box>
-            )}
+                    ))
+                )}
+            </Box>
         </Box>
     );
 };
