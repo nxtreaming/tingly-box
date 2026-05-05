@@ -333,6 +333,9 @@ func (h *streamingMessageHandler) GetOutput() string {
 // sendMessage sends a message to the bot
 // Note: Platform handles chunking internally via BaseBot.ChunkText()
 func (h *streamingMessageHandler) sendMessage(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
 	_, err := h.bot.SendMessage(context.Background(), h.chatID, &imbot.SendMessageOptions{
 		Text:      text,
 		ParseMode: imbot.ParseModeMarkdown,

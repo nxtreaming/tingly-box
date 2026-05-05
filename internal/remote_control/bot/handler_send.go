@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/imbot"
@@ -81,6 +82,11 @@ func (h *BotHandler) sendTextWithReply(hCtx HandlerContext, text string, replyTo
 // The platform's BaseBot.ChunkText() doesn't support "last chunk only" metadata yet.
 // TODO: Add platform support for metadata that only applies to the last chunk.
 func (h *BotHandler) sendTextWithActionKeyboard(hCtx HandlerContext, text string, replyTo string) {
+	if strings.TrimSpace(text) == "" {
+		// ChunkText("") returns [""] which would otherwise produce an empty
+		// outbound bubble. Drop silently — there's nothing to render.
+		return
+	}
 	kb := feature.BuildActionKeyboard()
 	tgKeyboard := imbot.BuildTelegramActionKeyboard(kb.Build())
 
