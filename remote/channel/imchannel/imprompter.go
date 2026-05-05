@@ -124,12 +124,12 @@ func (p *IMPrompter) Prompt(ctx context.Context, req ask.Request) (ask.Result, e
 	// Create response channel
 	responseChan := make(chan ask.Result, 1)
 
-	// Count questions for AskUserQuestion requests
+	// Count questions for AskUserQuestion requests. The "questions" payload
+	// can arrive as []interface{}, []map[string]any, or []any depending on
+	// the caller — normalize once.
 	totalQuestions := 0
 	if req.ToolName == "AskUserQuestion" {
-		if questions, ok := req.Input["questions"].([]interface{}); ok {
-			totalQuestions = len(questions)
-		}
+		totalQuestions = len(ask.NormalizeQuestions(req.Input["questions"]))
 	}
 
 	p.mu.Lock()
@@ -229,8 +229,8 @@ func (p *IMPrompter) Prompt(ctx context.Context, req ask.Request) (ask.Result, e
 // buildTimeoutQuestionResult builds a result that auto-selects the first (recommended) option
 // for AskUserQuestion when it times out.
 func (p *IMPrompter) buildTimeoutQuestionResult(req ask.Request) ask.Result {
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := ask.NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		return ask.Result{
 			ID:       req.ID,
 			Approved: false,
@@ -240,23 +240,17 @@ func (p *IMPrompter) buildTimeoutQuestionResult(req ask.Request) ask.Result {
 
 	// For each question, select its first option as the recommended default
 	answers := make(map[string]interface{})
-	for _, q := range questions {
-		question, ok := q.(map[string]interface{})
-		if !ok {
-			continue
-		}
+	for _, question := range questions {
 		questionText, ok := question["question"].(string)
 		if !ok {
 			continue
 		}
-		options, ok := question["options"].([]interface{})
-		if !ok || len(options) == 0 {
+		options := ask.NormalizeOptions(question["options"])
+		if len(options) == 0 {
 			continue
 		}
-		if opt, ok := options[0].(map[string]interface{}); ok {
-			if label, ok := opt["label"].(string); ok {
-				answers[questionText] = label
-			}
+		if label, ok := options[0]["label"].(string); ok {
+			answers[questionText] = label
 		}
 	}
 
@@ -451,19 +445,15 @@ func (p *IMPrompter) buildDefaultKeyboard(requestID string) imbot.InlineKeyboard
 func (p *IMPrompter) buildAskUserQuestionKeyboard(req ask.Request) imbot.InlineKeyboardMarkup {
 	kb := imbot.NewKeyboardBuilder()
 
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := ask.NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		return p.buildDefaultKeyboard(req.ID)
 	}
 
 	// Build buttons for each question and its options
-	for qIdx, q := range questions {
-		question, ok := q.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		options, ok := question["options"].([]interface{})
-		if !ok || len(options) == 0 {
+	for qIdx, question := range questions {
+		options := ask.NormalizeOptions(question["options"])
+		if len(options) == 0 {
 			continue
 		}
 		// Add a label row for the question if there are multiple questions
@@ -471,14 +461,12 @@ func (p *IMPrompter) buildAskUserQuestionKeyboard(req ask.Request) imbot.InlineK
 			questionText, _ := question["question"].(string)
 			kb.AddRow(imbot.CallbackButton(fmt.Sprintf("Q%d: %s", qIdx+1, questionText), imbot.FormatCallbackData("perm", "noop", req.ID)))
 		}
-		for optIdx, opt := range options {
-			if option, ok := opt.(map[string]interface{}); ok {
-				label, _ := option["label"].(string)
-				if label != "" {
-					buttonText := fmt.Sprintf("%d. %s", optIdx+1, label)
-					callbackData := imbot.FormatCallbackData("perm", "option", req.ID, fmt.Sprintf("%d", qIdx), fmt.Sprintf("%d", optIdx))
-					kb.AddRow(imbot.CallbackButton(buttonText, callbackData))
-				}
+		for optIdx, option := range options {
+			label, _ := option["label"].(string)
+			if label != "" {
+				buttonText := fmt.Sprintf("%d. %s", optIdx+1, label)
+				callbackData := imbot.FormatCallbackData("perm", "option", req.ID, fmt.Sprintf("%d", qIdx), fmt.Sprintf("%d", optIdx))
+				kb.AddRow(imbot.CallbackButton(buttonText, callbackData))
 			}
 		}
 	}
@@ -493,21 +481,17 @@ func (p *IMPrompter) buildAskUserQuestionKeyboard(req ask.Request) imbot.InlineK
 func (p *IMPrompter) buildTextSelectionInstructions(req ask.Request) string {
 	var text strings.Builder
 
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := ask.NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		// Fallback: use permission instructions from shared config
 		return ask.FormatPermissionInstructions()
 	}
 
 	// For AskUserQuestion - list all questions and options
-	for qIdx, q := range questions {
-		question, ok := q.(map[string]interface{})
-		if !ok {
-			continue
-		}
+	for qIdx, question := range questions {
 		questionText, _ := question["question"].(string)
-		options, ok := question["options"].([]interface{})
-		if !ok {
+		options := ask.NormalizeOptions(question["options"])
+		if len(options) == 0 {
 			continue
 		}
 		if len(questions) > 1 {
@@ -515,15 +499,13 @@ func (p *IMPrompter) buildTextSelectionInstructions(req ask.Request) string {
 		} else {
 			text.WriteString("*To select an option, reply with the number:*\n\n")
 		}
-		for i, opt := range options {
-			if option, ok := opt.(map[string]interface{}); ok {
-				label, _ := option["label"].(string)
-				desc, hasDesc := option["description"].(string)
-				if hasDesc && desc != "" {
-					text.WriteString(fmt.Sprintf("• `%d` - %s - %s\n", i+1, label, desc))
-				} else {
-					text.WriteString(fmt.Sprintf("• `%d` - %s\n", i+1, label))
-				}
+		for i, option := range options {
+			label, _ := option["label"].(string)
+			desc, hasDesc := option["description"].(string)
+			if hasDesc && desc != "" {
+				text.WriteString(fmt.Sprintf("• `%d` - %s - %s\n", i+1, label, desc))
+			} else {
+				text.WriteString(fmt.Sprintf("• `%d` - %s\n", i+1, label))
 			}
 		}
 		text.WriteString("\n")
@@ -636,6 +618,11 @@ func (p *IMPrompter) IsWhitelisted(toolName string) bool {
 
 	return p.whitelist[toolName]
 }
+
+// normalizeQuestionList re-exports ask.NormalizeQuestions for the local tests.
+// The shared implementation lives in agentboot/ask/normalize.go so the same
+// coercion logic is used by every prompter (IM, stdin, tool_handlers).
+func normalizeQuestionList(v any) []map[string]any { return ask.NormalizeQuestions(v) }
 
 // Legacy compatibility methods
 

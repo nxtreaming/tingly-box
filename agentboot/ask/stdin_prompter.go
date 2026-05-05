@@ -113,8 +113,8 @@ func (p *StdinPrompter) Prompt(ctx context.Context, req Request) (Result, error)
 
 // promptAskUserQuestion handles AskUserQuestion tool with multi-option selection
 func (p *StdinPrompter) promptAskUserQuestion(ctx context.Context, req Request) (Result, error) {
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		return Result{
 			ID:           req.ID,
 			Approved:     true,
@@ -127,12 +127,7 @@ func (p *StdinPrompter) promptAskUserQuestion(ctx context.Context, req Request) 
 
 	answers := make(map[string]interface{})
 
-	for i, q := range questions {
-		question, ok := q.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
+	for i, question := range questions {
 		questionText, _ := question["question"].(string)
 		header, _ := question["header"].(string)
 
@@ -142,17 +137,13 @@ func (p *StdinPrompter) promptAskUserQuestion(ctx context.Context, req Request) 
 		fmt.Printf("%s\n", questionText)
 
 		// Show options
-		options, ok := question["options"].([]interface{})
-		if !ok || len(options) == 0 {
+		options := NormalizeOptions(question["options"])
+		if len(options) == 0 {
 			continue
 		}
 
 		fmt.Printf("\nOptions:\n")
-		for j, opt := range options {
-			option, ok := opt.(map[string]interface{})
-			if !ok {
-				continue
-			}
+		for j, option := range options {
 			label, _ := option["label"].(string)
 			desc, _ := option["description"].(string)
 			if desc != "" {
@@ -202,13 +193,11 @@ func (p *StdinPrompter) promptAskUserQuestion(ctx context.Context, req Request) 
 
 			// If not a valid number, try matching by label
 			if selectedIndex < 0 {
-				for j, opt := range options {
-					if option, ok := opt.(map[string]interface{}); ok {
-						if label, ok := option["label"].(string); ok {
-							if strings.EqualFold(label, r.response) {
-								selectedIndex = j
-								break
-							}
+				for j, option := range options {
+					if label, ok := option["label"].(string); ok {
+						if strings.EqualFold(label, r.response) {
+							selectedIndex = j
+							break
 						}
 					}
 				}
@@ -218,10 +207,8 @@ func (p *StdinPrompter) promptAskUserQuestion(ctx context.Context, req Request) 
 			if selectedIndex < 0 {
 				selectedLabel = r.response
 			} else if selectedIndex >= 0 && selectedIndex < len(options) {
-				if option, ok := options[selectedIndex].(map[string]interface{}); ok {
-					if label, ok := option["label"].(string); ok {
-						selectedLabel = label
-					}
+				if label, ok := options[selectedIndex]["label"].(string); ok {
+					selectedLabel = label
 				}
 			}
 

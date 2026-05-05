@@ -32,22 +32,16 @@ func (h *AskUserQuestionHandler) BuildPrompt(req Request) string {
 
 	text.WriteString("❓ *Question*\n\n")
 
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		text.WriteString("_No questions provided_\n")
 		logrus.WithFields(map[string]interface{}{
-			"has_questions":  ok,
 			"questions_type": fmt.Sprintf("%T", req.Input["questions"]),
 		}).Debug("BuildPrompt: questions parsing result")
 		return text.String()
 	}
 
-	for i, q := range questions {
-		question, ok := q.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
+	for i, question := range questions {
 		questionText, _ := question["question"].(string)
 		header, _ := question["header"].(string)
 
@@ -57,14 +51,10 @@ func (h *AskUserQuestionHandler) BuildPrompt(req Request) string {
 		text.WriteString(fmt.Sprintf("%d. %s\n\n", i+1, questionText))
 
 		// Show options with clear mapping to buttons
-		options, ok := question["options"].([]interface{})
-		if ok && len(options) > 0 {
+		options := NormalizeOptions(question["options"])
+		if len(options) > 0 {
 			text.WriteString("Options:\n")
-			for j, opt := range options {
-				option, ok := opt.(map[string]interface{})
-				if !ok {
-					continue
-				}
+			for j, option := range options {
 				label, _ := option["label"].(string)
 				desc, _ := option["description"].(string)
 				// Format to match button labels (Option 1, Option 2, etc.)
@@ -87,8 +77,8 @@ func (h *AskUserQuestionHandler) BuildPrompt(req Request) string {
 
 // ParseResponse parses the user's selection into the answers format
 func (h *AskUserQuestionHandler) ParseResponse(req Request, response Response) (Result, error) {
-	questions, ok := req.Input["questions"].([]interface{})
-	if !ok || len(questions) == 0 {
+	questions := NormalizeQuestions(req.Input["questions"])
+	if len(questions) == 0 {
 		return Result{
 			ID:       req.ID,
 			Approved: false,
@@ -110,26 +100,19 @@ func (h *AskUserQuestionHandler) ParseResponse(req Request, response Response) (
 	}
 
 	// Try to match against first question (most common case for stdin single-line input)
-	if len(questions) > 0 {
-		question, ok := questions[0].(map[string]interface{})
-		if ok {
-			questionText, _ := question["question"].(string)
-			options, ok := question["options"].([]interface{})
-			if ok {
-				selectedIndex, selectedLabel := h.parseSelection(selection, options)
+	question := questions[0]
+	questionText, _ := question["question"].(string)
+	options := NormalizeOptions(question["options"])
+	if len(options) > 0 {
+		selectedIndex, selectedLabel := h.parseSelection(selection, options)
 
-				if selectedIndex >= 0 && selectedIndex < len(options) {
-					// Store the selected option label as the answer
-					if opt, ok := options[selectedIndex].(map[string]interface{}); ok {
-						if label, ok := opt["label"].(string); ok {
-							answers[questionText] = label
-						}
-					}
-				} else if selectedLabel != "" {
-					// User typed the label directly
-					answers[questionText] = selectedLabel
-				}
+		if selectedIndex >= 0 && selectedIndex < len(options) {
+			if label, ok := options[selectedIndex]["label"].(string); ok {
+				answers[questionText] = label
 			}
+		} else if selectedLabel != "" {
+			// User typed the label directly
+			answers[questionText] = selectedLabel
 		}
 	}
 
@@ -154,7 +137,7 @@ func (h *AskUserQuestionHandler) ParseResponse(req Request, response Response) (
 //   - 1-based number (user types "1" for first option)
 //   - 0-based index from callback (e.g., "0", "1")
 //   - label text (exact or case-insensitive match)
-func (h *AskUserQuestionHandler) parseSelection(selection string, options []interface{}) (int, string) {
+func (h *AskUserQuestionHandler) parseSelection(selection string, options []map[string]any) (int, string) {
 	// Try to parse as number
 	var index int
 	if _, err := fmt.Sscanf(selection, "%d", &index); err == nil {
@@ -172,12 +155,10 @@ func (h *AskUserQuestionHandler) parseSelection(selection string, options []inte
 
 	// Try to match by label (case-insensitive)
 	selectionLower := strings.ToLower(selection)
-	for i, opt := range options {
-		if option, ok := opt.(map[string]interface{}); ok {
-			if label, ok := option["label"].(string); ok {
-				if strings.ToLower(label) == selectionLower {
-					return i, ""
-				}
+	for i, option := range options {
+		if label, ok := option["label"].(string); ok {
+			if strings.ToLower(label) == selectionLower {
+				return i, ""
 			}
 		}
 	}
