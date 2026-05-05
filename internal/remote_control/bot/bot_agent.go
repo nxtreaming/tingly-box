@@ -292,9 +292,11 @@ func (h *BotHandler) getCurrentAgent(chatID string) (agentboot.AgentType, error)
 	return agentTinglyBox, nil
 }
 
-// setCurrentAgent sets the current agent for a chat
-func (h *BotHandler) setCurrentAgent(chatID string, agentType agentboot.AgentType) error {
-	return h.chatStore.SetCurrentAgent(chatID, string(agentType))
+// setCurrentAgent sets the current agent for a chat. The platform is
+// forwarded so fresh chats — those not yet created by /cd or /bind — get
+// a row with the correct platform on the first handoff.
+func (h *BotHandler) setCurrentAgent(chatID, platform string, agentType agentboot.AgentType) error {
+	return h.chatStore.SetCurrentAgent(chatID, platform, string(agentType))
 }
 
 // handleHandoff performs a handoff from one agent to another
@@ -326,8 +328,10 @@ func (h *BotHandler) handleHandoff(hCtx HandlerContext, toAgent agentboot.AgentT
 		return fmt.Errorf("handoff failed: %s", result.Error)
 	}
 
-	// Update current agent in chat store
-	if err := h.setCurrentAgent(hCtx.ChatID, toAgent); err != nil {
+	// Update current agent in chat store. Pass platform so a brand-new
+	// chat gets created with the right platform — without this, UpdateChat
+	// silently no-ops on a missing row and the handoff fails to stick.
+	if err := h.setCurrentAgent(hCtx.ChatID, string(hCtx.Platform), toAgent); err != nil {
 		logrus.WithError(err).Error("Failed to update current agent after handoff")
 	}
 
