@@ -195,11 +195,13 @@ const SystemLogViewer = ({ getLogs, getRequestBody, pathPrefix }: SystemLogViewe
         }
     }, [autoRefresh]);
 
-    // Scroll to bottom when logs update
+    // Scroll to bottom when logs update — defer to after browser layout
     useEffect(() => {
-        if (tableContainerRef.current && logs.length > 0) {
-            tableContainerRef.current.scrollTop = tableContainerRef.current.scrollHeight;
-        }
+        if (!tableContainerRef.current || logs.length === 0) return;
+        const el = tableContainerRef.current;
+        requestAnimationFrame(() => {
+            el.scrollTop = el.scrollHeight;
+        });
     }, [logs]);
 
     const formatRequestBody = (body: string): string => {
