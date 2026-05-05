@@ -20,6 +20,7 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/server"
 	serverconfig "github.com/tingly-dev/tingly-box/internal/server/config"
+	"github.com/tingly-dev/tingly-box/pkg/daemon"
 	"github.com/tingly-dev/tingly-box/pkg/lock"
 	"github.com/tingly-dev/tingly-box/pkg/network"
 )
@@ -535,12 +536,7 @@ func startServerWithHook(appManager *AppManager, opts options.StartServerOptions
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start server in goroutine to keep it non-blocking
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- serverManager.Start()
-	}()
-
+	// Print startup information before daemonizing
 	fmt.Printf("Server starting on port %d...\n", port)
 
 	printBanner(BannerConfig{
@@ -550,6 +546,26 @@ func startServerWithHook(appManager *AppManager, opts options.StartServerOptions
 		GlobalConfig: appConfig.GetGlobalConfig(),
 		IsDaemon:     false,
 	})
+
+	// Handle daemon mode - fork and detach after all messages are printed
+	if opts.Daemon {
+		if !daemon.IsDaemonProcess() {
+			// Fork and detach - this call exits the parent process
+			if err := daemon.Daemonize(); err != nil {
+				fileLock.Unlock()
+				return fmt.Errorf("failed to daemonize: %w", err)
+			}
+			// Daemonize() calls os.Exit(0), so we never reach here in parent
+		}
+		// Child process continues here
+		fmt.Println("Server running in background (daemon mode)")
+	}
+
+	// Start server in goroutine to keep it non-blocking
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- serverManager.Start()
+	}()
 
 	// Wait for either server error, shutdown signal, or web UI stop request
 	select {
