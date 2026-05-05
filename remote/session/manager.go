@@ -142,6 +142,19 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return session, exists
 }
 
+// GetStatus returns the current status of a session, read under the manager's
+// own lock. Callers that need a race-free status read should prefer this over
+// dereferencing a *Session pointer returned by Get or ListByChat.
+func (m *Manager) GetStatus(id string) (Status, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	sess, exists := m.sessions[id]
+	if !exists {
+		return "", false
+	}
+	return sess.Status, true
+}
+
 // GetOrLoad retrieves a session by ID, falling back to the store if needed
 func (m *Manager) GetOrLoad(id string) (*Session, bool) {
 	m.mu.RLock()
