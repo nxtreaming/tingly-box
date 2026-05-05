@@ -20,6 +20,8 @@ interface UnifiedCardProps {
   leftAction?: ReactNode;
   rightAction?: ReactNode;
   sx?: SxProps<Theme>;
+  // DOM id forwarded to the root Card — useful as a scroll/anchor target
+  id?: string;
 }
 
 
@@ -116,10 +118,12 @@ export const UnifiedCard = forwardRef<HTMLDivElement, UnifiedCardProps>(({
   leftAction,
   rightAction,
   sx = {},
+  id,
 }, ref) => {
   return (
     <Card
       ref={ref}
+      id={id}
       sx={{
         ...getCardDimensions(size, width, height),
         ...cardVariants[variant],
