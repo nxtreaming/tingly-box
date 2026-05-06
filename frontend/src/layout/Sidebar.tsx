@@ -16,10 +16,11 @@ import {
     Typography,
 } from '@mui/material';
 import React, { useCallback, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import {Trans, useTranslation} from 'react-i18next';
 import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { api } from '@/services/api';
 import { useProfileContext } from '@/contexts/ProfileContext';
+import { useVersion } from '@/contexts/VersionContext';
 import { footerHeight, headerHeight, sidebarWidth } from './constants';
 import type { NavItem } from './types';
 
@@ -33,6 +34,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ sidebarItems, activeActivityLa
     const { t } = useTranslation();
     const location = useLocation();
     const { refresh } = useProfileContext();
+    const { currentVersion } = useVersion();
+    const displayVersion = (currentVersion || 'Unknown').split('+')[0];
 
     const [addProfileAnchorEl, setAddProfileAnchorEl] = useState<HTMLElement | null>(null);
     const [newProfileName, setNewProfileName] = useState('');
@@ -223,6 +226,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ sidebarItems, activeActivityLa
                 })}
             </List>
 
+            {/* Footer top row: version */}
+            <Box
+                sx={{
+                    py: 1.5, px: 2,
+                    borderColor: 'divider',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    height: footerHeight,
+                }}
+            >
+                <Typography
+                    sx={{
+                        color: 'text.secondary',
+                        fontSize: '0.7rem',
+                        textAlign: 'center',
+                        display: 'block',
+                        fontStyle: 'italic',
+                        cursor: 'default',
+                        maxWidth: '100%',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    <Trans i18nKey="layout.version" values={{ version: displayVersion }} />
+                </Typography>
+            </Box>
+
             {/* Add Profile Popover */}
             <Popover
                 open={Boolean(addProfileAnchorEl)}
@@ -269,8 +302,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ sidebarItems, activeActivityLa
                 </Box>
             </Popover>
 
-            {/* Footer Slogan */}
-            <Box sx={{ height: footerHeight, py: 1.5, px: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+            {/* Footer bottom row: slogan */}
+            <Box
+                sx={{
+                   height: footerHeight, py: 1.5, px: 2, borderTop: '1px solid', borderColor: 'divider'
+                }}
+            >
                 <Tooltip title={t('layout.sidebar.sloganTooltip')} placement="top" arrow>
                     <Typography
                         variant="caption"
