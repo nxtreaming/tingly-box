@@ -15,49 +15,7 @@ import (
 	"github.com/tingly-dev/tingly-box/imbot"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/smart_guide"
-	"github.com/tingly-dev/tingly-box/remote/session"
 )
-
-type CompletionCallback struct {
-	hCtx       HandlerContext
-	sessionID  string
-	sessionMgr *session.Manager
-	meta       *ResponseMeta
-}
-
-func (c *CompletionCallback) OnComplete(result *agentboot.CompletionResult) {
-	// Update session status based on completion result
-	if c.sessionMgr != nil && c.sessionID != "" {
-		if result.Success {
-			c.sessionMgr.SetCompleted(c.sessionID, "")
-		} else {
-			c.sessionMgr.SetFailed(c.sessionID, result.Error)
-		}
-	}
-
-	// Build action keyboard and card
-	kb := feature.BuildActionKeyboard()
-	tgKeyboard := imbot.BuildTelegramActionKeyboard(kb.Build())
-	actionCard := feature.BuildActionCard()
-
-	doneText := IconDone + " " + MsgTaskDone + ". " + MsgContinueOrHelp + BuildFooter(c.meta.AgentType, c.meta.ProjectPath)
-	_, err := c.hCtx.Bot.SendMessage(context.Background(), c.hCtx.ChatID, &imbot.SendMessageOptions{
-		Text:     doneText,
-		Metadata: buildTrackedActionMenuMetadata(c.hCtx, tgKeyboard, actionCard),
-	})
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to send action keyboard")
-	}
-
-	// Log completion event
-	logrus.WithFields(logrus.Fields{
-		"chatID":    c.hCtx.ChatID,
-		"sessionID": c.sessionID,
-		"success":   result.Success,
-		"duration":  result.DurationMS,
-		"error":     result.Error,
-	}).Info("Agent execution completed via callback")
-}
 
 // SmartGuideCompletionCallback handles completion events for SmartGuide agent
 // It saves messages to session, updates project path if changed, and sends response + action keyboard
@@ -292,9 +250,11 @@ func (h *BotHandler) getCurrentAgent(chatID string) (agentboot.AgentType, error)
 	return agentTinglyBox, nil
 }
 
-// setCurrentAgent sets the current agent for a chat
-func (h *BotHandler) setCurrentAgent(chatID string, agentType agentboot.AgentType) error {
-	return h.chatStore.SetCurrentAgent(chatID, string(agentType))
+// setCurrentAgent sets the current agent for a chat. The platform is
+// forwarded so fresh chats — those not yet created by /cd or /bind — get
+// a row with the correct platform on the first handoff.
+func (h *BotHandler) setCurrentAgent(chatID, platform string, agentType agentboot.AgentType) error {
+	return h.chatStore.SetCurrentAgent(chatID, platform, string(agentType))
 }
 
 // handleHandoff performs a handoff from one agent to another
@@ -326,8 +286,10 @@ func (h *BotHandler) handleHandoff(hCtx HandlerContext, toAgent agentboot.AgentT
 		return fmt.Errorf("handoff failed: %s", result.Error)
 	}
 
-	// Update current agent in chat store
-	if err := h.setCurrentAgent(hCtx.ChatID, toAgent); err != nil {
+	// Update current agent in chat store. Pass platform so a brand-new
+	// chat gets created with the right platform — without this, UpdateChat
+	// silently no-ops on a missing row and the handoff fails to stick.
+	if err := h.setCurrentAgent(hCtx.ChatID, string(hCtx.Platform), toAgent); err != nil {
 		logrus.WithError(err).Error("Failed to update current agent after handoff")
 	}
 
@@ -360,8 +322,6 @@ func (h *BotHandler) routeToAgent(hCtx HandlerContext, text string) error {
 			targetAgent = agentTinglyBox
 		case smart_guide.AgentTypeClaudeCode:
 			targetAgent = agentClaudeCode
-		case smart_guide.AgentTypeMock:
-			targetAgent = agentMock
 		default:
 			return fmt.Errorf("unknown target agent: %s", toAgent)
 		}

@@ -7,47 +7,44 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tingly-dev/tingly-box/agentboot/claude/fixture"
 	"github.com/tingly-dev/tingly-box/imbot/platform/tingly"
 	"github.com/tingly-dev/tingly-box/imbot/platform/tingly/testenv"
-	mockagent "github.com/tingly-dev/tingly-box/agentboot/mockagent"
 	"github.com/tingly-dev/tingly-box/remote/session"
 )
 
 // Test_AgentE2E_AssistantTextSentExactlyOnce asserts the assistant text
 // emitted by the script reaches the chat exactly once, not twice.
 //
-// Background: MockAgentExecutor previously sent the response a second time
-// via SendTextWithActionKeyboard *after* streamingMessageHandler had already
-// streamed it. This test caught that regression.
+// Background: the bot executor previously sent the response a second time
+// via SendTextWithActionKeyboard *after* streamingMessageHandler had
+// already streamed it. This test guards against that regression.
 func Test_AgentE2E_AssistantTextSentExactlyOnce(t *testing.T) {
-	const phrase = "hello from mock once"
+	const phrase = "hello from fixture once"
 
-	_, _, chat := agentBoot(t, mockagent.NewScript().
-		Assistant(phrase).
-		Success("done").
-		Build())
+	_, _, chat := agentBoot(t, fixture.Script{
+		fixture.AssistantText(phrase),
+		fixture.Result(true),
+	})
 
 	chat.SendText("hi")
 	drainProcessingPreface(t, chat)
 
 	// Wait for the script to fully play out: streaming text + the
-	// CompletionCallback's "Task done" card.
+	// "Task done" card.
 	waitTextContaining(t, chat, "Task done", 6, 3*time.Second)
 
 	chat.AssertTextOccurrences(phrase, 1)
 }
 
-// Test_AgentE2E_MockTaskDoneCard asserts the mock executor delivers the
-// CompletionCallback "Task done" footer + action keyboard at the end of a
-// successful run, matching the Claude Code path.
-//
-// Background: MockAgentExecutor never registered SetCompletionCallback, so
-// no "Task done" card was ever sent for mock-routed chats.
-func Test_AgentE2E_MockTaskDoneCard(t *testing.T) {
-	_, harness, chat := agentBoot(t, mockagent.NewScript().
-		Assistant("processing").
-		Success("ok").
-		Build())
+// Test_AgentE2E_TaskDoneCard asserts the executor delivers the "Task done"
+// footer + action keyboard at the end of a successful run, and that the
+// session ends in completed.
+func Test_AgentE2E_TaskDoneCard(t *testing.T) {
+	_, harness, chat := agentBoot(t, fixture.Script{
+		fixture.AssistantText("processing"),
+		fixture.Result(true),
+	})
 
 	chat.SendText("go")
 	drainProcessingPreface(t, chat)
@@ -62,24 +59,23 @@ func Test_AgentE2E_MockTaskDoneCard(t *testing.T) {
 	}
 	require.NotNil(t, doneEvt, "expected a Task done card after script success")
 
-	// Session must be marked completed by the CompletionCallback.
-	// lastMockSession polls until terminal (race-free via GetStatus).
-	require.Equal(t, session.StatusCompleted, lastMockSession(t, harness, chat.ChatID),
-		"CompletionCallback should mark mock session as completed")
+	// Session must be marked completed by the executor's success path.
+	require.Equal(t, session.StatusCompleted, lastClaudeSession(t, harness, chat.ChatID),
+		"successful Result should mark claude session as completed")
 }
 
 // Test_AgentE2E_DenyDoesNotSendEmptyMessage asserts that when a permission
-// is denied and the script halts (no further assistant text), the bot does
-// NOT send an empty message via the action-keyboard path.
+// is denied, the bot does NOT send an empty message via the action-
+// keyboard path.
 //
 // Background: ChunkText("") returned [""] and SendTextWithActionKeyboard
 // happily sent it. Tests that scanned for "Deny" / "Denied" never noticed
 // the empty bubble that landed in chat.
 func Test_AgentE2E_DenyDoesNotSendEmptyMessage(t *testing.T) {
-	_, _, chat := agentBoot(t, mockagent.NewScript().
-		Permission("Bash", map[string]any{"command": "rm -rf /"},
-			mockagent.WithExpectApproved(false)).
-		Build())
+	_, _, chat := agentBoot(t, fixture.Script{
+		fixture.PermissionRequest("req-empty", "Bash", map[string]any{"command": "rm -rf /"}),
+		fixture.Result(false),
+	})
 
 	chat.SendText("dangerous")
 	drainProcessingPreface(t, chat)
@@ -87,9 +83,7 @@ func Test_AgentE2E_DenyDoesNotSendEmptyMessage(t *testing.T) {
 	prompt := chat.WaitApprovalPrompt(3 * time.Second)
 	prompt.Deny()
 
-	// Wait long enough for: callback ack → IMPrompter edits prompt to
-	// "❌ Denied" → MockAgentExecutor's post-script SendTextWithActionKeyboard
-	// (which currently sends an empty bubble — what this test catches).
+	// Wait long enough for the deny ack + any post-script work.
 	time.Sleep(800 * time.Millisecond)
 
 	// Verify no empty Send events ever appeared for this chat.

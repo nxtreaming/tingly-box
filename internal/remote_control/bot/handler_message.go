@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/agentboot/ask"
 	"github.com/tingly-dev/tingly-box/imbot"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/smart_guide"
 )
 
 func (h *BotHandler) HandleMessage(msg imbot.Message, platform imbot.Platform, botUUID string) {
@@ -138,6 +139,22 @@ func (h *BotHandler) HandleMessage(msg imbot.Message, platform imbot.Platform, b
 
 	// React to indicate the message is being processed (after stop check, before all other handling)
 	h.reactReceived(hCtx)
+
+	// Handoff commands take precedence over the slash dispatcher: /cc, /tb
+	// look like slash commands but they're really handoff sugar. Without
+	// this check they'd fall to handleSlashCommands → "Unknown command"
+	// since the registry doesn't (and shouldn't) own them.
+	if _, isHandoff, _ := smart_guide.DetectHandoffCommand(hCtx.Text()); isHandoff {
+		if routeErr := h.routeToAgent(hCtx, hCtx.Text()); routeErr != nil {
+			logrus.WithError(routeErr).Error("Failed to route handoff command")
+			errMsg := fmt.Sprintf("⚠️ **Error**: %v", routeErr)
+			if strings.Contains(routeErr.Error(), "already in progress") || strings.Contains(routeErr.Error(), "already in use") {
+				errMsg = fmt.Sprintf("⚠️ **Session Busy**\n\nAnother execution is already in progress for this chat.\n\nPlease:\n• Wait for the current task to complete\n• Use `/stop` to cancel the current execution\n\nTechnical details: %v", routeErr)
+			}
+			h.SendText(hCtx, errMsg)
+		}
+		return
+	}
 
 	// Handle commands
 	if strings.HasPrefix(hCtx.Text(), "/") {

@@ -127,8 +127,12 @@ type ChatStoreInterface interface {
 	// GetBashCwd retrieves the bash working directory for a chat
 	GetBashCwd(chatID string) (string, bool, error)
 
-	// SetCurrentAgent sets the current agent for a chat
-	SetCurrentAgent(chatID, agentType string) error
+	// SetCurrentAgent sets the current agent for a chat. Creates the chat
+	// row if it doesn't yet exist so that @cc/@tb handoff state persists
+	// even on fresh chats that haven't been bound (/cd) or paired (/bind)
+	// yet. Pass an empty platform when the caller doesn't have one — the
+	// field will be filled in later by BindProject/SetPaired.
+	SetCurrentAgent(chatID, platform, agentType string) error
 
 	// GetCurrentAgent retrieves the current agent for a chat
 	GetCurrentAgent(chatID string) (string, error)
@@ -408,8 +412,14 @@ func (s *ChatStoreJSON) GetBashCwd(chatID string) (string, bool, error) {
 
 // ============== Current Agent ==============
 
-// SetCurrentAgent sets the current agent for a chat
-func (s *ChatStoreJSON) SetCurrentAgent(chatID, agentType string) error {
+// SetCurrentAgent sets the current agent for a chat, creating the chat row
+// if it doesn't yet exist. Without the auto-create, UpdateChat silently
+// no-ops on a missing chat, which silently dropped handoff persistence for
+// any chat that hadn't been pre-bound or pre-paired.
+func (s *ChatStoreJSON) SetCurrentAgent(chatID, platform, agentType string) error {
+	if _, err := s.GetOrCreateChat(chatID, platform); err != nil {
+		return err
+	}
 	return s.UpdateChat(chatID, func(chat *Chat) {
 		chat.CurrentAgent = agentType
 	})

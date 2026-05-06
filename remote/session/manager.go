@@ -6,7 +6,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+
+	agentsession "github.com/tingly-dev/tingly-box/agentboot/session"
 )
+
+// Compile-time assertion that Manager satisfies the agentboot runner's
+// Store interface. If a refactor drops or renames any of
+// SetRunning/SetCompleted/SetFailed the build fails here instead of
+// the runner crashing at runtime.
+var _ agentsession.Store = (*Manager)(nil)
 
 // Status represents the current state of a session
 type Status string
@@ -142,9 +150,8 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return session, exists
 }
 
-// GetStatus returns the current status of a session, read under the manager's
-// own lock. Callers that need a race-free status read should prefer this over
-// dereferencing a *Session pointer returned by Get or ListByChat.
+// GetStatus returns the current status of a session under the manager's lock,
+// giving callers a race-free view without holding onto a *Session pointer.
 func (m *Manager) GetStatus(id string) (Status, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

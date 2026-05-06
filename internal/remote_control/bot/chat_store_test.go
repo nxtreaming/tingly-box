@@ -204,7 +204,7 @@ func TestSetCurrentAgentPersistsImmediately(t *testing.T) {
 	}
 
 	// Set current agent using SetCurrentAgent (this tests UpdateChat path)
-	err = store.SetCurrentAgent(chatID, "claude")
+	err = store.SetCurrentAgent(chatID, "telegram", "claude")
 	if err != nil {
 		t.Fatalf("Failed to set current agent: %v", err)
 	}
@@ -229,5 +229,44 @@ func TestSetCurrentAgentPersistsImmediately(t *testing.T) {
 	}
 	if !contains(jsonContent, `"claude"`) {
 		t.Errorf("JSON file does not contain the expected agent type 'claude'. Content:\n%s", jsonContent)
+	}
+}
+
+// TestSetCurrentAgentCreatesMissingChat covers the @cc/@tb handoff-on-fresh-chat
+// case: a chat that has not been bound (/cd) or paired (/bind) yet must still
+// have its current-agent persisted on the first handoff. Previously
+// SetCurrentAgent silently no-op'd because UpdateChat skips missing rows.
+func TestSetCurrentAgentCreatesMissingChat(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "chat-store-fresh")
+	if err != nil {
+		t.Fatalf("create tmpdir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store, err := NewChatStoreJSON(filepath.Join(tmpDir, "chats.json"))
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	defer store.Close()
+
+	chatID := "tg-fresh-chat-1"
+	if err := store.SetCurrentAgent(chatID, "telegram", "claude"); err != nil {
+		t.Fatalf("SetCurrentAgent on missing chat: %v", err)
+	}
+
+	got, err := store.GetCurrentAgent(chatID)
+	if err != nil {
+		t.Fatalf("GetCurrentAgent: %v", err)
+	}
+	if got != "claude" {
+		t.Fatalf("current agent not persisted: got %q, want \"claude\"", got)
+	}
+
+	chat, err := store.GetChat(chatID)
+	if err != nil || chat == nil {
+		t.Fatalf("chat row not created: chat=%v err=%v", chat, err)
+	}
+	if chat.Platform != "telegram" {
+		t.Errorf("platform not set on auto-created chat: got %q, want \"telegram\"", chat.Platform)
 	}
 }

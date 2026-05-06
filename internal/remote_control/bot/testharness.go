@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/tingly-dev/tingly-box/agentboot"
-	mockagent "github.com/tingly-dev/tingly-box/agentboot/mockagent"
+	"github.com/tingly-dev/tingly-box/agentboot/claude"
+	"github.com/tingly-dev/tingly-box/agentboot/claude/fixture"
 	"github.com/tingly-dev/tingly-box/imbot"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/remote/audit"
@@ -50,15 +51,14 @@ type TestBootOptions struct {
 	// DataDir overrides the chat-store directory (default: t.TempDir()).
 	DataDir string
 
-	// MockAgent supplies the mock agent registered as
-	// agentboot.AgentTypeMockAgent. Pass nil to use a default 2-iteration
-	// mock (good enough for command-flow tests; deterministic enough for
-	// streaming-edit tests).
-	MockAgent *mockagent.Agent
-
-	// SkipMockAgent disables the default mock-agent registration. Use when
-	// the test wants a different default (e.g. its own stub agent).
-	SkipMockAgent bool
+	// FixtureScript, when non-nil, registers a Claude agent backed by a
+	// fixture.Factory(script). The fixture replaces the legacy mockagent —
+	// tests now drive the real claude.Driver + claude.Transport + Runner
+	// pipeline against scripted wire-format output.
+	//
+	// When nil (default), no Claude agent is registered and tests that
+	// depend on agent execution must register their own.
+	FixtureScript fixture.Script
 }
 
 // BootForTest spins up a production BotHandler against the given
@@ -102,15 +102,10 @@ func BootForTest(t *testing.T, manager *imbot.Manager, setting BotSetting, opts 
 			t.Fatalf("BootForTest: agentboot: %v", err)
 		}
 	}
-	if !opt.SkipMockAgent {
-		mockAg := opt.MockAgent
-		if mockAg == nil {
-			mockAg = mockagent.NewAgent(mockagent.Config{
-				MaxIterations: 2,
-				StepDelay:     0,
-			})
-		}
-		ab.RegisterAgent(agentboot.AgentTypeMockAgent, mockAg)
+	if opt.FixtureScript != nil {
+		fixtureAgent := claude.NewAgentWithFactory(claude.Config{}, fixture.Factory(opt.FixtureScript))
+		ab.RegisterAgent(agentboot.AgentTypeClaude, fixtureAgent)
+		_ = ab.SetDefaultAgent(agentboot.AgentTypeClaude)
 	}
 
 	auditLog := audit.NewLogger(audit.Config{Console: false, MaxEntries: 1000})
@@ -159,19 +154,12 @@ func (h *TestHarness) MintPairingCode() (code string, expiresAt time.Time) {
 	return h.Pairing.Mint(h.Setting.UUID)
 }
 
-// MarkChatPaired writes a pairing record directly into the chat store,
-// bypassing the /bind handshake. Convenient for tests that focus on
-// post-pairing behavior.
+// MarkChatPaired records a pairing for the harness's bot via the same
+// production API path that VerifyAndPair uses. Tests focused on
+// post-pairing behavior can skip the /bind handshake without bypassing
+// the real persistence path — exercising any future bug in SetPaired.
 func (h *TestHarness) MarkChatPaired(chatID, senderID string) {
-	chat, err := h.ChatStore.GetOrCreateChat(chatID, h.Setting.Platform)
-	if err != nil {
-		panic(err)
-	}
-	chat.IsPaired = true
-	chat.PairedBotUUID = h.Setting.UUID
-	chat.PairedSenderID = senderID
-	chat.PairedAt = time.Now()
-	if err := h.ChatStore.UpsertChat(chat); err != nil {
+	if err := h.ChatStore.SetPaired(chatID, h.Setting.Platform, h.Setting.UUID, senderID); err != nil {
 		panic(err)
 	}
 }
@@ -190,15 +178,13 @@ func (h *TestHarness) WhitelistGroup(chatID, ownerID string) {
 	}
 }
 
-// SetCurrentAgent updates the current-agent binding for a chat. Tests use
-// this to route subsequent text into the mock agent (or another).
+// SetCurrentAgent updates the current-agent binding for a chat through the
+// same production path the @cc/@tb handoff uses. Going through
+// chatStore.SetCurrentAgent (rather than mutating Chat directly) keeps
+// the harness honest: any regression in the persistence path — e.g. a
+// silent no-op on a missing chat row — surfaces as a test failure.
 func (h *TestHarness) SetCurrentAgent(chatID, agentType string) {
-	chat, err := h.ChatStore.GetOrCreateChat(chatID, h.Setting.Platform)
-	if err != nil {
-		panic(err)
-	}
-	chat.CurrentAgent = agentType
-	if err := h.ChatStore.UpsertChat(chat); err != nil {
+	if err := h.ChatStore.SetCurrentAgent(chatID, h.Setting.Platform, agentType); err != nil {
 		panic(err)
 	}
 }
