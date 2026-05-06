@@ -101,6 +101,68 @@ func Test_AtCcHandoff_PersistsAcrossTurns(t *testing.T) {
 		"plain message after @cc must route to Claude, proving handoff persisted")
 }
 
+// Test_ConcurrentExecution_BlockedWithSessionBusy locks down the
+// agent_router.go RunningCancel guard: while one execution is in flight
+// for a chat, a second message must be rejected with the Session Busy
+// reply rather than spawning a parallel run. Pre-Phase-2 this guard
+// existed but had zero test coverage, so any refactor (e.g. moving the
+// cancel registration) could silently break it.
+//
+// We hold the runner open by issuing a PermissionRequest the test never
+// answers — that keeps the first execution blocked while we send the
+// second message and observe the rejection. We then deny so the runner
+// shuts down cleanly before the test exits.
+func Test_ConcurrentExecution_BlockedWithSessionBusy(t *testing.T) {
+	_, _, chat := freshAgentBoot(t, fixture.Script{
+		fixture.PermissionRequest("perm-block", "Bash", map[string]any{"command": "ls"}),
+		fixture.Result(false),
+	})
+
+	chat.SendText("@cc start long task")
+
+	// Drain the handoff ack + processing preface; then wait for the
+	// permission prompt — at that point the runner is parked waiting for
+	// our response, holding RunningCancel for this chat.
+	chat.ExpectInOrderLoose(5*time.Second,
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "Handoff complete", Name: "handoff-ack"},
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "CC: Processing", Name: "preface"},
+	)
+	prompt := chat.WaitApprovalPrompt(3 * time.Second)
+	require.NotEmpty(t, prompt.RequestID, "permission prompt should arrive while runner is parked")
+
+	// Second message — must get rejected without starting a new run.
+	chat.SendText("hello while busy")
+
+	busy := waitTextContaining(t, chat, "Session Busy", 4, 2*time.Second)
+	require.Contains(t, busy.Text, "already in progress")
+
+	// Unblock the runner so the harness shuts down cleanly.
+	prompt.Deny()
+}
+
+// Test_SlashCcHandoff covers the /cc <task> form. Because /cc starts
+// with "/", handler_message.go used to dispatch it to handleSlashCommands
+// — which produced "Unknown command" since there's no /cc handler in
+// the registry. The fix routes handoff commands BEFORE the slash
+// dispatcher.
+func Test_SlashCcHandoff(t *testing.T) {
+	_, harness, chat := freshAgentBoot(t, fixture.Script{
+		fixture.AssistantText("slash-handoff worked"),
+		fixture.Result(true),
+	})
+
+	chat.SendText("/cc do the slashy thing")
+
+	chat.ExpectInOrderLoose(5*time.Second,
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "Handoff complete", Name: "handoff-ack"},
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "CC: Processing", Name: "preface"},
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "slash-handoff worked", Name: "assistant"},
+		testenv.Matcher{Kind: tingly.EventSend, TextContains: "Task done", Name: "completion"},
+	)
+
+	require.Equal(t, session.StatusCompleted, lastClaudeSession(t, harness, chat.ChatID))
+}
+
 // Test_HandoffPath_RemovesMockEntry locks down the P0 cleanup: @mock
 // (and /mock) used to be a routable handoff target but the executor was
 // deleted in Phase 2, so any user typing @mock got "no executor found".

@@ -15,49 +15,7 @@ import (
 	"github.com/tingly-dev/tingly-box/imbot"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/smart_guide"
-	"github.com/tingly-dev/tingly-box/remote/session"
 )
-
-type CompletionCallback struct {
-	hCtx       HandlerContext
-	sessionID  string
-	sessionMgr *session.Manager
-	meta       *ResponseMeta
-}
-
-func (c *CompletionCallback) OnComplete(result *agentboot.CompletionResult) {
-	// Update session status based on completion result
-	if c.sessionMgr != nil && c.sessionID != "" {
-		if result.Success {
-			c.sessionMgr.SetCompleted(c.sessionID, "")
-		} else {
-			c.sessionMgr.SetFailed(c.sessionID, result.Error)
-		}
-	}
-
-	// Build action keyboard and card
-	kb := feature.BuildActionKeyboard()
-	tgKeyboard := imbot.BuildTelegramActionKeyboard(kb.Build())
-	actionCard := feature.BuildActionCard()
-
-	doneText := IconDone + " " + MsgTaskDone + ". " + MsgContinueOrHelp + BuildFooter(c.meta.AgentType, c.meta.ProjectPath)
-	_, err := c.hCtx.Bot.SendMessage(context.Background(), c.hCtx.ChatID, &imbot.SendMessageOptions{
-		Text:     doneText,
-		Metadata: buildTrackedActionMenuMetadata(c.hCtx, tgKeyboard, actionCard),
-	})
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to send action keyboard")
-	}
-
-	// Log completion event
-	logrus.WithFields(logrus.Fields{
-		"chatID":    c.hCtx.ChatID,
-		"sessionID": c.sessionID,
-		"success":   result.Success,
-		"duration":  result.DurationMS,
-		"error":     result.Error,
-	}).Info("Agent execution completed via callback")
-}
 
 // SmartGuideCompletionCallback handles completion events for SmartGuide agent
 // It saves messages to session, updates project path if changed, and sends response + action keyboard
