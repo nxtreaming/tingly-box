@@ -84,7 +84,7 @@ func (h *BotHandler) handleSlashCommands(hCtx HandlerContext) {
 			helpText += "@tb to handoff control to Tingly Box Smart Guide\n"
 
 			helpText += fmt.Sprintf("\nYour ID: %s", hCtx.SenderID)
-			formattedHelp := h.formatHelpWithHeader(hCtx, helpText)
+			formattedHelp := h.formatHelpWithFooter(hCtx, helpText)
 			h.SendText(hCtx, formattedHelp)
 			return
 		}
@@ -159,89 +159,93 @@ func (h *BotHandler) handleClearCommand(hCtx HandlerContext) {
 	}
 }
 
-// handleBotProjectCommand handles /project - shows current project and list with keyboard.
-// Kept as a direct BotHandler method since it needs inline keyboard + directory browser integration.
-func (h *BotHandler) handleBotProjectCommand(hCtx HandlerContext) {
-	if h.chatStore == nil {
-		h.SendText(hCtx, "Store not available")
-		return
-	}
-
-	platform := string(hCtx.Platform)
-	currentPath, _, _ := h.chatStore.GetProjectPath(hCtx.ChatID)
-
+// buildProjectText builds the plain-text body for /project replies. The same
+// string is used by every platform so the information shown is always identical.
+func buildProjectText(currentPath string, projectPaths []string) string {
 	var buf strings.Builder
 	if currentPath != "" {
 		buf.WriteString(fmt.Sprintf("Current Project:\n📁 %s\n\n", currentPath))
 	} else {
 		buf.WriteString("No project bound to this chat.\n\n")
 	}
-
-	var projectPaths []string
-	if hCtx.IsDirect() {
-		chats, err := h.chatStore.ListChatsByOwner(hCtx.SenderID, platform)
-		if err == nil {
-			seen := make(map[string]bool)
-			for _, chat := range chats {
-				if chat.ProjectPath != "" && !seen[chat.ProjectPath] {
-					projectPaths = append(projectPaths, chat.ProjectPath)
-					seen[chat.ProjectPath] = true
-				}
-			}
-		}
-	}
-
 	if len(projectPaths) > 0 {
 		buf.WriteString("Your Projects:\n")
+		for i, path := range projectPaths {
+			marker := ""
+			if path == currentPath {
+				marker = " ✓"
+			}
+			buf.WriteString(fmt.Sprintf("  %d. %s%s\n", i+1, path, marker))
+		}
+		buf.WriteString("\nUse /cd <number> or /cd <path> to switch.")
 	} else {
-		buf.WriteString("No projects found.")
+		buf.WriteString("Use /cd <path> to bind a project.")
 	}
+	return buf.String()
+}
 
+// buildProjectKeyboard builds the inline keyboard for interactive /project replies.
+// Button labels include the index so they map 1-to-1 to the numbered text list.
+func buildProjectKeyboard(currentPath string, projectPaths []string) imbot.InlineKeyboardMarkup {
 	var rows [][]imbot.InlineKeyboardButton
-	for _, path := range projectPaths {
+	for i, path := range projectPaths {
 		marker := ""
 		if path == currentPath {
 			marker = " ✓"
 		}
-		btn := imbot.InlineKeyboardButton{
-			Text:         fmt.Sprintf("📁 %s%s", filepath.Base(path), marker),
+		rows = append(rows, []imbot.InlineKeyboardButton{{
+			Text:         fmt.Sprintf("%d. 📁 %s%s", i+1, filepath.Base(path), marker),
 			CallbackData: imbot.FormatCallbackData("project", "switch", path),
-		}
-		rows = append(rows, []imbot.InlineKeyboardButton{btn})
+		}})
 	}
-
 	rows = append(rows, []imbot.InlineKeyboardButton{{
 		Text:         "📁 Bind New Project",
 		CallbackData: imbot.FormatCallbackData("action", "bind"),
 	}})
+	return imbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+}
 
-	keyboard := imbot.InlineKeyboardMarkup{InlineKeyboard: rows}
+// handleBotProjectCommand handles the inline-keyboard action-menu "project" button.
+// Always runs from a Telegram callback, so always sends with a keyboard.
+func (h *BotHandler) handleBotProjectCommand(hCtx HandlerContext) {
+	if h.chatStore == nil {
+		h.SendText(hCtx, "Store not available")
+		return
+	}
+
+	currentPath, _, _ := h.chatStore.GetProjectPath(hCtx.ChatID)
+	projectPaths, _ := h.chatStore.ListChatProjectPaths(hCtx.ChatID)
+
+	text := buildProjectText(currentPath, projectPaths)
+	keyboard := buildProjectKeyboard(currentPath, projectPaths)
 	tgKeyboard := imbot.BuildTelegramActionKeyboard(keyboard)
 
 	_, err := hCtx.Bot.SendMessage(context.Background(), hCtx.ChatID, &imbot.SendMessageOptions{
-		Text:      buf.String(),
-		ParseMode: imbot.ParseModeMarkdown,
-		Metadata:  buildTrackedReplyMetadata(tgKeyboard),
+		Text:     text,
+		Metadata: buildTrackedReplyMetadata(tgKeyboard),
 	})
 	if err != nil {
 		logrus.WithError(err).Error("Failed to send project list")
 	}
 }
 
-// formatHelpWithHeader formats help text with meta information
-func (h *BotHandler) formatHelpWithHeader(hCtx HandlerContext, helpText string) string {
+// formatHelpWithFooter formats help text with the standard reply footer
+// (agent + project path) appended at the bottom.
+func (h *BotHandler) formatHelpWithFooter(hCtx HandlerContext, helpText string) string {
 	projectPath, _, _ := h.chatStore.GetProjectPath(hCtx.ChatID)
+	if projectPath == "" {
+		if path, found := getProjectPathForGroup(h.chatStore, hCtx.ChatID, string(hCtx.Platform)); found {
+			projectPath = path
+		}
+	}
 	currentAgent, _ := h.getCurrentAgent(hCtx.ChatID)
 
 	meta := ResponseMeta{
 		ProjectPath: projectPath,
 		AgentType:   string(currentAgent),
-		ChatID:      hCtx.ChatID,
-		UserID:      hCtx.SenderID,
-		SessionID:   hCtx.ChatID,
 	}
 
-	return h.formatResponseWithHeader(meta, helpText, true)
+	return h.formatResponseWithFooter(meta, helpText)
 }
 
 // normalizeAllowlistToMap converts a string slice to a map for O(1) lookups

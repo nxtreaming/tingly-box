@@ -25,7 +25,7 @@ func (h *BotHandler) handleBindConfirm(hCtx HandlerContext) {
 	}
 
 	// Bind the project
-	err := h.chatStore.BindProject(hCtx.ChatID, string(hCtx.Platform), hCtx.BotUUID, pending.ProposedPath)
+	err := h.chatStore.BindProject(hCtx.ChatID, string(hCtx.Platform), pending.ProposedPath, hCtx.SenderID)
 	if err != nil {
 		h.SendText(hCtx, fmt.Sprintf("Failed to bind project: %v", err))
 		delete(h.pendingBinds, hCtx.ChatID)
@@ -34,7 +34,7 @@ func (h *BotHandler) handleBindConfirm(hCtx HandlerContext) {
 	}
 
 	// Close the old session for this (chat, agent) combination if exists
-	agentType := "claude"
+	agentType := AgentNameClaude
 	oldSess := h.sessionMgr.FindBy(hCtx.ChatID, agentType, "")
 	if oldSess != nil {
 		h.sessionMgr.Close(oldSess.ID)
@@ -97,8 +97,10 @@ func (h *BotHandler) handleProjectSwitch(hCtx HandlerContext, projectPath string
 
 // handleBindInteractive starts an interactive directory browser for binding
 func (h *BotHandler) handleBindInteractive(hCtx HandlerContext) {
-	// Start from home directory
-	_, err := h.directoryBrowser.Start(hCtx.ChatID)
+	// Start from the currently-bound project path so the user lands in a
+	// familiar spot; falls back to home when nothing is bound yet.
+	currentPath, _, _ := h.chatStore.GetProjectPath(hCtx.ChatID)
+	_, err := h.directoryBrowser.StartAt(hCtx.ChatID, currentPath)
 	if err != nil {
 		logrus.WithError(err).Error("Failed to start directory browser")
 		h.SendText(hCtx, fmt.Sprintf("Failed to start directory browser: %v", err))

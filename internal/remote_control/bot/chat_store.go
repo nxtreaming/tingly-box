@@ -52,10 +52,11 @@ func (b BotSetting) IsRequirePairing() bool {
 
 // Chat represents all state associated with a chat (direct or group)
 type Chat struct {
-	ChatID      string `json:"chat_id"`
-	Platform    string `json:"platform"`
-	ProjectPath string `json:"project_path,omitempty"`
-	OwnerID     string `json:"owner_id,omitempty"`
+	ChatID         string   `json:"chat_id"`
+	Platform       string   `json:"platform"`
+	ProjectPath    string   `json:"project_path,omitempty"`
+	ProjectHistory []string `json:"project_history,omitempty"` // MRU list of paths this chat has bound to
+	OwnerID        string   `json:"owner_id,omitempty"`
 
 	// Session removed - sessions are now managed by SessionManager with (ChatID, Agent, Project) binding
 
@@ -111,6 +112,9 @@ type ChatStoreInterface interface {
 
 	// ListChatsByOwner lists all chats owned by a user
 	ListChatsByOwner(ownerID, platform string) ([]*Chat, error)
+
+	// ListChatProjectPaths returns the MRU project-path history for a chat.
+	ListChatProjectPaths(chatID string) ([]string, error)
 
 	// AddToWhitelist adds a chat to the whitelist
 	AddToWhitelist(chatID, platform, addedBy string) error
@@ -323,9 +327,63 @@ func (s *ChatStoreJSON) BindProject(chatID, platform, projectPath, ownerID strin
 	}
 
 	chat.Platform = platform
-	chat.ProjectPath = projectPath
 	chat.OwnerID = ownerID
+	pushProjectHistory(chat, projectPath)
 	return s.UpsertChat(chat)
+}
+
+// projectHistoryCap caps the per-chat MRU list to keep storage bounded and
+// the /project list readable.
+const projectHistoryCap = 20
+
+// pushProjectHistory sets chat.ProjectPath and prepends it to ProjectHistory
+// (deduped, capped). When the chat already had a ProjectPath that wasn't in
+// the history yet, it is preserved one slot below so a fresh upgrade keeps
+// the previous binding visible.
+func pushProjectHistory(chat *Chat, path string) {
+	if chat == nil || path == "" {
+		return
+	}
+	prior := chat.ProjectHistory
+	if len(prior) == 0 && chat.ProjectPath != "" && chat.ProjectPath != path {
+		prior = []string{chat.ProjectPath}
+	}
+	chat.ProjectPath = path
+
+	out := make([]string, 0, len(prior)+1)
+	out = append(out, path)
+	for _, p := range prior {
+		if p == "" || p == path {
+			continue
+		}
+		out = append(out, p)
+		if len(out) >= projectHistoryCap {
+			break
+		}
+	}
+	chat.ProjectHistory = out
+}
+
+// ListChatProjectPaths returns the per-chat MRU list of project paths the
+// chat has bound to (newest first). Falls back to [ProjectPath] for legacy
+// chats with no history yet, and an empty slice when nothing has been bound.
+func (s *ChatStoreJSON) ListChatProjectPaths(chatID string) ([]string, error) {
+	if err := s.ensureStore(); err != nil {
+		return nil, err
+	}
+	chat := s.store.Get(chatID)
+	if chat == nil {
+		return nil, nil
+	}
+	if len(chat.ProjectHistory) > 0 {
+		out := make([]string, len(chat.ProjectHistory))
+		copy(out, chat.ProjectHistory)
+		return out, nil
+	}
+	if chat.ProjectPath != "" {
+		return []string{chat.ProjectPath}, nil
+	}
+	return nil, nil
 }
 
 // GetProjectPath retrieves the project path for a chat

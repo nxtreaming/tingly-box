@@ -137,7 +137,7 @@ func (e *SmartGuideExecutor) Execute(ctx context.Context, req PreparedRequest) (
 				"newPath": newProjectPath,
 			}).Info("updateProjectFunc called - persisting to chat store")
 			return e.deps.ChatStore.UpdateChat(chatID, func(chat *Chat) {
-				chat.ProjectPath = newProjectPath
+				pushProjectHistory(chat, newProjectPath)
 				chat.BashCwd = newProjectPath
 			})
 		},
