@@ -180,18 +180,26 @@ func (h *BotHandler) handleBotProjectCommand(hCtx HandlerContext) {
 
 	if len(projectPaths) > 0 {
 		buf.WriteString("Your Projects:\n")
+		for i, path := range projectPaths {
+			marker := ""
+			if path == currentPath {
+				marker = " ✓"
+			}
+			buf.WriteString(fmt.Sprintf("  %d. %s%s\n", i+1, path, marker))
+		}
+		buf.WriteString("\nUse /cd <number> or /cd <path> to switch.")
 	} else {
 		buf.WriteString("No projects found.")
 	}
 
 	var rows [][]imbot.InlineKeyboardButton
-	for _, path := range projectPaths {
+	for i, path := range projectPaths {
 		marker := ""
 		if path == currentPath {
 			marker = " ✓"
 		}
 		btn := imbot.InlineKeyboardButton{
-			Text:         fmt.Sprintf("📁 %s%s", filepath.Base(path), marker),
+			Text:         fmt.Sprintf("%d. 📁 %s%s", i+1, filepath.Base(path), marker),
 			CallbackData: imbot.FormatCallbackData("project", "switch", path),
 		}
 		rows = append(rows, []imbot.InlineKeyboardButton{btn})

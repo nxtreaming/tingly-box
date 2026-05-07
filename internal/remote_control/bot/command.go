@@ -316,22 +316,35 @@ func newProjectCommand(adapter BotHandlerAdapter) imbot.Command {
 
 			projectPaths, _ := adapter.ListChatProjectPaths(ctx.ChatID)
 
-			// Interactive UI (inline keyboard) only for DMs on platforms that
-			// natively render buttons/cards. Other channels get a numbered text
-			// list — switching is done by /cd <number>.
+			// Body: same numbered list everywhere so the text content of /project
+			// is identical across platforms. Telegram (and other interactive
+			// platforms in DMs) gets an inline keyboard layered on top.
+			if len(projectPaths) > 0 {
+				buf.WriteString("Your Projects:\n")
+				for i, path := range projectPaths {
+					marker := ""
+					if path == currentPath {
+						marker = " ✓"
+					}
+					buf.WriteString(fmt.Sprintf("  %d. %s%s\n", i+1, path, marker))
+				}
+				buf.WriteString("\nUse /cd <number> or /cd <path> to switch.")
+			} else {
+				buf.WriteString("Use /cd <path> to bind a project.")
+			}
+
 			caps := imbot.GetPlatformCapabilities(string(ctx.Platform))
 			interactive := ctx.IsDirectMessage && caps != nil && caps.SupportsInteraction()
 
 			if interactive && len(projectPaths) > 0 {
-				buf.WriteString("Your Projects:\n")
 				var rows [][]imbot.InlineKeyboardButton
-				for _, path := range projectPaths {
+				for i, path := range projectPaths {
 					marker := ""
 					if path == currentPath {
 						marker = " ✓"
 					}
 					btn := imbot.InlineKeyboardButton{
-						Text:         fmt.Sprintf("📁 %s%s", filepath.Base(path), marker),
+						Text:         fmt.Sprintf("%d. 📁 %s%s", i+1, filepath.Base(path), marker),
 						CallbackData: imbot.FormatCallbackData("project", "switch", path),
 					}
 					rows = append(rows, []imbot.InlineKeyboardButton{btn})
@@ -355,19 +368,6 @@ func newProjectCommand(adapter BotHandlerAdapter) imbot.Command {
 				return nil
 			}
 
-			if len(projectPaths) > 0 {
-				buf.WriteString("Your Projects:\n")
-				for i, path := range projectPaths {
-					marker := ""
-					if path == currentPath {
-						marker = " ✓"
-					}
-					buf.WriteString(fmt.Sprintf("  %d. %s%s\n", i+1, path, marker))
-				}
-				buf.WriteString("\nUse /cd <number> or /cd <path> to switch.")
-			} else {
-				buf.WriteString("Use /cd <path> to bind a project.")
-			}
 			return sendCommandText(adapter, ctx, buf.String())
 		}).
 		WithCategory("project").
