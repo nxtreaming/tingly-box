@@ -4,6 +4,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -40,7 +41,8 @@ func GetProbeToolsOpenAI() []openai.ChatCompletionToolUnionParam {
 			Name:        "add_numbers",
 			Description: param.NewOpt("Add two numbers"),
 			Parameters: shared.FunctionParameters{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 				"properties": map[string]interface{}{
 					"a": map[string]interface{}{
 						"type":        "number",
@@ -54,6 +56,31 @@ func GetProbeToolsOpenAI() []openai.ChatCompletionToolUnionParam {
 				"required": []string{"a", "b"},
 			},
 		}),
+	}
+}
+
+// GetProbeToolsResponses returns predefined tools in Responses API format for probe testing.
+func GetProbeToolsResponses() []responses.ToolUnionParam {
+	return []responses.ToolUnionParam{
+		responses.ToolParamOfFunction(
+			"add_numbers",
+			map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]interface{}{
+					"a": map[string]interface{}{
+						"type":        "number",
+						"description": "The first number to add",
+					},
+					"b": map[string]interface{}{
+						"type":        "number",
+						"description": "The second number to add",
+					},
+				},
+				"required": []string{"a", "b"},
+			},
+			true,
+		),
 	}
 }
 
