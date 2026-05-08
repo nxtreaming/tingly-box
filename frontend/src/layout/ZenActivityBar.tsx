@@ -1,6 +1,4 @@
 import {
-    IconAlertCircle,
-    IconStar,
     IconUser,
     IconYinYang,
     IconDots,
@@ -11,7 +9,6 @@ import { Box, Divider, ListItemButton, ListItemIcon, Menu, MenuItem, Tooltip, Ty
 import React, { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useHealth } from '../contexts/HealthContext';
 import { useVersion as useAppVersion } from '../contexts/VersionContext';
 import { Claude, Codex, OpenCode, Xcode, VSCode, OpenAI, Anthropic, OpenClaw } from '@/components/BrandIcons';
 import {
@@ -46,8 +43,6 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
 }) => {
     const { t, i18n } = useTranslation();
     const { currentVersion } = useAppVersion();
-    const { hasUpdate, showUpdateDialog } = useAppVersion();
-    const { isHealthy, showDisconnectDialog } = useHealth();
     const [zenMenuAnchorEl, setZenMenuAnchorEl] = useState<HTMLElement | null>(null);
     const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<HTMLElement | null>(null);
 
@@ -191,51 +186,6 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
                 })}
 
                 <Divider sx={{ mx: 2, my: 1 }} />
-
-                {/* Disconnected indicator */}
-                {(!isHealthy || import.meta.env.DEV) && (
-                    <Tooltip
-                        title={import.meta.env.DEV && isHealthy ? t('layout.activityBar.disconnectedDebug') : t('layout.activityBar.disconnected')}
-                        placement="right"
-                        arrow
-                    >
-                        <ListItemButton
-                            onClick={showDisconnectDialog}
-                            sx={activityItemSx({ color: 'error.main', '&:hover': { bgcolor: 'action.hover' } })}
-                        >
-                            <ListItemIcon sx={{ minWidth: 0, color: 'inherit', justifyContent: 'center' }}>
-                                <IconAlertCircle size={22} />
-                            </ListItemIcon>
-                            <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'inherit', textAlign: 'center', lineHeight: 1.2 }}>
-                                {t('layout.activityBar.error')}
-                            </Typography>
-                        </ListItemButton>
-                    </Tooltip>
-                )}
-
-                {/* Update indicator */}
-                {(hasUpdate || import.meta.env.DEV) && (
-                    <Tooltip
-                        title={import.meta.env.DEV && !hasUpdate ? t('layout.activityBar.devMode') : t('layout.activityBar.newVersionAvailable')}
-                        placement="right"
-                        arrow
-                    >
-                        <ListItemButton
-                            onClick={showUpdateDialog}
-                            sx={activityItemSx({
-                                color: import.meta.env.DEV && !hasUpdate ? 'success.main' : 'info.main',
-                                '&:hover': { bgcolor: 'action.hover' },
-                            })}
-                        >
-                            <ListItemIcon sx={{ minWidth: 0, color: 'inherit', justifyContent: 'center' }}>
-                                <IconStar size={22} />
-                            </ListItemIcon>
-                            <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'inherit', textAlign: 'center', lineHeight: 1.2 }}>
-                                {import.meta.env.DEV && !hasUpdate ? t('layout.activityBar.devMode') : t('layout.activityBar.newVersionAvailable')}
-                            </Typography>
-                        </ListItemButton>
-                    </Tooltip>
-                )}
 
                 {/* Language menu - only show in normal mode */}
                 {!zenEnabled && (
