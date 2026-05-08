@@ -3,7 +3,7 @@ import { PageLayout } from '@/components/PageLayout';
 import UnifiedCard from '@/components/UnifiedCard';
 import { Logout } from '@mui/icons-material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import { IconCircleCheck, IconCircleX, IconInfoCircle, IconKey, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconSun, IconMoon, IconSunHigh } from '@tabler/icons-react';
+import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconSun, IconMoon, IconSunHigh, IconWorld, IconCheck } from '@tabler/icons-react';
 import { Box, Button, CircularProgress, IconButton, InputAdornment, Link, Stack, TextField, Tooltip, Typography, Chip } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -168,21 +168,6 @@ const System = () => {
                                 </Box>
                             </Box>
 
-                            {/* Keys */}
-                            <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                    <IconKey size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
-                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('system.status.keys')}
-                                    </Typography>
-                                </Box>
-                                <Box sx={{ flex: 1 }}>
-                                    <Typography variant="body2" sx={{ color: 'text.primary' }}>
-                                        {serverStatus.providers_enabled} / {serverStatus.providers_total}
-                                    </Typography>
-                                </Box>
-                            </Box>
-
                             {/* Uptime */}
                             {serverStatus.uptime && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
@@ -230,42 +215,6 @@ const System = () => {
                                             />
                                         </Tooltip>
                                     )}
-                                </Box>
-                            </Box>
-
-                            {/* Global Proxy URL */}
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', py: 0.5, gap: 3 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100, pt: 1 }}>
-                                    <IconLock size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
-                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('system.proxy.globalProxyUrl.label')}
-                                    </Typography>
-                                </Box>
-                                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, maxWidth: 380 }}>
-                                    <TextField
-                                        size="small"
-                                        value={globalProxyInput}
-                                        onChange={(e) => setGlobalProxyInput(e.target.value)}
-                                        placeholder="http://127.0.0.1:7890"
-                                        helperText={t('system.proxy.globalProxyUrl.helper')}
-                                        sx={{ flex: 1 }}
-                                        InputProps={globalProxyUrl && globalProxyInput === globalProxyUrl ? {
-                                            endAdornment: (
-                                                <InputAdornment position="end">
-                                                    <IconLock size={14} style={{ color: 'var(--mui-palette-success-main)' }} />
-                                                </InputAdornment>
-                                            )
-                                        } : undefined}
-                                    />
-                                    <Button
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={saveGlobalProxyUrl}
-                                        disabled={proxyUrlSaving || globalProxyInput === globalProxyUrl}
-                                        sx={{ mt: 0.5, whiteSpace: 'nowrap' }}
-                                    >
-                                        {t('common.save')}
-                                    </Button>
                                 </Box>
                             </Box>
 
@@ -353,6 +302,54 @@ const System = () => {
                                         );
                                     })}
                                 </Box>
+                            </Box>
+
+                            {/* Global Proxy URL — moved to the bottom of the card */}
+                            <Box
+                                sx={{
+                                    mt: 1,
+                                    pt: 2,
+                                    borderTop: '1px solid',
+                                    borderColor: 'divider',
+                                }}
+                            >
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                    <IconWorld size={16} style={{ color: 'var(--mui-palette-text-secondary)' }} />
+                                    <Typography variant="body2" sx={{ color: 'text.primary', fontWeight: 500 }}>
+                                        {t('system.proxy.globalProxyUrl.label')}
+                                    </Typography>
+                                </Box>
+                                <Stack direction="row" spacing={1} alignItems="center">
+                                    <TextField
+                                        size="small"
+                                        fullWidth
+                                        value={globalProxyInput}
+                                        onChange={(e) => setGlobalProxyInput(e.target.value)}
+                                        placeholder="http://127.0.0.1:7890"
+                                        sx={{ maxWidth: 480 }}
+                                        InputProps={globalProxyUrl && globalProxyInput === globalProxyUrl ? {
+                                            endAdornment: (
+                                                <InputAdornment position="end">
+                                                    <Tooltip title={t('common.saved', { defaultValue: 'Saved' })} arrow>
+                                                        <IconCheck size={16} style={{ color: 'var(--mui-palette-success-main)' }} />
+                                                    </Tooltip>
+                                                </InputAdornment>
+                                            )
+                                        } : undefined}
+                                    />
+                                    <Button
+                                        size="small"
+                                        variant="contained"
+                                        onClick={saveGlobalProxyUrl}
+                                        disabled={proxyUrlSaving || globalProxyInput === globalProxyUrl}
+                                        sx={{ whiteSpace: 'nowrap', minWidth: 72 }}
+                                    >
+                                        {proxyUrlSaving ? <CircularProgress size={14} color="inherit" /> : t('common.save')}
+                                    </Button>
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                                    {t('system.proxy.globalProxyUrl.helper')}
+                                </Typography>
                             </Box>
                         </Stack>
                     ) : (
