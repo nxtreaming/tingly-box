@@ -37,8 +37,10 @@ type BotSetting struct {
 	SmartGuideModel    string `json:"smartguide_model,omitempty"`    // Model identifier
 
 	// RequirePairing enforces a TOFU pairing-code handshake before any DM is
-	// processed. Nil is treated as false so legacy bots keep working until the
-	// operator opts in. New bots created via the wizard set this to true.
+	// processed. Tri-state: explicit true/false wins; nil means "platform
+	// default" — enforced for token-DM platforms (telegram/discord/slack)
+	// where a leaked bot token alone gives full command access, and disabled
+	// elsewhere. Operators opt out by setting this to false explicitly.
 	RequirePairing *bool `json:"require_pairing,omitempty"`
 
 	CreatedAt string `json:"created_at,omitempty"`
@@ -46,8 +48,25 @@ type BotSetting struct {
 }
 
 // IsRequirePairing reports whether this bot requires per-chat pairing.
+// When RequirePairing is nil, the answer depends on Platform: token-DM
+// platforms default to enforced; OAuth/QR platforms default to off.
 func (b BotSetting) IsRequirePairing() bool {
-	return b.RequirePairing != nil && *b.RequirePairing
+	if b.RequirePairing != nil {
+		return *b.RequirePairing
+	}
+	return PlatformDefaultsRequirePairing(b.Platform)
+}
+
+// PlatformDefaultsRequirePairing reports whether a bot on the given platform
+// has TOFU pairing enforced when RequirePairing is unset (nil). Telegram,
+// Discord and Slack expose full DM command access to anyone who knows the
+// bot token, so they default to enforced.
+func PlatformDefaultsRequirePairing(platform string) bool {
+	switch platform {
+	case "telegram", "discord", "slack":
+		return true
+	}
+	return false
 }
 
 // Chat represents all state associated with a chat (direct or group)

@@ -82,14 +82,25 @@ func RemotePairStatus(appManager *AppManager, botUUID string) error {
 	if setting.UUID == "" {
 		return fmt.Errorf("bot %s not found", botUUID)
 	}
-	require := setting.RequirePairing != nil && *setting.RequirePairing
+	source := "explicit"
+	var require bool
+	if setting.RequirePairing != nil {
+		require = *setting.RequirePairing
+	} else {
+		require = bot.PlatformDefaultsRequirePairing(setting.Platform)
+		source = "platform default"
+	}
 	fmt.Printf("Bot:             %s (%s)\n", setting.Name, setting.UUID)
 	fmt.Printf("Platform:        %s\n", setting.Platform)
-	fmt.Printf("RequirePairing:  %t\n", require)
+	fmt.Printf("RequirePairing:  %t (%s)\n", require, source)
 	if require {
 		fmt.Println("\nPairing codes are minted in memory at bot start. Look for")
 		fmt.Println("    [tingly-box] Bot \"...\" pairing code: ...")
 		fmt.Println("on the server's stderr/log. Restart the bot to mint a new code.")
+		if source == "platform default" {
+			fmt.Println("\nThis is the platform default. To pin it explicitly, run:")
+			fmt.Printf("    remote pair enable %s\n", setting.UUID)
+		}
 	} else {
 		fmt.Println("\nThis bot does not require pairing — any chat that knows the bot")
 		fmt.Println("token can issue commands. Run `remote pair enable` to harden it.")

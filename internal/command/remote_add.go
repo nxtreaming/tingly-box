@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tingly-dev/tingly-box/internal/data/db"
+	"github.com/tingly-dev/tingly-box/internal/remote_control/bot"
 	"github.com/tingly-dev/tingly-box/internal/remote_control/bot/feature"
 )
 
@@ -91,15 +92,28 @@ func runRemoteAddInteractive(reader *bufio.Reader, appManager *AppManager) error
 		}
 	}
 
-	// Ask if user wants to enable pairing
+	// Ask if user wants to enable pairing. Token-DM platforms (telegram,
+	// discord, slack) recommend it strongly: anyone with the bot token can
+	// otherwise DM and run commands. OAuth/QR platforms don't have that
+	// surface so they keep the legacy default-off prompt.
 	fmt.Println()
-	fmt.Print("Require TOFU pairing for this bot? (y/N): ")
-	input, _ = reader.ReadString('\n')
-	input = strings.TrimSpace(strings.ToLower(input))
-
-	if input == "y" || input == "yes" {
-		requirePairing := true
-		setting.RequirePairing = &requirePairing
+	if bot.PlatformDefaultsRequirePairing(platform) {
+		fmt.Println("On this platform, anyone who learns the bot token can DM the bot")
+		fmt.Println("and run commands. TOFU pairing requires a one-time `/bind <code>`")
+		fmt.Println("from the operator before the bot accepts any other DM.")
+		fmt.Print("Require TOFU pairing for this bot? (Y/n): ")
+		input, _ = reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		require := !(input == "n" || input == "no")
+		setting.RequirePairing = &require
+	} else {
+		fmt.Print("Require TOFU pairing for this bot? (y/N): ")
+		input, _ = reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+		if input == "y" || input == "yes" {
+			require := true
+			setting.RequirePairing = &require
+		}
 	}
 
 	// Save the bot configuration

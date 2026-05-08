@@ -86,17 +86,22 @@ func runBotWithSettings(ctx context.Context, setting BotSetting, dataPath string
 	if setting.IsRequirePairing() && pairing != nil {
 		code, expiresAt := pairing.Mint(setting.UUID)
 		if code != "" {
+			source := "explicit"
+			if setting.RequirePairing == nil {
+				source = "platform default"
+			}
 			logrus.WithFields(logrus.Fields{
 				"uuid":       setting.UUID,
 				"name":       setting.Name,
 				"platform":   setting.Platform,
+				"source":     source,
 				"expires_at": expiresAt.Format(time.RFC3339),
 			}).Warnf("Pairing code: %s — DM /bind %s within %s",
 				code, code, time.Until(expiresAt).Round(time.Second))
 			fmt.Fprintf(os.Stderr,
-				"\n[tingly-box] Bot %q (%s) pairing code: %s  (expires %s)\nIn the bot DM, send: /bind %s\n\n",
+				"\n[tingly-box] Bot %q (%s) pairing code: %s  (expires %s, %s)\nIn the bot DM, send: /bind %s\n\n",
 				setting.Name, setting.Platform, code,
-				expiresAt.Format(time.RFC3339), code)
+				expiresAt.Format(time.RFC3339), source, code)
 		}
 	}
 
