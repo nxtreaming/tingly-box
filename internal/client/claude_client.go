@@ -1,17 +1,13 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	anthropicOption "github.com/anthropics/anthropic-sdk-go/option"
 	anthropicstream "github.com/anthropics/anthropic-sdk-go/packages/ssestream"
-	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/transform/ops"
@@ -129,6 +125,13 @@ func (c *ClaudeClient) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *ClaudeClient) Guard(ctx context.Context, req *anthropic.MessageNewParams) {
+	// Apply thinking transformation for Claude Code OAuth
+	if req.Thinking.OfEnabled == nil && req.Thinking.OfAdaptive == nil && req.Thinking.OfDisabled == nil {
+		// Clear thinking field
+		req.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+	}
+
+	// Inject session ID from metadata
 	if req.Metadata.UserID.Valid() {
 		meta := ops.ParseMetadataUserID(req.Metadata.UserID.String())
 		if meta == nil {
@@ -139,6 +142,14 @@ func (c *ClaudeClient) Guard(ctx context.Context, req *anthropic.MessageNewParam
 }
 
 func (c *ClaudeClient) GuardBeta(ctx context.Context, req *anthropic.BetaMessageNewParams) {
+	// Apply thinking transformation for Claude Code OAuth
+	// This removes the thinking field and sets output_config.effort to "medium"
+	if req.Thinking.OfEnabled == nil && req.Thinking.OfAdaptive == nil && req.Thinking.OfDisabled == nil {
+		// Clear thinking field
+		req.Thinking = anthropic.BetaThinkingConfigParamUnion{OfDisabled: &anthropic.BetaThinkingConfigDisabledParam{}}
+	}
+
+	// Inject session ID from metadata
 	if req.Metadata.UserID.Valid() {
 		meta := ops.ParseMetadataUserID(req.Metadata.UserID.String())
 		if meta == nil {
