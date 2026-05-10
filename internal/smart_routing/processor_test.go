@@ -25,7 +25,6 @@ const tinyPNGMediaType = "image/png"
 type processCall struct {
 	RuleIndex int
 	OpUUID    string
-	RequestID uintptr // identity, not value
 	N         int
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
+	"github.com/tingly-dev/tingly-box/internal/protocol/request"
 	smartrouting "github.com/tingly-dev/tingly-box/internal/smart_routing"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
@@ -156,7 +157,7 @@ func (p *VisionProxyProcessor) processOpenAI(ctx context.Context, req *openai.Ch
 			if ip == nil {
 				continue
 			}
-			mediaType, b64, remoteURL := splitImageDataURL(ip.ImageURL.URL)
+			mediaType, b64, remoteURL := request.ParseImageURLToAnthropicSource(ip.ImageURL.URL)
 			text := p.describe(ctx, usable, mediaType, b64, remoteURL)
 			parts[pi] = openai.ChatCompletionContentPartUnionParam{
 				OfText: &openai.ChatCompletionContentPartTextParam{Text: text},
@@ -191,24 +192,3 @@ func extractV1ImageSource(img *anthropic.ImageBlockParam) (mediaType, b64, remot
 	return
 }
 
-// splitImageDataURL parses a string from openai image_url.url. Mirrors
-// internal/protocol/request/image_helper.go::parseImageURLToAnthropicSource —
-// inlined to keep this package's dependency surface narrow.
-func splitImageDataURL(url string) (mediaType, data, remoteURL string) {
-	if url == "" {
-		return "", "", ""
-	}
-	if !strings.HasPrefix(url, "data:") {
-		return "", "", url
-	}
-	rest := strings.TrimPrefix(url, "data:")
-	semi := strings.IndexByte(rest, ';')
-	comma := strings.IndexByte(rest, ',')
-	if semi < 0 || comma < 0 || semi > comma {
-		return "", "", url
-	}
-	if rest[semi+1:comma] != "base64" {
-		return "", "", url
-	}
-	return rest[:semi], rest[comma+1:], ""
-}
