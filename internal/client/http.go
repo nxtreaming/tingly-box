@@ -465,6 +465,10 @@ func createSessionBoundTransport(provider *typ.Provider, sessionID typ.SessionID
 		issuer = ai.Issuer(provider.OAuthDetail.GetIssuer())
 	}
 
+	if provider.ProxyURL != "" {
+		logrus.Infof("Using proxy for OpenAI client: %s", provider.ProxyURL)
+	}
+
 	// Base: SessionBoundTransport
 	baseTransport := &SessionBoundTransport{
 		transportPool: GetGlobalTransportPool(),
@@ -477,16 +481,6 @@ func createSessionBoundTransport(provider *typ.Provider, sessionID typ.SessionID
 	// Layer provider-specific transformations
 	if provider.AuthType == typ.AuthTypeOAuth {
 		switch issuer {
-		case ai.IssuerClaudeCode:
-			// Claude Code OAuth needs request/response transformations
-			return &claudeRoundTripper{
-				RoundTripper: baseTransport,
-			}
-		case ai.IssuerCodex:
-			// Codex (ChatGPT backend API) needs path rewriting and response transformation
-			return &codexRoundTripper{
-				RoundTripper: baseTransport,
-			}
 		case ai.IssuerAntigravity:
 			// Antigravity needs extra config (project_id) and special wrapping
 			project := ""
@@ -501,14 +495,6 @@ func createSessionBoundTransport(provider *typ.Provider, sessionID typ.SessionID
 				project:      project,
 				model:        model,
 				proxyURL:     provider.ProxyURL,
-			}
-		default:
-			// Generic OAuth with hooks (if any are defined)
-			if hook := oauthHookFunctions[issuer]; hook != nil {
-				return &requestModifier{
-					RoundTripper: baseTransport,
-					hooks:        []HookFunc{hook},
-				}
 			}
 		}
 	}
@@ -581,10 +567,8 @@ func CreateHTTPClientForProvider(provider *typ.Provider, model string, sessionID
 				}
 			}
 
-			client.Transport = &claudeRoundTripper{
-				RoundTripper: claudeTransport,
-			}
-			logrus.Infof("Created Claude Code RoundTripper with proxy=%s", provider.ProxyURL)
+			client.Transport = claudeTransport
+			logrus.Infof("Created Claude Code transport with proxy=%s (SDK middleware handles transformations)", provider.ProxyURL)
 		case ai.IssuerCodex:
 			// Create base transport with proxy support if needed
 			var baseTransport http.RoundTripper = transport

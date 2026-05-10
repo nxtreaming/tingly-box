@@ -1,0 +1,262 @@
+package client
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/anthropics/anthropic-sdk-go"
+	anthropicOption "github.com/anthropics/anthropic-sdk-go/option"
+	anthropicstream "github.com/anthropics/anthropic-sdk-go/packages/ssestream"
+	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/internal/obs"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
+	"github.com/tingly-dev/tingly-box/internal/protocol/transform/ops"
+	"github.com/tingly-dev/tingly-box/internal/typ"
+)
+
+// ClaudeClient wraps AnthropicClient with Claude Code OAuth-specific behaviors.
+// It creates an Anthropic SDK client directly with Claude Code headers and middleware,
+// then embeds it for delegation.
+//
+// Claude Code (Claude Code OAuth) limitations:
+// - Does NOT support /models endpoint (returns 404)
+// - Requires special headers (applied via SDK options)
+// - Requires tool prefix stripping (applied via middleware)
+type ClaudeClient struct {
+	*AnthropicClient
+}
+
+// NewClaudeClient creates a new Claude client wrapper.
+// It builds an Anthropic SDK client with Claude Code specific headers and middleware,
+// then wraps it in an AnthropicClient for delegation.
+func NewClaudeClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*ClaudeClient, error) {
+	logrus.Debug("creating claude-client")
+
+	// Handle API base URL - Anthropic SDK expects base without /v1
+	apiBase := strings.TrimRight(provider.APIBase, "/")
+	if strings.HasSuffix(apiBase, "/v1") {
+		apiBase = strings.TrimSuffix(apiBase, "/v1")
+	}
+
+	// Build base SDK options
+	options := []anthropicOption.RequestOption{
+		anthropicOption.WithBaseURL(apiBase),
+		anthropicOption.WithMaxRetries(0), // Disable automatic retries for 429 errors
+	}
+
+	// Check if this is an OAuth token
+	isOAuthToken := IsClaudeOAuthToken(provider.GetAccessToken())
+
+	// Apply Claude Code specific headers
+	options = applyClaudeCodeHeaders(options, provider, sessionID.Value, isOAuthToken)
+
+	// Add beta query parameter
+	options = append(options, anthropicOption.WithQuery("beta", "true"))
+
+	// Create SDK client
+	anthropicClient := anthropic.NewClient(options...)
+
+	// Wrap in AnthropicClient base
+	base := &AnthropicClient{
+		client:   anthropicClient,
+		provider: provider,
+	}
+
+	return &ClaudeClient{AnthropicClient: base}, nil
+}
+
+// applyClaudeCodeHeaders applies Claude Code specific headers via SDK options.
+func applyClaudeCodeHeaders(options []anthropicOption.RequestOption, provider *typ.Provider, sessionID string, isOAuthToken bool) []anthropicOption.RequestOption {
+	// Build beta header with all required flags
+	baseBetas := anthropicBeta
+
+	// Add context-1m for models that support it (Sonnet/Opus, not Haiku)
+	// Note: Currently commented out as per original claude.go
+	// if model != "" && supportsContext1M(model) {
+	// 	baseBetas = strings.TrimRight(baseBetas, ",") + "," + anthropicContext1m
+	// }
+
+	baseBetas = strings.TrimRight(baseBetas, ",")
+
+	// Ensure oauth is always present at the end
+	if !strings.Contains(baseBetas, "oauth") {
+		baseBetas = strings.TrimRight(baseBetas, ",")
+		baseBetas = fmt.Sprintf("%s,%s", baseBetas, anthropicOAuthBeta)
+	}
+
+	// Auth header
+	if isOAuthToken {
+		options = append(options, anthropicOption.WithHeader("Authorization", "Bearer "+provider.GetAccessToken()))
+	} else {
+		options = append(options, anthropicOption.WithHeader("x-api-key", provider.GetAccessToken()))
+	}
+
+	// Claude Code specific headers
+	options = append(options,
+		anthropicOption.WithHeader("accept", acceptHeader),
+		anthropicOption.WithHeader("anthropic-beta", baseBetas),
+		anthropicOption.WithHeader("anthropic-dangerous-direct-browser-access", anthropicDangerousDirectBrowserAccess),
+		anthropicOption.WithHeader("anthropic-version", anthropicVersion),
+		anthropicOption.WithHeader("user-agent", claudeCLIUserAgent),
+		anthropicOption.WithHeader("x-app", claudeXApp),
+		anthropicOption.WithHeader("x-stainless-helper-method", stainlessHelperMethod),
+		anthropicOption.WithHeader("x-stainless-retry-count", stainlessRetryCount),
+		anthropicOption.WithHeader("x-stainless-runtime-version", stainlessRuntimeVersion),
+		anthropicOption.WithHeader("x-stainless-package-version", stainlessPackageVersion),
+		anthropicOption.WithHeader("x-stainless-runtime", stainlessRuntime),
+		anthropicOption.WithHeader("x-stainless-lang", stainlessLang),
+		anthropicOption.WithHeader("x-stainless-arch", stainlessArch()),
+		anthropicOption.WithHeader("x-stainless-os", stainlessOS()),
+		anthropicOption.WithHeader("x-stainless-timeout", stainlessTimeout),
+	)
+
+	return options
+}
+
+// ===================================================================
+// ClaudeClient interface methods
+// ===================================================================
+
+// ListModels returns the list of available models.
+// For Claude Code OAuth, this returns an error as the token cannot access /models endpoint.
+func (c *ClaudeClient) ListModels(ctx context.Context) ([]string, error) {
+	return nil, &ErrModelsEndpointNotSupported{
+		Provider: c.provider.Name,
+		Reason:   "Claude Code OAuth token cannot access /models endpoint",
+	}
+}
+
+func (c *ClaudeClient) Guard(ctx context.Context, req *anthropic.MessageNewParams) *AnthropicClient {
+	// Apply thinking transformation for Claude Code OAuth
+	if req.Thinking.OfEnabled == nil && req.Thinking.OfAdaptive == nil && req.Thinking.OfDisabled == nil {
+		// Clear thinking field
+		req.Thinking = anthropic.ThinkingConfigParamUnion{OfDisabled: &anthropic.ThinkingConfigDisabledParam{}}
+	}
+
+	// Inject session ID from metadata
+	meta := ops.ParseMetadataUserID(req.Metadata.UserID.String())
+	if meta == nil {
+		panic("invalid metadata")
+	}
+	options := append(c.AnthropicClient.Client().Options, anthropicOption.WithHeader("X-Claude-Code-Session-Id", meta.SessionID))
+	logrus.Debugf("session: %s", meta.SessionID)
+	logrus.Debugf("metadata: %s", req.Metadata.UserID)
+
+	// Create SDK client
+	anthropicClient := anthropic.NewClient(options...)
+
+	// Wrap in AnthropicClient base
+	base := &AnthropicClient{
+		client:   anthropicClient,
+		provider: c.AnthropicClient.provider,
+	}
+
+	return base
+}
+
+func (c *ClaudeClient) GuardBeta(ctx context.Context, req *anthropic.BetaMessageNewParams) *AnthropicClient {
+	// Apply thinking transformation for Claude Code OAuth
+	// This removes the thinking field and sets output_config.effort to "medium"
+	if req.Thinking.OfEnabled == nil && req.Thinking.OfAdaptive == nil && req.Thinking.OfDisabled == nil {
+		// Clear thinking field
+		req.Thinking = anthropic.BetaThinkingConfigParamUnion{OfDisabled: &anthropic.BetaThinkingConfigDisabledParam{}}
+	}
+
+	// Inject session ID from metadata
+	meta := ops.ParseMetadataUserID(req.Metadata.UserID.String())
+	if meta == nil {
+		panic("invalid metadata")
+	}
+	options := append(c.AnthropicClient.Client().Options, anthropicOption.WithHeader("X-Claude-Code-Session-Id", meta.SessionID))
+	logrus.Debugf("session: %s", meta.SessionID)
+	logrus.Debugf("metadata: %s", req.Metadata.UserID)
+
+	// Create SDK client
+	anthropicClient := anthropic.NewClient(options...)
+
+	// Wrap in AnthropicClient base
+	base := &AnthropicClient{
+		client:   anthropicClient,
+		provider: c.AnthropicClient.provider,
+	}
+	return base
+}
+
+// MessagesNew creates a new message request.
+func (c *ClaudeClient) MessagesNew(ctx context.Context, req *anthropic.MessageNewParams) (*anthropic.Message, error) {
+	guard := c.Guard(ctx, req)
+	return guard.MessagesNew(ctx, req)
+}
+
+// MessagesNewStreaming creates a new streaming message request.
+func (c *ClaudeClient) MessagesNewStreaming(ctx context.Context, req *anthropic.MessageNewParams) *anthropicstream.Stream[anthropic.MessageStreamEventUnion] {
+	guard := c.Guard(ctx, req)
+	return guard.MessagesNewStreaming(ctx, req)
+}
+
+// BetaMessagesNew creates a new beta message request.
+func (c *ClaudeClient) BetaMessagesNew(ctx context.Context, req *anthropic.BetaMessageNewParams) (*anthropic.BetaMessage, error) {
+	guard := c.GuardBeta(ctx, req)
+	return guard.BetaMessagesNew(ctx, req)
+}
+
+// BetaMessagesNewStreaming creates a new beta streaming message request.
+func (c *ClaudeClient) BetaMessagesNewStreaming(ctx context.Context, req *anthropic.BetaMessageNewParams) *anthropicstream.Stream[anthropic.BetaRawMessageStreamEventUnion] {
+	guard := c.GuardBeta(ctx, req)
+	return guard.BetaMessagesNewStreaming(ctx, req)
+}
+
+// MessagesCountTokens counts tokens for a message request.
+func (c *ClaudeClient) MessagesCountTokens(ctx context.Context, req *anthropic.MessageCountTokensParams) (*anthropic.MessageTokensCount, error) {
+	return c.AnthropicClient.MessagesCountTokens(ctx, req)
+}
+
+// BetaMessagesCountTokens counts tokens for a beta message request.
+func (c *ClaudeClient) BetaMessagesCountTokens(ctx context.Context, req *anthropic.BetaMessageCountTokensParams) (*anthropic.BetaMessageTokensCount, error) {
+	return c.AnthropicClient.BetaMessagesCountTokens(ctx, req)
+}
+
+// Close closes any resources held by the client.
+func (c *ClaudeClient) Close() error {
+	return c.AnthropicClient.Close()
+}
+
+// GetProvider returns the provider for this client.
+func (c *ClaudeClient) GetProvider() *typ.Provider {
+	return c.AnthropicClient.GetProvider()
+}
+
+// APIStyle returns the API style.
+func (c *ClaudeClient) APIStyle() protocol.APIStyle {
+	return c.AnthropicClient.APIStyle()
+}
+
+// SetRecordSink sets the record sink for the client.
+func (c *ClaudeClient) SetRecordSink(sink *obs.Sink) {
+	c.AnthropicClient.SetRecordSink(sink)
+}
+
+// Client returns the underlying Anthropic SDK client.
+func (c *ClaudeClient) Client() *anthropic.Client {
+	return c.AnthropicClient.Client()
+}
+
+// ProbeChatEndpoint tests the messages endpoint.
+func (c *ClaudeClient) ProbeChatEndpoint(ctx context.Context, model string) ProbeResult {
+	return c.AnthropicClient.ProbeChatEndpoint(ctx, model)
+}
+
+// ProbeModelsEndpoint tests the models endpoint.
+// For Claude Code OAuth, this returns an error as the endpoint is not supported.
+func (c *ClaudeClient) ProbeModelsEndpoint(ctx context.Context) ProbeResult {
+	return ProbeResult{
+		Success:      false,
+		ErrorMessage: "Claude Code does not support /models endpoint",
+	}
+}
+
+// ProbeOptionsEndpoint tests basic connectivity with an OPTIONS request.
+func (c *ClaudeClient) ProbeOptionsEndpoint(ctx context.Context) ProbeResult {
+	return c.AnthropicClient.ProbeOptionsEndpoint(ctx)
+}

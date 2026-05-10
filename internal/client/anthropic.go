@@ -21,6 +21,31 @@ import (
 // ClaudeCodeSystemHeader is a special system message for Claude Code OAuth subscriptions
 const ClaudeCodeSystemHeader = "You are Claude Code, Anthropic's official CLI for Claude."
 
+// AnthropicClientInterface defines the contract for Anthropic-compatible clients.
+// Both AnthropicClient and ClaudeClient (for Claude Code OAuth) implement this interface.
+type AnthropicClientInterface interface {
+	// Core API methods
+	MessagesNew(ctx context.Context, req *anthropic.MessageNewParams) (*anthropic.Message, error)
+	MessagesNewStreaming(ctx context.Context, req *anthropic.MessageNewParams) *anthropicstream.Stream[anthropic.MessageStreamEventUnion]
+	BetaMessagesNew(ctx context.Context, req *anthropic.BetaMessageNewParams) (*anthropic.BetaMessage, error)
+	BetaMessagesNewStreaming(ctx context.Context, req *anthropic.BetaMessageNewParams) *anthropicstream.Stream[anthropic.BetaRawMessageStreamEventUnion]
+	MessagesCountTokens(ctx context.Context, req *anthropic.MessageCountTokensParams) (*anthropic.MessageTokensCount, error)
+	BetaMessagesCountTokens(ctx context.Context, req *anthropic.BetaMessageCountTokensParams) (*anthropic.BetaMessageTokensCount, error)
+
+	// Utility methods
+	ListModels(ctx context.Context) ([]string, error)
+	Close() error
+	GetProvider() *typ.Provider
+	APIStyle() protocol.APIStyle
+	SetRecordSink(sink *obs.Sink)
+	Client() *anthropic.Client
+
+	// Prober interface methods
+	ProbeChatEndpoint(ctx context.Context, model string) ProbeResult
+	ProbeModelsEndpoint(ctx context.Context) ProbeResult
+	ProbeOptionsEndpoint(ctx context.Context) ProbeResult
+}
+
 // AnthropicClient wraps the Anthropic SDK client
 type AnthropicClient struct {
 	client     anthropic.Client
@@ -31,7 +56,7 @@ type AnthropicClient struct {
 }
 
 // NewAnthropicClient creates a new Anthropic client wrapper
-func NewAnthropicClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*AnthropicClient, error) {
+func NewAnthropicClient(provider *typ.Provider, model string, sessionID typ.SessionID, extraOptions ...anthropicOption.RequestOption) (*AnthropicClient, error) {
 	// Handle API base URL - Anthropic SDK expects base without /v1
 	apiBase := strings.TrimRight(provider.APIBase, "/")
 	if strings.HasSuffix(apiBase, "/v1") {
@@ -46,16 +71,13 @@ func NewAnthropicClient(provider *typ.Provider, model string, sessionID typ.Sess
 
 	// Create HTTP client with session-bound transport
 	var transport http.RoundTripper
-	if provider.AuthType == typ.AuthTypeOAuth || provider.ProxyURL != "" {
-		// Use createSessionBoundTransport which applies OAuth hooks and uses shared transport
-		transport = createSessionBoundTransport(provider, sessionID)
-
-		if provider.AuthType == typ.AuthTypeOAuth && provider.OAuthDetail != nil {
+	if provider.AuthType == typ.AuthTypeOAuth {
+		if provider.OAuthDetail != nil && provider.OAuthDetail.Issuer == ai.IssuerClaudeCode {
+			transport = &claudeRoundTripper{
+				RoundTripper: createSessionBoundTransport(provider, sessionID),
+			}
 			logrus.Infof("Using session-bound transport for OAuth issuer: %s, session: %s",
 				provider.OAuthDetail.GetIssuer(), sessionID.Value)
-		}
-		if provider.ProxyURL != "" {
-			logrus.Infof("Using proxy for Anthropic client: %s", provider.ProxyURL)
 		}
 	} else {
 		transport = http.DefaultTransport
@@ -64,10 +86,10 @@ func NewAnthropicClient(provider *typ.Provider, model string, sessionID typ.Sess
 	httpClient := &http.Client{
 		Transport: transport,
 	}
+	options = append(options, anthropicOption.WithHTTPClient(httpClient))
 
-	if provider.ProxyURL != "" || provider.AuthType == typ.AuthTypeOAuth {
-		options = append(options, anthropicOption.WithHTTPClient(httpClient))
-	}
+	// MENTION: extra will be applied at last to confirm override
+	options = append(options, extraOptions...)
 
 	anthropicClient := anthropic.NewClient(options...)
 
