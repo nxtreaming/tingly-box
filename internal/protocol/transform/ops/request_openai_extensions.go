@@ -28,6 +28,13 @@ var ProviderConfigs = []providerConfig{
 		Transform:      applyDeepSeekTransform,
 	},
 
+	// OpenCode Go - backed by DeepSeek-compatible reasoning models
+	{
+		APIBasePattern: "opencode.ai/zen/go",
+		ModelPattern:   "*",
+		Transform:      applyDeepSeekTransform,
+	},
+
 	// Moonshot - official API (CN)
 	// Moonshot requires reasoning_content in assistant messages with tool_calls when thinking is enabled
 	// Similar to DeepSeek, we reuse applyDeepSeekTransform to handle x_thinking -> reasoning_content conversion
@@ -77,13 +84,6 @@ func GetProviderTransform(providerURL, model string) ProviderTransform {
 				}
 			}
 		}
-	}
-
-	// Fallback: detect DeepSeek models by model name for proxies/aggregators
-	// DeepSeek reasoning models (deepseek-reasoner, deepseek-r1, deepseek-r1-*)
-	// and DeepSeek V-series thinking models require reasoning_content handling
-	if strings.Contains(modelLower, "deepseek") {
-		return applyDeepSeekTransform
 	}
 
 	// No specific transform needed - use default
