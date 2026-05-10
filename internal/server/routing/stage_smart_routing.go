@@ -210,13 +210,14 @@ func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionStat
 			"bypass_already_done", "rule already bypassed by op-level processor; skipping")
 		return nil, false
 	}
-	var procs []smartrouting.OpProcessor
-	var procOpUUIDs []string
-	for i := range matchedRule.Ops {
-		op := matchedRule.Ops[i]
+	type collectedProc struct {
+		op   smartrouting.SmartOp
+		proc smartrouting.OpProcessor
+	}
+	var procs []collectedProc
+	for _, op := range matchedRule.Ops {
 		if p, ok := smartrouting.LookupProcessor(op.Position, op.Operation); ok {
-			procs = append(procs, p)
-			procOpUUIDs = append(procOpUUIDs, op.UUID)
+			procs = append(procs, collectedProc{op: op, proc: p})
 		}
 	}
 	if len(procs) > 0 {
@@ -231,11 +232,11 @@ func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionStat
 			RuleIndex: matchedRuleIndex,
 			Services:  matchedServices,
 		}
-		for i, p := range procs {
-			pctx.OpUUID = procOpUUIDs[i]
-			if err := p.Process(pctx); err != nil {
+		for _, cp := range procs {
+			pctx.OpUUID = cp.op.UUID
+			if err := cp.proc.Process(pctx); err != nil {
 				logrus.Debugf("[smart_routing] processor %s/%s error: %v",
-					matchedRule.Ops[i].Position, matchedRule.Ops[i].Operation, err)
+					cp.op.Position, cp.op.Operation, err)
 			}
 		}
 		if ctx.BypassedSmartRules == nil {
