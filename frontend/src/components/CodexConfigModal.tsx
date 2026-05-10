@@ -38,6 +38,8 @@ const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
 
     const configToml = `model = "tingly-codex"
 model_provider = "tingly-box"
+model_supports_reasoning_summaries = true
+model_reasoning_summary = "auto"
 
 [model_providers.tingly-box]
 name = "OpenAI using Tingly Box"

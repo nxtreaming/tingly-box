@@ -8,6 +8,9 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/tingly-dev/tingly-box/ai"
 	"github.com/tingly-dev/tingly-box/internal/client"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -70,6 +73,38 @@ func (b *SDKProbeBuilder) buildOpenAIChatRequest(model, message string, testMode
 	return params
 }
 
+func (b *SDKProbeBuilder) buildOpenAIResponsesRequest(model, message string, testMode ProbeMode) responses.ResponseNewParams {
+	params := responses.ResponseNewParams{
+		Model:        model,
+		Instructions: param.NewOpt("work as `echo` if possible"),
+		Input: responses.ResponseNewParamsInputUnion{
+			OfInputItemList: []responses.ResponseInputItemUnionParam{
+				responses.ResponseInputItemParamOfMessage(
+					responses.ResponseInputMessageContentListParam{
+						responses.ResponseInputContentParamOfInputText(message),
+					},
+					responses.EasyInputMessageRoleUser,
+				),
+			},
+		},
+	}
+
+	if testMode == ProbeV2ModeTool {
+		params.Tools = GetProbeToolsResponses()
+		params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
+			OfToolChoiceMode: param.NewOpt(responses.ToolChoiceOptionsAuto),
+		}
+	}
+
+	return params
+}
+
+func shouldUseResponsesProbe(provider *typ.Provider) bool {
+	return provider.AuthType == typ.AuthTypeOAuth &&
+		provider.OAuthDetail != nil &&
+		provider.OAuthDetail.GetIssuer() == ai.IssuerCodex
+}
+
 // getClientForProvider gets the appropriate SDK client for a provider
 func (s *Server) getClientForProvider(provider *typ.Provider, model string) (interface{}, error) {
 	switch provider.APIStyle {
@@ -110,6 +145,8 @@ func (s *Server) probeProviderWithSDK(ctx context.Context, provider *typ.Provide
 	url := provider.APIBase
 	if provider.APIStyle == protocol.APIStyleAnthropic {
 		url += "/v1/messages"
+	} else if shouldUseResponsesProbe(provider) {
+		url += "/responses"
 	} else {
 		url += "/chat/completions"
 	}
@@ -132,12 +169,36 @@ func (s *Server) probeProviderWithSDK(ctx context.Context, provider *typ.Provide
 
 	case protocol.APIStyleOpenAI:
 		openaiClient := clientInterface.(*client.OpenAIClient)
+		if shouldUseResponsesProbe(provider) {
+			params := builder.buildOpenAIResponsesRequest(model, message, testMode)
+			stream := openaiClient.ResponsesNewStreaming(ctx, params)
+			defer stream.Close()
+
+			var chunks []interface{}
+			for stream.Next() {
+				chunks = append(chunks, stream.Current())
+			}
+
+			if err := stream.Err(); err != nil {
+				return nil, err
+			}
+
+			respJSON, err := json.Marshal(chunks)
+			if err != nil {
+				return nil, err
+			}
+			return &ProbeV2Data{
+				Content:    string(respJSON),
+				LatencyMs:  time.Since(startTime).Milliseconds(),
+				RequestURL: url,
+			}, nil
+		}
+
 		params := builder.buildOpenAIChatRequest(model, message, testMode)
 		resp, err := openaiClient.ChatCompletionsNew(ctx, params)
 		if err != nil {
 			return nil, err
 		}
-		// Convert response to JSON string as content
 		respJSON, _ := json.Marshal(resp)
 		return &ProbeV2Data{
 			Content:    string(respJSON),
@@ -164,6 +225,8 @@ func (s *Server) probeProviderStream(ctx context.Context, provider *typ.Provider
 	url := provider.APIBase
 	if provider.APIStyle == protocol.APIStyleAnthropic {
 		url += "/v1/messages"
+	} else if shouldUseResponsesProbe(provider) {
+		url += "/responses"
 	} else {
 		url += "/chat/completions"
 	}
@@ -196,6 +259,28 @@ func (s *Server) probeProviderStream(ctx context.Context, provider *typ.Provider
 
 	case protocol.APIStyleOpenAI:
 		openaiClient := clientInterface.(*client.OpenAIClient)
+		if shouldUseResponsesProbe(provider) {
+			params := builder.buildOpenAIResponsesRequest(model, message, testMode)
+			stream := openaiClient.ResponsesNewStreaming(ctx, params)
+			defer stream.Close()
+
+			var chunks []interface{}
+			for stream.Next() {
+				chunks = append(chunks, stream.Current())
+			}
+
+			if err := stream.Err(); err != nil {
+				return nil, err
+			}
+
+			chunksJSON, _ := json.Marshal(chunks)
+			return &ProbeV2Data{
+				Content:    string(chunksJSON),
+				LatencyMs:  time.Since(startTime).Milliseconds(),
+				RequestURL: url,
+			}, nil
+		}
+
 		params := builder.buildOpenAIChatRequest(model, message, testMode)
 		stream := openaiClient.ChatCompletionsNewStreaming(ctx, params)
 		defer stream.Close()
@@ -203,7 +288,6 @@ func (s *Server) probeProviderStream(ctx context.Context, provider *typ.Provider
 		var chunks []interface{}
 		for stream.Next() {
 			chunk := stream.Current()
-			// Collect each chunk as-is
 			chunks = append(chunks, chunk)
 		}
 
@@ -211,7 +295,6 @@ func (s *Server) probeProviderStream(ctx context.Context, provider *typ.Provider
 			return nil, err
 		}
 
-		// Convert chunks to JSON string as content
 		chunksJSON, _ := json.Marshal(chunks)
 		return &ProbeV2Data{
 			Content:    string(chunksJSON),

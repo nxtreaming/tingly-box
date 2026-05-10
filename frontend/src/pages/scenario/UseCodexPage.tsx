@@ -27,7 +27,7 @@ const UseCodexPageContent: React.FC = () => {
     // Codex has no backend apply — copy config.toml to clipboard as a convenience
     const handleApply = async (): Promise<AgentApplyResult> => {
         const codexBaseUrl = `${baseUrl}/tingly/codex`;
-        const config = `model = "tingly-codex"\nmodel_provider = "tingly-box"\n\n[model_providers.tingly-box]\nname = "OpenAI using Tingly Box"\nbase_url = "${codexBaseUrl}"\npreferred_auth_method = "apikey"\nwire_api = "responses"`;
+        const config = `model = "tingly-codex"\nmodel_provider = "tingly-box"\nmodel_supports_reasoning_summaries = true\nmodel_reasoning_summary = "auto"\n\n[model_providers.tingly-box]\nname = "OpenAI using Tingly Box"\nbase_url = "${codexBaseUrl}"\npreferred_auth_method = "apikey"\nwire_api = "responses"`;
         await navigator.clipboard.writeText(config);
         return {
             success: true,
