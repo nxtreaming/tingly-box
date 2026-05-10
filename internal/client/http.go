@@ -465,6 +465,10 @@ func createSessionBoundTransport(provider *typ.Provider, sessionID typ.SessionID
 		issuer = ai.Issuer(provider.OAuthDetail.GetIssuer())
 	}
 
+	if provider.ProxyURL != "" {
+		logrus.Infof("Using proxy for OpenAI client: %s", provider.ProxyURL)
+	}
+
 	// Base: SessionBoundTransport
 	baseTransport := &SessionBoundTransport{
 		transportPool: GetGlobalTransportPool(),

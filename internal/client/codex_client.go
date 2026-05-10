@@ -3,13 +3,16 @@ package client
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/ai"
 
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -31,7 +34,34 @@ type CodexClient struct {
 // NewCodexClient creates a new Codex client wrapper.
 // The base OpenAIClient is configured with codexRoundTripper for path/header transformation.
 func NewCodexClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*CodexClient, error) {
-	base, err := NewOpenAIClient(provider, model, sessionID)
+	if provider.OAuthDetail == nil {
+		logrus.Fatalf("OpenAI client not configured with OAuthDetail")
+		panic("OpenAI client not configured with OAuthDetail")
+	}
+
+	if provider.OAuthDetail.Issuer != ai.IssuerCodex {
+		logrus.Fatalf("Codex client can only work for codex provider")
+		panic("Codex client can only work for codex provider")
+	}
+
+	// Add X-ChatGPT-Account-ID header if available from OAuth metadata
+	// The codexHook will transform this to ChatGPT-Account-ID and add other required headers
+	// Reference: https://github.com/SamSaffron/term-llm/blob/main/internal/llm/chatgpt.go
+	var options = []option.RequestOption{}
+	if accountID, ok := provider.OAuthDetail.ExtraFields["account_id"].(string); ok && accountID != "" {
+		options = append(options, option.WithHeader("X-ChatGPT-Account-ID", accountID))
+	}
+
+	// Use createSessionBoundTransport which applies OAuth hooks and uses shared transport
+	transport := &codexRoundTripper{
+		RoundTripper: createSessionBoundTransport(provider, sessionID),
+	}
+	httpClient := &http.Client{
+		Transport: transport,
+	}
+	options = append(options, option.WithHTTPClient(httpClient))
+
+	base, err := NewOpenAIClient(provider, model, sessionID, options...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create base OpenAI client: %w", err)
 	}

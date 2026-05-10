@@ -15,8 +15,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
-	"github.com/sirupsen/logrus"
-
 	"github.com/tingly-dev/tingly-box/ai"
 	"github.com/tingly-dev/tingly-box/internal/constant"
 	"github.com/tingly-dev/tingly-box/internal/obs"
@@ -56,49 +54,23 @@ type OpenAIClient struct {
 	client     openai.Client
 	provider   *typ.Provider
 	debugMode  bool
-	httpClient *http.Client
+	HttpClient *http.Client
 	recordSink *obs.Sink
 }
 
 // NewOpenAIClient creates a new OpenAI client wrapper
-func NewOpenAIClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*OpenAIClient, error) {
+func NewOpenAIClient(provider *typ.Provider, model string, sessionID typ.SessionID, extraOptions ...option.RequestOption) (*OpenAIClient, error) {
 	options := []option.RequestOption{
 		option.WithAPIKey(provider.GetAccessToken()),
 		option.WithBaseURL(provider.APIBase),
 		option.WithMaxRetries(0), // Disable automatic retries for 429 errors in test environments
 	}
 
-	// Add X-ChatGPT-Account-ID header if available from OAuth metadata
-	// The codexHook will transform this to ChatGPT-Account-ID and add other required headers
-	// Reference: https://github.com/SamSaffron/term-llm/blob/main/internal/llm/chatgpt.go
-	if provider.OAuthDetail != nil && provider.OAuthDetail.ExtraFields != nil {
-		if accountID, ok := provider.OAuthDetail.ExtraFields["account_id"].(string); ok && accountID != "" {
-			options = append(options, option.WithHeader("X-ChatGPT-Account-ID", accountID))
-		}
-	}
-
 	// Create HTTP client with session-bound transport
 	var transport http.RoundTripper
-	if provider.AuthType == typ.AuthTypeOAuth {
-		// Use createSessionBoundTransport which applies OAuth hooks and uses shared transport
-		transport = createSessionBoundTransport(provider, sessionID)
-		issuer := ai.IssuerUnknown
-		if provider.OAuthDetail != nil {
-			issuer = provider.OAuthDetail.GetIssuer()
-		}
-		if issuer == ai.IssuerCodex {
-			logrus.Infof("[Codex] Using session-bound transport for ChatGPT backend API path rewriting, session: %s", sessionID.Value)
-		} else if issuer != "" {
-			logrus.Infof("Using session-bound transport for OAuth issuer: %s, session: %s", issuer, sessionID.Value)
-		}
 
-		if provider.ProxyURL != "" {
-			logrus.Infof("Using proxy for OpenAI client: %s", provider.ProxyURL)
-		}
-	} else {
-		// For non-OAuth providers without proxy, use default transport
-		transport = http.DefaultTransport
-	}
+	// For non-OAuth providers without proxy, use default transport
+	transport = http.DefaultTransport
 
 	httpClient := &http.Client{
 		Transport: transport,
@@ -106,12 +78,15 @@ func NewOpenAIClient(provider *typ.Provider, model string, sessionID typ.Session
 
 	options = append(options, option.WithHTTPClient(httpClient))
 
+	// MENTION: extra will be applied at last to confirm override
+	options = append(options, extraOptions...)
+
 	openaiClient := openai.NewClient(options...)
 
 	return &OpenAIClient{
 		client:     openaiClient,
 		provider:   provider,
-		httpClient: httpClient,
+		HttpClient: httpClient,
 	}, nil
 }
 
@@ -122,8 +97,8 @@ func (c *OpenAIClient) APIStyle() protocol.APIStyle {
 
 // Close closes any resources held by the client
 func (c *OpenAIClient) Close() error {
-	if c.httpClient != nil && c.httpClient != http.DefaultClient {
-		c.httpClient.CloseIdleConnections()
+	if c.HttpClient != nil && c.HttpClient != http.DefaultClient {
+		c.HttpClient.CloseIdleConnections()
 	}
 	return nil
 }
@@ -131,11 +106,6 @@ func (c *OpenAIClient) Close() error {
 // Client returns the underlying OpenAI SDK client
 func (c *OpenAIClient) Client() *openai.Client {
 	return &c.client
-}
-
-// HttpClient returns the underlying HTTP client for passthrough/proxy operations
-func (c *OpenAIClient) HttpClient() *http.Client {
-	return c.httpClient
 }
 
 // ChatCompletionsNew creates a new chat completion request
@@ -181,7 +151,7 @@ func (c *OpenAIClient) applyRecordMode() {
 	if c.recordSink == nil {
 		return
 	}
-	c.httpClient.Transport = NewRecordRoundTripper(c.httpClient.Transport, c.recordSink, c.provider)
+	c.HttpClient.Transport = NewRecordRoundTripper(c.HttpClient.Transport, c.recordSink, c.provider)
 }
 
 // GetProvider returns the provider for this client
@@ -253,7 +223,7 @@ func (c *OpenAIClient) ListModels(ctx context.Context) ([]string, error) {
 	}
 
 	// Create HTTP client with timeout
-	httpClient := c.httpClient
+	httpClient := c.HttpClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -531,7 +501,7 @@ func (c *OpenAIClient) probeResponsesEndpoint(ctx context.Context, model string)
 	}
 
 	// Make the request
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.HttpClient.Do(req)
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
