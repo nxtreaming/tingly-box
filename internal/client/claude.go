@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -150,11 +149,6 @@ func (t *claudeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 		key := req.Header.Get("X-Api-Key")
 		if key != "" {
 			isOAuthToken = IsClaudeOAuthToken(key)
-
-			// Apply tool prefix for OAuth tokens
-			if isOAuthToken {
-				modifiedBody = ApplyClaudeToolPrefix(originalBody, claudeToolPrefix)
-			}
 		}
 
 		modifiedBody = applyThinking(modifiedBody)
@@ -188,16 +182,6 @@ func (t *claudeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 	if err != nil {
 		logrus.WithError(err).Errorf("failed to round trip request: %v", err)
 		return nil, err
-	}
-
-	// Wrap response body to strip tool prefix for OAuth tokens
-	if isOAuthToken && resp.StatusCode == http.StatusOK {
-		resp.Body = &claudeResponseWrapper{
-			ReadCloser:  resp.Body,
-			isStreaming: isStreamingResponse(resp),
-			isOAuth:     true,
-			toolPrefix:  claudeToolPrefix,
-		}
 	}
 
 	return resp, nil
@@ -299,96 +283,4 @@ func (t *claudeRoundTripper) applyClaudeCodeHeaders(req *http.Request, isOAuthTo
 	if sessionID != "" {
 		req.Header.Set("X-Claude-Code-Session-Id", sessionID)
 	}
-}
-
-// isStreamingResponse checks if the response is a streaming SSE response
-func isStreamingResponse(resp *http.Response) bool {
-	contentType := resp.Header.Get("Content-Type")
-	return strings.Contains(contentType, "text/event-stream") || strings.Contains(contentType, "application/x-ndjson")
-}
-
-// claudeResponseWrapper wraps response body to strip tool prefix from Claude Code OAuth responses
-type claudeResponseWrapper struct {
-	io.ReadCloser
-	isStreaming bool
-	isOAuth     bool
-	toolPrefix  string
-	buffer      []byte         // Processed data for non-streaming
-	scanner     *bufio.Scanner // Scanner for streaming
-}
-
-// Read implements io.Reader for tool prefix stripping
-func (w *claudeResponseWrapper) Read(p []byte) (n int, err error) {
-	if !w.isOAuth || w.toolPrefix == "" {
-		return w.ReadCloser.Read(p)
-	}
-
-	if w.isStreaming {
-		return w.readStreaming(p)
-	}
-	return w.readNonStreaming(p)
-}
-
-// readStreaming handles streaming response (SSE format) using bufio.Scanner
-func (w *claudeResponseWrapper) readStreaming(p []byte) (n int, err error) {
-	// Initialize scanner on first use
-	if w.scanner == nil {
-		w.scanner = bufio.NewScanner(w.ReadCloser)
-		w.scanner.Buffer(nil, maxStreamingLineSize)
-	}
-
-	// Scan next line
-	if !w.scanner.Scan() {
-		if err := w.scanner.Err(); err != nil {
-			return 0, err
-		}
-		return 0, io.EOF
-	}
-
-	// Get line and strip tool prefix
-	line := w.scanner.Bytes()
-	stripped := StripClaudeToolPrefixFromStreamLine(line, w.toolPrefix)
-
-	// Copy to output, preserving newline (scanner consumes \n, we add it back)
-	n = copy(p, stripped)
-	if n < len(p) {
-		p[n] = '\n'
-		n++
-	}
-	return n, nil
-}
-
-// readNonStreaming handles non-streaming response using io.ReadAll
-func (w *claudeResponseWrapper) readNonStreaming(p []byte) (n int, err error) {
-	// Return buffered data first
-	if len(w.buffer) > 0 {
-		n = copy(p, w.buffer)
-		w.buffer = w.buffer[n:]
-		if len(w.buffer) == 0 {
-			w.buffer = nil
-		}
-		return n, nil
-	}
-
-	// Read entire response at once
-	data, err := io.ReadAll(w.ReadCloser)
-	if err != nil {
-		return 0, err
-	}
-
-	// Strip tool prefix from complete response
-	w.buffer = StripClaudeToolPrefixFromResponse(data, w.toolPrefix)
-
-	// Return buffered data
-	n = copy(p, w.buffer)
-	w.buffer = w.buffer[n:]
-	if len(w.buffer) == 0 {
-		return n, io.EOF
-	}
-	return n, nil
-}
-
-// Close closes the underlying reader
-func (w *claudeResponseWrapper) Close() error {
-	return w.ReadCloser.Close()
 }
