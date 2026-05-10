@@ -47,7 +47,7 @@ func (f *fakeVisionClient) failCall(idx int, err error) {
 	f.errAt[idx] = err
 }
 
-func (f *fakeVisionClient) Describe(_ context.Context, mediaType, b64, url string) (string, error) {
+func (f *fakeVisionClient) Describe(_ context.Context, _ *loadbalance.Service, mediaType, b64, url string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	idx := len(f.calls)

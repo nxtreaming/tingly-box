@@ -88,7 +88,7 @@ An **op** (`SmartOp`) is `Position + Operation + Value`:
 | `thinking` | thinking-enabled flag | `enabled`, `disabled` |
 | `context_system` | concatenated system messages | `contains`, `regex` |
 | `context_user` | concatenated user messages | `contains`, `regex` |
-| `latest_user` | latest user message + content type | `contains`, `type` |
+| `latest_user` | latest user message + content type | `contains`, `type`, `proxy_vision` |
 | `tool_use` | tool names from assistant messages | `equals` |
 | `token` | estimated token count (chars/4) | `ge`, `gt`, `le`, `lt` |
 | `service_ttft` | rule services' TTFT stats (ms) | `avg_le`, `avg_ge`, `max_le`, `max_ge` |
@@ -106,6 +106,32 @@ When the scenario is `claude_code`, the SmartRoutingStage populates
 (`agent_detect.go`). Precedence is `compact` → `subagent` → `main`
 (most-specific first). The `agent.claude_code` SmartOp surfaces this as a
 routable position.
+
+### Op-level processors and implicit bypass
+
+Most ops are pure predicates: they read the request and return matched/not.
+A few ops carry **side-effect behavior** in addition to the predicate.
+These are *processor-bearing ops*. When SmartRoutingStage matches a rule
+that contains one, it:
+
+1. Looks up each op in the processor registry
+   (`smartrouting.RegisterProcessor` / `LookupProcessor`).
+2. Runs every collected processor's `Process(*ProcessorContext)` in op
+   order. The processor receives the typed request (`*BetaMessageNewParams`,
+   `*MessageNewParams`, `*ChatCompletionNewParams`) and may mutate it in
+   place. The matched rule's `Services` are passed as the processor's
+   upstream candidate pool — these are the providers the processor itself
+   can call, NOT the downstream selection set.
+3. Returns `(nil, false)` so the routing pipeline continues to the
+   LoadBalancer stage. The downstream forwarder serializes the **mutated**
+   typed request to the model selected by the LoadBalancer (this is the
+   *implicit bypass*).
+4. Marks the rule index in `SelectionContext.BypassedSmartRules` so a
+   subsequent re-evaluation cannot loop on residual matchable content.
+
+Processor implementations live in `internal/server/processor/`; they
+register at server boot via `processor.RegisterAll`. Only
+`latest_user.proxy_vision` ships in the first cut — see Use cases below.
 
 ### Trace
 
@@ -186,6 +212,27 @@ SmartRouting{
          Value: "80", Meta: SmartOpMeta{Type: ValueTypeInt}},
     },
     Services: []*loadbalance.Service{spillover},
+}
+```
+
+### Make a text-only model accept image-bearing requests
+
+Use the `latest_user.proxy_vision` op. Its services list is the *upstream*
+the vision-proxy processor will call to describe images; the rule's match
+returns `(nil, false)` so the LoadBalancer picks the actual downstream
+model from the rule's main `Services`. Image content blocks are replaced
+in place with `[image: <description>]`; on any failure they are stripped
+with `[image: (description unavailable)]` so the downstream never sees an
+unsupported block.
+
+```go
+SmartRouting{
+    Description: "describe images so cheap text-only model can answer",
+    Ops: []SmartOp{
+        {Position: PositionLatestUser, Operation: OpLatestUserProxyVision},
+    },
+    // Vision-capable upstream (Anthropic-style provider).
+    Services: []*loadbalance.Service{visionProvider},
 }
 ```
 

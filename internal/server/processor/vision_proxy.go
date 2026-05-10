@@ -15,13 +15,17 @@ import (
 
 // visionClient is the small dependency VisionProxyProcessor needs to describe
 // an image. The real adapter (RegisterAll wiring in server.go) wraps
-// client.ClientPool and dispatches to either the Anthropic or OpenAI client
-// based on the chosen service's provider transport. Tests substitute a fake.
+// client.ClientPool and dispatches to the appropriate per-service client
+// based on the chosen service's provider APIStyle. Tests substitute a fake.
+//
+// service is the upstream the processor picked from pctx.Services. The
+// adapter uses it to resolve which client/provider to call. The fake ignores
+// it and just returns canned text.
 //
 // Returning ("", nil) means "no description available" → fail-strip path.
 // Returning a non-nil error is also fail-strip.
 type visionClient interface {
-	Describe(ctx context.Context, mediaType, base64Data, remoteURL string) (string, error)
+	Describe(ctx context.Context, service *loadbalance.Service, mediaType, base64Data, remoteURL string) (string, error)
 }
 
 // providerResolver is the subset of routing.ProviderResolver this processor
@@ -93,7 +97,7 @@ func (p *VisionProxyProcessor) describe(ctx context.Context, usable *loadbalance
 	if usable == nil || p.Client == nil {
 		return imageUnavailableText
 	}
-	desc, err := p.Client.Describe(ctx, mediaType, b64, remoteURL)
+	desc, err := p.Client.Describe(ctx, usable, mediaType, b64, remoteURL)
 	if err != nil {
 		if p.Logger != nil {
 			p.Logger.Debugf("[vision_proxy] describe failed: %v", err)
