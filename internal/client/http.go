@@ -492,14 +492,6 @@ func createSessionBoundTransport(provider *typ.Provider, sessionID typ.SessionID
 				model:        model,
 				proxyURL:     provider.ProxyURL,
 			}
-		default:
-			// Generic OAuth with hooks (if any are defined)
-			if hook := oauthHookFunctions[issuer]; hook != nil {
-				return &requestModifier{
-					RoundTripper: baseTransport,
-					hooks:        []HookFunc{hook},
-				}
-			}
 		}
 	}
 
