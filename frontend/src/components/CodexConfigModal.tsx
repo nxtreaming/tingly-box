@@ -18,8 +18,6 @@ type SessionAction = 'import' | 'undo';
 
 const SHOW_CODEX_SESSION_IMPORT = false;
 
-const DEFAULT_CODEX_MODEL = 'tingly-codex';
-
 const sanitizeProfileKey = (name: string): string => {
     const cleaned = name.replace(/[^A-Za-z0-9_-]/g, '-').replace(/^-+|-+$/g, '');
     return cleaned || 'tingly';
@@ -32,12 +30,23 @@ export const buildCodexConfigToml = (codexBaseUrl: string, rules?: any[] | null)
               .map(r => r.request_model as string)
         : [];
     const uniqueModels = Array.from(new Set(modelNames));
-    const defaultModel = uniqueModels[0] || DEFAULT_CODEX_MODEL;
+
+    const header = `[model_providers.tingly-box]
+name = "OpenAI using Tingly Box"
+base_url = "${codexBaseUrl}"
+preferred_auth_method = "apikey"
+wire_api = "responses"`;
+
+    if (uniqueModels.length === 0) {
+        return `# No active Codex rules configured yet. Add one in "Models and Forwarding Rules".\nmodel_provider = "tingly-box"\nmodel_supports_reasoning_summaries = true\nmodel_reasoning_summary = "auto"\n\n${header}`;
+    }
+
+    const defaultModel = uniqueModels[0];
 
     const profileKeys = new Set<string>();
     const profileBlocks = uniqueModels
         .map(model => {
-            let key = sanitizeProfileKey(model);
+            const key = sanitizeProfileKey(model);
             let candidate = key;
             let suffix = 1;
             while (profileKeys.has(candidate)) {
@@ -53,11 +62,7 @@ model_provider = "tingly-box"
 model_supports_reasoning_summaries = true
 model_reasoning_summary = "auto"
 
-[model_providers.tingly-box]
-name = "OpenAI using Tingly Box"
-base_url = "${codexBaseUrl}"
-preferred_auth_method = "apikey"
-wire_api = "responses"${profileBlocks}`;
+${header}${profileBlocks}`;
 };
 
 const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
