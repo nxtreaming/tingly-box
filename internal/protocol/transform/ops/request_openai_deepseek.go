@@ -12,36 +12,31 @@ func applyDeepSeekTransform(req *openai.ChatCompletionNewParams, providerURL, mo
 	if config.CursorCompat {
 		normalizeCursorContent(req)
 	}
-	// if has thinking, we should confirm each assistant contains `reasoning_content`
-	// deepseek do not regard to config's has thinking field.
-	//if config.HasThinking {
 	for i := range req.Messages {
 		if req.Messages[i].OfAssistant != nil {
-			// Convert the message to map to check/modify fields
-			msgMap := req.Messages[i].ExtraFields()
+			// Read/write extra fields on OfAssistant (variant level), not on union level.
+			// MarshalUnion only serializes the active variant — union-level ExtraFields are dropped.
+			msgMap := req.Messages[i].OfAssistant.ExtraFields()
 			if msgMap == nil {
 				msgMap = map[string]any{}
 			}
 
 			// Extract x_thinking and convert to reasoning_content
 			if thinking, hasThinking := msgMap["x_thinking"]; hasThinking {
-				// Convert x_thinking to reasoning_content
 				if thinkingStr, ok := thinking.(string); ok {
 					msgMap["reasoning_content"] = thinkingStr
 				}
-				// Remove x_thinking field
 				delete(msgMap, "x_thinking")
-			} else {
-				// Ensure reasoning_content field exists even if no thinking content
-				// Use a placeholder (empty pointer) instead of empty string to ensure it's included in JSON
-				var emptyStr string
-				msgMap["reasoning_content"] = &emptyStr
+			} else if _, hasReasoning := msgMap["reasoning_content"]; !hasReasoning {
+				// DeepSeek requires reasoning_content on assistant messages, especially
+				// those with tool_calls. Per DeepSeek docs: "For turns that do perform
+				// tool calls, the reasoning_content must be fully passed back to the API
+				// in all subsequent requests."
+				msgMap["reasoning_content"] = ""
 			}
 
-			// Convert back to message param
-			req.Messages[i].SetExtraFields(msgMap)
+			req.Messages[i].OfAssistant.SetExtraFields(msgMap)
 		}
 	}
-	//}
 	return req
 }

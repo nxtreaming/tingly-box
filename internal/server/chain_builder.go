@@ -39,6 +39,8 @@ func (s *Server) BuildTransformChain(c *gin.Context, targetType protocol.APIType
 		transforms = append(transforms, servertransform.NewMCPToolInjectionTransform(s.mcpRuntime))
 		transforms = append(transforms, servertransform.NewMCPToolStripGuardTransform(s.mcpRuntime, s.mcpStripDisabledToolsEnabled()))
 	}
+	// 3. Consistency transform (cross-provider normalization including message alignment)
+	transforms = append(transforms, transform.NewConsistencyTransform(targetType))
 	transforms = append(transforms, transform.NewVendorTransform(providerURL))
 
 	// 3. Post-transform recording (if request recording is enabled)

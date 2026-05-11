@@ -28,6 +28,14 @@ var ProviderConfigs = []providerConfig{
 		Transform:      applyDeepSeekTransform,
 	},
 
+	// OpenCode Go - aggregator that may route to DeepSeek models
+	// Only apply DeepSeek transform when the model name contains "deepseek"
+	{
+		APIBasePattern: "opencode.ai/zen/go",
+		ModelPattern:   "deepseek",
+		Transform:      applyDeepSeekTransform,
+	},
+
 	// Moonshot - official API (CN)
 	// Moonshot requires reasoning_content in assistant messages with tool_calls when thinking is enabled
 	// Similar to DeepSeek, we reuse applyDeepSeekTransform to handle x_thinking -> reasoning_content conversion
@@ -65,19 +73,16 @@ var ProviderConfigs = []providerConfig{
 // GetProviderTransform identifies provider by APIBase URL string and returns its transform
 // Returns nil if no specific transform is needed (fallback to default)
 func GetProviderTransform(providerURL, model string) ProviderTransform {
-	if providerURL == "" {
-		return nil
-	}
-
 	apiBase := strings.ToLower(providerURL)
 	modelLower := strings.ToLower(model)
 
 	// Match by APIBase domain and optional ModelPattern
-	for _, config := range ProviderConfigs {
-		if strings.Contains(apiBase, config.APIBasePattern) {
-			// If a model pattern is specified, it must also match
-			if config.ModelPattern == "*" || strings.Contains(modelLower, config.ModelPattern) {
-				return config.Transform
+	if apiBase != "" {
+		for _, config := range ProviderConfigs {
+			if strings.Contains(apiBase, config.APIBasePattern) {
+				if config.ModelPattern == "*" || strings.Contains(modelLower, config.ModelPattern) {
+					return config.Transform
+				}
 			}
 		}
 	}

@@ -400,6 +400,12 @@ func createReasoningContentChunk(chatID string, created int64, model, reasoning 
 		},
 	}
 
+	// Only add reasoning_content if reasoning is not empty
+	// DeepSeek and other providers reject empty reasoning_content fields
+	if reasoning == "" {
+		return chunk
+	}
+
 	// Marshal to JSON, add reasoning_content, and unmarshal back
 	chunkJSON, _ := json.Marshal(chunk)
 	var chunkMap map[string]interface{}
