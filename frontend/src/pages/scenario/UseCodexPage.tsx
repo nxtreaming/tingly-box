@@ -1,6 +1,6 @@
 import CardGrid from "@/components/CardGrid.tsx";
 import AgentSetupCard, { type AgentApplyResult, hasModelOnAnyRule, scrollToModelsCard } from '@/components/AgentSetupCard';
-import CodexConfigModal from "@/components/CodexConfigModal.tsx";
+import CodexConfigModal, { buildCodexConfigToml } from "@/components/CodexConfigModal.tsx";
 import UnifiedCard from "@/components/UnifiedCard.tsx";
 import ProviderConfigCard from "@/components/ProviderConfigCard.tsx";
 import { Box, Button, IconButton, Tooltip } from '@mui/material';
@@ -27,7 +27,7 @@ const UseCodexPageContent: React.FC = () => {
     // Codex has no backend apply — copy config.toml to clipboard as a convenience
     const handleApply = async (): Promise<AgentApplyResult> => {
         const codexBaseUrl = `${baseUrl}/tingly/codex`;
-        const config = `model = "tingly-codex"\nmodel_provider = "tingly-box"\nmodel_supports_reasoning_summaries = true\nmodel_reasoning_summary = "auto"\n\n[model_providers.tingly-box]\nname = "OpenAI using Tingly Box"\nbase_url = "${codexBaseUrl}"\npreferred_auth_method = "apikey"\nwire_api = "responses"`;
+        const config = buildCodexConfigToml(codexBaseUrl, rules);
         await navigator.clipboard.writeText(config);
         return {
             success: true,
@@ -93,6 +93,7 @@ const UseCodexPageContent: React.FC = () => {
                     onClose={() => setConfigModalOpen(false)}
                     baseUrl={baseUrl}
                     copyToClipboard={copyToClipboard}
+                    rules={rules}
                 />
             </CardGrid>
         </PageLayout>

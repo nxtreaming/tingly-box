@@ -10,6 +10,7 @@ interface CodexConfigModalProps {
     onClose: () => void;
     baseUrl: string;
     copyToClipboard: (text: string, label: string) => Promise<void>;
+    rules?: any[] | null;
 }
 
 type ScriptTab = 'json' | 'windows' | 'unix';
@@ -17,11 +18,54 @@ type SessionAction = 'import' | 'undo';
 
 const SHOW_CODEX_SESSION_IMPORT = false;
 
+const DEFAULT_CODEX_MODEL = 'tingly-codex';
+
+const sanitizeProfileKey = (name: string): string => {
+    const cleaned = name.replace(/[^A-Za-z0-9_-]/g, '-').replace(/^-+|-+$/g, '');
+    return cleaned || 'tingly';
+};
+
+export const buildCodexConfigToml = (codexBaseUrl: string, rules?: any[] | null): string => {
+    const modelNames: string[] = Array.isArray(rules)
+        ? rules
+              .filter(r => r && r.active !== false && typeof r.request_model === 'string' && r.request_model.trim() !== '')
+              .map(r => r.request_model as string)
+        : [];
+    const uniqueModels = Array.from(new Set(modelNames));
+    const defaultModel = uniqueModels[0] || DEFAULT_CODEX_MODEL;
+
+    const profileKeys = new Set<string>();
+    const profileBlocks = uniqueModels
+        .map(model => {
+            let key = sanitizeProfileKey(model);
+            let candidate = key;
+            let suffix = 1;
+            while (profileKeys.has(candidate)) {
+                candidate = `${key}-${suffix++}`;
+            }
+            profileKeys.add(candidate);
+            return `\n\n[profiles.${candidate}]\nmodel = "${model}"\nmodel_provider = "tingly-box"`;
+        })
+        .join('');
+
+    return `model = "${defaultModel}"
+model_provider = "tingly-box"
+model_supports_reasoning_summaries = true
+model_reasoning_summary = "auto"
+
+[model_providers.tingly-box]
+name = "OpenAI using Tingly Box"
+base_url = "${codexBaseUrl}"
+preferred_auth_method = "apikey"
+wire_api = "responses"${profileBlocks}`;
+};
+
 const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
     open,
     onClose,
     baseUrl,
     copyToClipboard,
+    rules,
 }) => {
     // Get token from context
     const { token } = useScenarioPageModal();
@@ -36,16 +80,10 @@ const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
 
     const codexBaseUrl = `${baseUrl}/tingly/codex`;
 
-    const configToml = `model = "tingly-codex"
-model_provider = "tingly-box"
-model_supports_reasoning_summaries = true
-model_reasoning_summary = "auto"
-
-[model_providers.tingly-box]
-name = "OpenAI using Tingly Box"
-base_url = "${codexBaseUrl}"
-preferred_auth_method = "apikey"
-wire_api = "responses"`;
+    const configToml = React.useMemo(
+        () => buildCodexConfigToml(codexBaseUrl, rules),
+        [codexBaseUrl, rules],
+    );
 
     const authJson = `{
   "OPENAI_API_KEY": "${token}"
