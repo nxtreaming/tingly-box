@@ -953,6 +953,15 @@ func ApplyCodexConfig(baseURL string, models []string) (*ApplyResult, error) {
 	return result, nil
 }
 
+// RenderCodexConfigTOML returns the TOML that would be written to a fresh
+// ~/.codex/config.toml — i.e. the merge applied to an empty starting point.
+// Used by the preview endpoint so the UI can show exactly what's pending.
+func RenderCodexConfigTOML(baseURL string, models []string) ([]byte, error) {
+	cfg := map[string]interface{}{}
+	mergeCodexConfig(cfg, baseURL, models)
+	return tomlpkg.Marshal(cfg)
+}
+
 // mergeCodexConfig mutates cfg in place, applying tingly-managed fields while
 // preserving everything else. See ApplyCodexConfig for the contract.
 func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []string) {

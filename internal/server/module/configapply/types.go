@@ -28,6 +28,24 @@ type OpenCodeConfigPreviewResponse struct {
 	Message    string `json:"message,omitempty"`
 }
 
+// ApplyCodexConfigResponse is the response for ApplyCodexConfigFromState.
+type ApplyCodexConfigResponse struct {
+	Success      bool               `json:"success"`
+	ConfigResult config.ApplyResult `json:"configResult"`
+	AuthResult   config.ApplyResult `json:"authResult"`
+	Models       []string           `json:"models"`
+	Message      string             `json:"message,omitempty"`
+}
+
+// CodexConfigPreviewResponse is the response for GetCodexConfigPreview.
+type CodexConfigPreviewResponse struct {
+	Success    bool     `json:"success"`
+	ConfigToml string   `json:"configToml"`
+	AuthJson   string   `json:"authJson"`
+	Models     []string `json:"models"`
+	Message    string   `json:"message,omitempty"`
+}
+
 // RestoreConfigResponse is the response for the restore endpoints. It mirrors
 // the agent.RestoreAgentResult so callers can drive UI from the same data
 // the CLI prints.

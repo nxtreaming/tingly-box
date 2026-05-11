@@ -30,11 +30,23 @@ func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 		swagger.WithResponseModel(ApplyOpenCodeConfigResponse{}),
 	)
 
+	router.POST("/config/apply/codex", handler.ApplyCodexConfigFromState,
+		swagger.WithDescription("Generate and apply Codex CLI configuration from system state"),
+		swagger.WithTags("config"),
+		swagger.WithResponseModel(ApplyCodexConfigResponse{}),
+	)
+
 	// Config preview endpoint - returns config for display without applying
 	router.GET("/config/preview/opencode", handler.GetOpenCodeConfigPreview,
 		swagger.WithDescription("Generate OpenCode configuration preview from system state"),
 		swagger.WithTags("config"),
 		swagger.WithResponseModel(OpenCodeConfigPreviewResponse{}),
+	)
+
+	router.GET("/config/preview/codex", handler.GetCodexConfigPreview,
+		swagger.WithDescription("Generate Codex configuration preview from system state"),
+		swagger.WithTags("config"),
+		swagger.WithResponseModel(CodexConfigPreviewResponse{}),
 	)
 
 	// Config restore endpoints - roll back to the most recent on-disk backup.
@@ -46,6 +58,12 @@ func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 
 	router.POST("/config/restore/opencode", handler.RestoreOpenCodeConfig,
 		swagger.WithDescription("Restore OpenCode configuration from the most recent backup"),
+		swagger.WithTags("config"),
+		swagger.WithResponseModel(RestoreConfigResponse{}),
+	)
+
+	router.POST("/config/restore/codex", handler.RestoreCodexConfig,
+		swagger.WithDescription("Restore Codex configuration from the most recent backup"),
 		swagger.WithTags("config"),
 		swagger.WithResponseModel(RestoreConfigResponse{}),
 	)

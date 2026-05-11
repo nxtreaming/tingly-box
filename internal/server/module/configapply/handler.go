@@ -624,3 +624,125 @@ console.log("OpenCode config written to", configPath);`, modelsJSON, configBaseU
 	escapedCode := strings.ReplaceAll(nodeCode, "'", "'\\''")
 	return "# Bash - Run in terminal\nnode -e '" + escapedCode + "'"
 }
+
+// collectCodexRuleModels returns the request_models of every active rule in
+// the Codex scenario, deduplicated and in declaration order.
+func collectCodexRuleModels(cfg *config.Config) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, rule := range cfg.GetRequestConfigs() {
+		if rule.GetScenario() != typ.ScenarioCodex || !rule.Active {
+			continue
+		}
+		model := strings.TrimSpace(rule.RequestModel)
+		if model == "" {
+			continue
+		}
+		if _, dup := seen[model]; dup {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+// ApplyCodexConfigFromState applies the Codex CLI configuration derived from
+// the active Codex scenario rules. Mirrors the OpenCode endpoint: it does NOT
+// touch routing rules — those are managed via the rules UI.
+func (h *Handler) ApplyCodexConfigFromState(c *gin.Context) {
+	cfg := h.config
+	if cfg == nil {
+		c.JSON(http.StatusInternalServerError, config.ApplyResult{
+			Success: false,
+			Message: "Global config not available",
+		})
+		return
+	}
+
+	models := collectCodexRuleModels(cfg)
+
+	port := h.config.ServerPort
+	if port == 0 {
+		port = 12580
+	}
+	codexBaseURL := getBaseURLFromRequest(c, port) + "/tingly/codex"
+	apiKey := h.config.GetModelToken()
+
+	configResult, err := config.ApplyCodexConfig(codexBaseURL, models)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ApplyCodexConfigResponse{
+			Success: false,
+			Message: "Internal error: " + err.Error(),
+		})
+		return
+	}
+	authResult, err := config.ApplyCodexAuth(apiKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, ApplyCodexConfigResponse{
+			Success: false,
+			Message: "Internal error: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ApplyCodexConfigResponse{
+		Success:      configResult.Success && authResult.Success,
+		ConfigResult: *configResult,
+		AuthResult:   *authResult,
+		Models:       models,
+	})
+}
+
+// GetCodexConfigPreview returns the TOML/JSON that ApplyCodexConfigFromState
+// would write to a fresh file. The real apply still merges into any existing
+// ~/.codex/config.toml; this preview just shows the managed slice.
+func (h *Handler) GetCodexConfigPreview(c *gin.Context) {
+	cfg := h.config
+	if cfg == nil {
+		c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
+			Success: false,
+			Message: "Global config not available",
+		})
+		return
+	}
+
+	models := collectCodexRuleModels(cfg)
+
+	port := h.config.ServerPort
+	if port == 0 {
+		port = 12580
+	}
+	codexBaseURL := getBaseURLFromRequest(c, port) + "/tingly/codex"
+	apiKey := h.config.GetModelToken()
+
+	tomlBytes, err := config.RenderCodexConfigTOML(codexBaseURL, models)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
+			Success: false,
+			Message: "Failed to render config: " + err.Error(),
+		})
+		return
+	}
+
+	authBytes, err := json.MarshalIndent(map[string]string{"OPENAI_API_KEY": apiKey}, "", "  ")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
+			Success: false,
+			Message: "Failed to render auth: " + err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, CodexConfigPreviewResponse{
+		Success:    true,
+		ConfigToml: string(tomlBytes),
+		AuthJson:   string(authBytes),
+		Models:     models,
+	})
+}
+
+// RestoreCodexConfig rolls back Codex config files to their most recent backup.
+func (h *Handler) RestoreCodexConfig(c *gin.Context) {
+	h.restoreAgent(c, agent.AgentTypeCodex)
+}
