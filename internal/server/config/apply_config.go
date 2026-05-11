@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	tomlpkg "github.com/pelletier/go-toml/v2"
 	"github.com/tingly-dev/tingly-box/internal"
 )
 
@@ -877,11 +878,27 @@ func ApplyOpenCodeConfig(payload map[string]interface{}) (*ApplyResult, error) {
 	return result, nil
 }
 
-// ApplyCodexConfig writes the supplied TOML contents to `~/.codex/config.toml`.
-// The Codex config.toml has a fixed top-level shape (a single `model_provider`
-// plus optional `[profiles.*]` blocks), so we replace the file wholesale rather
-// than attempting a merge — but the previous version is backed up first.
-func ApplyCodexConfig(toml string) (*ApplyResult, error) {
+// ApplyCodexConfig merges tingly-box Codex settings into ~/.codex/config.toml.
+//
+// MERGE semantics: only fields tingly-box manages are overwritten. Everything
+// else the user put in config.toml — other top-level keys, other entries under
+// `[model_providers.*]`, and unrelated `[profiles.*]` blocks — is left alone.
+//
+// Managed fields:
+//   - top-level `model` (set to models[0] when models is non-empty)
+//   - top-level `model_provider = "tingly-box"`,
+//     `model_supports_reasoning_summaries = true`,
+//     `model_reasoning_summary = "auto"`
+//   - `[model_providers.tingly-box]` (always re-pinned to the supplied base URL)
+//   - `[profiles.<sanitized(model)>]` for each model
+//
+// If a profile key collides with one the user already wrote (and that profile
+// is not ours), our profile is suffixed (`-1`, `-2`, …) to avoid clobbering.
+// Orphan tingly profiles from earlier applies are NOT garbage-collected; if
+// the user has trimmed their rules they can remove stale profiles by hand.
+//
+// The previous file (if any) is backed up before being rewritten.
+func ApplyCodexConfig(baseURL string, models []string) (*ApplyResult, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
@@ -896,7 +913,12 @@ func ApplyCodexConfig(toml string) (*ApplyResult, error) {
 		return result, nil
 	}
 
-	if _, err := os.Stat(targetPath); err == nil {
+	existing := map[string]interface{}{}
+	if data, err := os.ReadFile(targetPath); err == nil {
+		if err := tomlpkg.Unmarshal(data, &existing); err != nil {
+			result.Message = fmt.Sprintf("Failed to parse existing TOML: %v", err)
+			return result, nil
+		}
 		backupPath, err := backupFile(targetPath)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to create backup: %v", err)
@@ -908,7 +930,14 @@ func ApplyCodexConfig(toml string) (*ApplyResult, error) {
 		result.Created = true
 	}
 
-	if err := os.WriteFile(targetPath, []byte(toml), 0644); err != nil {
+	mergeCodexConfig(existing, baseURL, models)
+
+	out, err := tomlpkg.Marshal(existing)
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to marshal TOML: %v", err)
+		return result, nil
+	}
+	if err := os.WriteFile(targetPath, out, 0644); err != nil {
 		result.Message = fmt.Sprintf("Failed to write file: %v", err)
 		return result, nil
 	}
@@ -922,6 +951,87 @@ func ApplyCodexConfig(toml string) (*ApplyResult, error) {
 		result.Message = fmt.Sprintf("Updated %s", targetPath)
 	}
 	return result, nil
+}
+
+// mergeCodexConfig mutates cfg in place, applying tingly-managed fields while
+// preserving everything else. See ApplyCodexConfig for the contract.
+func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []string) {
+	if len(models) > 0 {
+		cfg["model"] = models[0]
+	}
+	cfg["model_provider"] = "tingly-box"
+	cfg["model_supports_reasoning_summaries"] = true
+	cfg["model_reasoning_summary"] = "auto"
+
+	providers, _ := cfg["model_providers"].(map[string]interface{})
+	if providers == nil {
+		providers = map[string]interface{}{}
+	}
+	providers["tingly-box"] = map[string]interface{}{
+		"name":                  "OpenAI using Tingly Box",
+		"base_url":              baseURL,
+		"preferred_auth_method": "apikey",
+		"wire_api":              "responses",
+	}
+	cfg["model_providers"] = providers
+
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	if profiles == nil {
+		profiles = map[string]interface{}{}
+	}
+	for _, model := range models {
+		key := pickCodexProfileKey(profiles, model)
+		profiles[key] = map[string]interface{}{
+			"model":          model,
+			"model_provider": "tingly-box",
+		}
+	}
+	if len(profiles) > 0 {
+		cfg["profiles"] = profiles
+	}
+}
+
+// pickCodexProfileKey returns the profile key under which we should write our
+// profile for the given model. It prefers the sanitized model name; if that
+// slot is already occupied by a non-tingly profile (or a tingly profile for a
+// different model), it appends `-N` until a writable slot is found. A slot is
+// writable when it is empty OR already points at this exact model via the
+// tingly-box provider (so re-applying is idempotent).
+func pickCodexProfileKey(profiles map[string]interface{}, model string) string {
+	base := sanitizeCodexProfileKey(model)
+	candidate := base
+	for i := 1; ; i++ {
+		existing, occupied := profiles[candidate].(map[string]interface{})
+		if !occupied {
+			return candidate
+		}
+		if mp, _ := existing["model_provider"].(string); mp == "tingly-box" {
+			if m, _ := existing["model"].(string); m == model {
+				return candidate
+			}
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+}
+
+// sanitizeCodexProfileKey keeps alphanumerics, `_`, `-`; turns anything else
+// into `-`; trims edge dashes. Empty result falls back to "tingly".
+func sanitizeCodexProfileKey(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "tingly"
+	}
+	return out
 }
 
 // ApplyCodexAuth writes `~/.codex/auth.json` with `OPENAI_API_KEY` set to the

@@ -232,9 +232,8 @@ func (aa *AgentApply) applyCodex(req *ApplyAgentRequest) (*ApplyAgentResult, err
 	codexBaseURL := baseURL + "/tingly/codex"
 
 	models := aa.collectCodexRuleModels()
-	toml := GenerateCodexConfigToml(codexBaseURL, models)
 
-	configResult, err := serverconfig.ApplyCodexConfig(toml)
+	configResult, err := serverconfig.ApplyCodexConfig(codexBaseURL, models)
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply Codex config: %w", err)
 	}
@@ -287,65 +286,6 @@ func (aa *AgentApply) collectCodexRuleModels() []string {
 		}
 		seen[model] = struct{}{}
 		out = append(out, model)
-	}
-	return out
-}
-
-// GenerateCodexConfigToml renders the Codex `config.toml`. The first model is
-// used as the top-level default; every model also becomes a `[profiles.<key>]`
-// block so users can switch via `codex --profile <key>`. The provider entry is
-// always a single `tingly-box` block pointing at the local proxy. When models
-// is empty, a placeholder header is emitted so the file is still well-formed.
-func GenerateCodexConfigToml(codexBaseURL string, models []string) string {
-	header := fmt.Sprintf("[model_providers.tingly-box]\nname = \"OpenAI using Tingly Box\"\nbase_url = %q\npreferred_auth_method = \"apikey\"\nwire_api = \"responses\"", codexBaseURL)
-
-	if len(models) == 0 {
-		return "# No active Codex rules configured yet. Add one in \"Models and Forwarding Rules\".\n" +
-			"model_provider = \"tingly-box\"\n" +
-			"model_supports_reasoning_summaries = true\n" +
-			"model_reasoning_summary = \"auto\"\n\n" +
-			header + "\n"
-	}
-
-	usedKeys := map[string]struct{}{}
-	var profiles strings.Builder
-	for _, model := range models {
-		key := sanitizeCodexProfileKey(model)
-		candidate := key
-		for i := 1; ; i++ {
-			if _, ok := usedKeys[candidate]; !ok {
-				break
-			}
-			candidate = fmt.Sprintf("%s-%d", key, i)
-		}
-		usedKeys[candidate] = struct{}{}
-		fmt.Fprintf(&profiles, "\n\n[profiles.%s]\nmodel = %q\nmodel_provider = \"tingly-box\"", candidate, model)
-	}
-
-	return fmt.Sprintf("model = %q\n", models[0]) +
-		"model_provider = \"tingly-box\"\n" +
-		"model_supports_reasoning_summaries = true\n" +
-		"model_reasoning_summary = \"auto\"\n\n" +
-		header +
-		profiles.String() + "\n"
-}
-
-// sanitizeCodexProfileKey mirrors the frontend behaviour: keep alphanumerics,
-// `_`, `-`; replace anything else with `-`; trim leading/trailing dashes.
-func sanitizeCodexProfileKey(name string) string {
-	var b strings.Builder
-	b.Grow(len(name))
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "tingly"
 	}
 	return out
 }
