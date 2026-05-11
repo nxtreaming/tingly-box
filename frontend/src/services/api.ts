@@ -762,14 +762,6 @@ export const api = {
     listOpenAIModels: (): Promise<any> => modelAPI('/openai/v1/models'),
     listAnthropicModels: (): Promise<any> => modelAPI('/anthropic/v1/models'),
 
-    // Playground: scenario-prefixed transparent passthrough endpoint
-    // (model-side route, not covered by swagger codegen — hand-written placeholder)
-    playgroundImageGenerate: (scenario: string, data: any): Promise<any> =>
-        modelAPI(`/tingly/${scenario}/v1/images/generations`, {
-            method: 'POST',
-            body: JSON.stringify(data),
-        }),
-
 
     // Service management within rules
     addServiceToRule: (ruleName: string, serviceData: any): Promise<any> => uiAPI(`/rule/${ruleName}/services`, {

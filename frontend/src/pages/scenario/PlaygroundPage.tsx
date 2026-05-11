@@ -16,6 +16,7 @@ import {
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import { api } from '@/services/api';
+import { getOpenAIClient } from '@/services/openaiClient';
 import PageLayout from '@/components/PageLayout';
 import UnifiedCard from '@/components/UnifiedCard';
 import CardGrid from '@/components/CardGrid';
@@ -70,19 +71,14 @@ const PlaygroundPage: React.FC = () => {
         setError('');
         setResults([]);
         try {
-            const resp = await api.playgroundImageGenerate(IMAGE_SCENARIO, {
+            const client = await getOpenAIClient(IMAGE_SCENARIO);
+            const resp = await client.images.generate({
                 model,
                 prompt: prompt.trim(),
                 n: count,
-                size,
+                size: size as any,
             });
-            if (resp?.error) {
-                setError(resp.error.message || JSON.stringify(resp.error));
-            } else if (Array.isArray(resp?.data)) {
-                setResults(resp.data);
-            } else {
-                setError('Unexpected response shape');
-            }
+            setResults(resp.data ?? []);
         } catch (err: any) {
             setError(err?.message || 'Request failed');
         } finally {
