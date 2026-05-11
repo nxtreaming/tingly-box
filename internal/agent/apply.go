@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	serverconfig "github.com/tingly-dev/tingly-box/internal/server/config"
+	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
 // AgentApply handles agent configuration application
@@ -37,6 +38,8 @@ func (aa *AgentApply) ApplyAgent(req *ApplyAgentRequest) (*ApplyAgentResult, err
 		return aa.applyClaudeCode(req)
 	case AgentTypeOpenCode:
 		return aa.applyOpenCode(req)
+	case AgentTypeCodex:
+		return aa.applyCodex(req)
 	default:
 		return nil, fmt.Errorf("agent type %s not implemented", req.AgentType)
 	}
@@ -180,6 +183,171 @@ func (aa *AgentApply) applyOpenCode(req *ApplyAgentRequest) (*ApplyAgentResult, 
 	result.Message = aa.buildResultMessage(result)
 
 	return result, nil
+}
+
+// applyCodex applies Codex CLI configuration. Codex has no notion of a
+// per-model rule on the agent side, so this:
+//   - Optionally creates/updates the default Codex rule (`tingly-codex`)
+//     when a provider+model is supplied
+//   - Collects every active Codex scenario rule and emits a
+//     `[profiles.<name>]` block for each in `~/.codex/config.toml`
+//   - Writes the model token into `~/.codex/auth.json`
+//
+// The single `tingly-box` model provider is always pinned to the local
+// tingly-box base URL (`/tingly/codex`).
+func (aa *AgentApply) applyCodex(req *ApplyAgentRequest) (*ApplyAgentResult, error) {
+	result := &ApplyAgentResult{
+		AgentType: req.AgentType,
+	}
+
+	hasService := req.Provider != "" && req.Model != ""
+	if hasService {
+		provider, err := aa.config.GetProviderByUUID(req.Provider)
+		if err != nil || provider == nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("provider %s not found; skipping routing rule update", req.Provider))
+			hasService = false
+		} else {
+			result.ProviderName = provider.Name
+			result.ProviderUUID = provider.UUID
+			result.Model = req.Model
+		}
+	} else {
+		result.Warnings = append(result.Warnings,
+			"no routing service configured; applying config files only (routing rules will not be created)")
+	}
+
+	if hasService {
+		ruleCreated, ruleUpdated, err := aa.createOrUpdateCodexRules(result.ProviderUUID, req.Model)
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("failed to create/update routing rules: %v", err))
+		} else {
+			result.RulesCreated = ruleCreated
+			result.RulesUpdated = ruleUpdated
+		}
+	}
+
+	baseURL, apiKey := aa.getBaseURLAndToken()
+	codexBaseURL := baseURL + "/tingly/codex"
+
+	models := aa.collectCodexRuleModels()
+	toml := GenerateCodexConfigToml(codexBaseURL, models)
+
+	configResult, err := serverconfig.ApplyCodexConfig(toml)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply Codex config: %w", err)
+	}
+	authResult, err := serverconfig.ApplyCodexAuth(apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply Codex auth: %w", err)
+	}
+
+	result.Success = configResult.Success && authResult.Success
+	if configResult.Success {
+		suffix := " (updated)"
+		if configResult.Created {
+			suffix = " (created)"
+		}
+		result.ConfigFiles = append(result.ConfigFiles, "~/.codex/config.toml"+suffix)
+	}
+	if authResult.Success {
+		suffix := " (updated)"
+		if authResult.Created {
+			suffix = " (created)"
+		}
+		result.ConfigFiles = append(result.ConfigFiles, "~/.codex/auth.json"+suffix)
+	}
+	if configResult.BackupPath != "" {
+		result.BackupPaths = append(result.BackupPaths, configResult.BackupPath)
+	}
+	if authResult.BackupPath != "" {
+		result.BackupPaths = append(result.BackupPaths, authResult.BackupPath)
+	}
+
+	result.Message = aa.buildResultMessage(result)
+	return result, nil
+}
+
+// collectCodexRuleModels returns the request_models of every active rule under
+// the Codex scenario, deduplicated and in declaration order.
+func (aa *AgentApply) collectCodexRuleModels() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, rule := range aa.config.GetRequestConfigs() {
+		if rule.GetScenario() != typ.ScenarioCodex || !rule.Active {
+			continue
+		}
+		model := strings.TrimSpace(rule.RequestModel)
+		if model == "" {
+			continue
+		}
+		if _, dup := seen[model]; dup {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
+}
+
+// GenerateCodexConfigToml renders the Codex `config.toml`. The first model is
+// used as the top-level default; every model also becomes a `[profiles.<key>]`
+// block so users can switch via `codex --profile <key>`. The provider entry is
+// always a single `tingly-box` block pointing at the local proxy. When models
+// is empty, a placeholder header is emitted so the file is still well-formed.
+func GenerateCodexConfigToml(codexBaseURL string, models []string) string {
+	header := fmt.Sprintf("[model_providers.tingly-box]\nname = \"OpenAI using Tingly Box\"\nbase_url = %q\npreferred_auth_method = \"apikey\"\nwire_api = \"responses\"", codexBaseURL)
+
+	if len(models) == 0 {
+		return "# No active Codex rules configured yet. Add one in \"Models and Forwarding Rules\".\n" +
+			"model_provider = \"tingly-box\"\n" +
+			"model_supports_reasoning_summaries = true\n" +
+			"model_reasoning_summary = \"auto\"\n\n" +
+			header + "\n"
+	}
+
+	usedKeys := map[string]struct{}{}
+	var profiles strings.Builder
+	for _, model := range models {
+		key := sanitizeCodexProfileKey(model)
+		candidate := key
+		for i := 1; ; i++ {
+			if _, ok := usedKeys[candidate]; !ok {
+				break
+			}
+			candidate = fmt.Sprintf("%s-%d", key, i)
+		}
+		usedKeys[candidate] = struct{}{}
+		fmt.Fprintf(&profiles, "\n\n[profiles.%s]\nmodel = %q\nmodel_provider = \"tingly-box\"", candidate, model)
+	}
+
+	return fmt.Sprintf("model = %q\n", models[0]) +
+		"model_provider = \"tingly-box\"\n" +
+		"model_supports_reasoning_summaries = true\n" +
+		"model_reasoning_summary = \"auto\"\n\n" +
+		header +
+		profiles.String() + "\n"
+}
+
+// sanitizeCodexProfileKey mirrors the frontend behaviour: keep alphanumerics,
+// `_`, `-`; replace anything else with `-`; trim leading/trailing dashes.
+func sanitizeCodexProfileKey(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "tingly"
+	}
+	return out
 }
 
 // getBaseURLAndToken returns the base URL and API token for configuration

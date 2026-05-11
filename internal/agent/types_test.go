@@ -27,6 +27,11 @@ func TestParseAgentType(t *testing.T) {
 		{"open-code with dash", "open-code", AgentTypeOpenCode, false},
 		{"OC uppercase", "OC", AgentTypeOpenCode, false},
 
+		// Valid Codex aliases
+		{"cx alias", "cx", AgentTypeCodex, false},
+		{"codex full", "codex", AgentTypeCodex, false},
+		{"CODEX uppercase", "CODEX", AgentTypeCodex, false},
+
 		// Whitespace handling
 		{"cc with leading space", "  cc", AgentTypeClaudeCode, false},
 		{"cc with trailing space", "cc  ", AgentTypeClaudeCode, false},
@@ -34,7 +39,6 @@ func TestParseAgentType(t *testing.T) {
 		// Invalid inputs
 		{"empty string", "", "", true},
 		{"invalid type", "invalid", "", true},
-		{"codex not supported", "codex", "", true},
 	}
 
 	for _, tt := range tests {
@@ -68,6 +72,7 @@ func TestAgentTypeIsValid(t *testing.T) {
 	}{
 		{"ClaudeCode valid", AgentTypeClaudeCode, true},
 		{"OpenCode valid", AgentTypeOpenCode, true},
+		{"Codex valid", AgentTypeCodex, true},
 		{"empty invalid", "", false},
 		{"random string invalid", "random", false},
 	}
@@ -85,8 +90,8 @@ func TestAgentTypeIsValid(t *testing.T) {
 func TestListAgentInfo(t *testing.T) {
 	info := ListAgentInfo()
 
-	if len(info) != 2 {
-		t.Errorf("ListAgentInfo() returned %d items, want 2", len(info))
+	if len(info) != 3 {
+		t.Errorf("ListAgentInfo() returned %d items, want 3", len(info))
 	}
 
 	// Check Claude Code info
@@ -105,5 +110,23 @@ func TestListAgentInfo(t *testing.T) {
 	}
 	if len(ccInfo.ConfigFiles) != 2 {
 		t.Errorf("Claude Code config files = %d, want 2", len(ccInfo.ConfigFiles))
+	}
+
+	// Check Codex info
+	var cxInfo *AgentInfo
+	for _, i := range info {
+		if i.Type == AgentTypeCodex {
+			cxInfo = &i
+			break
+		}
+	}
+	if cxInfo == nil {
+		t.Fatal("Codex agent info not found")
+	}
+	if cxInfo.Scenario != "codex" {
+		t.Errorf("Codex scenario = %q, want 'codex'", cxInfo.Scenario)
+	}
+	if len(cxInfo.ConfigFiles) != 2 {
+		t.Errorf("Codex config files = %d, want 2", len(cxInfo.ConfigFiles))
 	}
 }

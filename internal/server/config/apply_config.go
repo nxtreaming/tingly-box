@@ -876,3 +876,109 @@ func ApplyOpenCodeConfig(payload map[string]interface{}) (*ApplyResult, error) {
 
 	return result, nil
 }
+
+// ApplyCodexConfig writes the supplied TOML contents to `~/.codex/config.toml`.
+// The Codex config.toml has a fixed top-level shape (a single `model_provider`
+// plus optional `[profiles.*]` blocks), so we replace the file wholesale rather
+// than attempting a merge — but the previous version is backed up first.
+func ApplyCodexConfig(toml string) (*ApplyResult, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".codex")
+	targetPath := filepath.Join(configDir, "config.toml")
+	result := &ApplyResult{}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		result.Message = fmt.Sprintf("Failed to create directory: %v", err)
+		return result, nil
+	}
+
+	if _, err := os.Stat(targetPath); err == nil {
+		backupPath, err := backupFile(targetPath)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create backup: %v", err)
+			return result, nil
+		}
+		result.BackupPath = backupPath
+		result.Updated = true
+	} else {
+		result.Created = true
+	}
+
+	if err := os.WriteFile(targetPath, []byte(toml), 0644); err != nil {
+		result.Message = fmt.Sprintf("Failed to write file: %v", err)
+		return result, nil
+	}
+
+	result.Success = true
+	if result.Created {
+		result.Message = fmt.Sprintf("Created %s", targetPath)
+	} else if result.BackupPath != "" {
+		result.Message = fmt.Sprintf("Updated %s (backup: %s)", targetPath, result.BackupPath)
+	} else {
+		result.Message = fmt.Sprintf("Updated %s", targetPath)
+	}
+	return result, nil
+}
+
+// ApplyCodexAuth writes `~/.codex/auth.json` with `OPENAI_API_KEY` set to the
+// tingly-box model token. If the file already exists, other top-level keys are
+// preserved; only `OPENAI_API_KEY` is overwritten. The previous version is
+// backed up before modification.
+func ApplyCodexAuth(apiKey string) (*ApplyResult, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".codex")
+	targetPath := filepath.Join(configDir, "auth.json")
+	result := &ApplyResult{}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		result.Message = fmt.Sprintf("Failed to create directory: %v", err)
+		return result, nil
+	}
+
+	existing := map[string]interface{}{}
+	if data, err := os.ReadFile(targetPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			result.Message = fmt.Sprintf("Failed to parse existing JSON: %v", err)
+			return result, nil
+		}
+		backupPath, err := backupFile(targetPath)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create backup: %v", err)
+			return result, nil
+		}
+		result.BackupPath = backupPath
+		result.Updated = true
+	} else {
+		result.Created = true
+	}
+
+	existing["OPENAI_API_KEY"] = apiKey
+
+	output, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to marshal JSON: %v", err)
+		return result, nil
+	}
+	if err := os.WriteFile(targetPath, output, 0600); err != nil {
+		result.Message = fmt.Sprintf("Failed to write file: %v", err)
+		return result, nil
+	}
+
+	result.Success = true
+	if result.Created {
+		result.Message = fmt.Sprintf("Created %s", targetPath)
+	} else if result.BackupPath != "" {
+		result.Message = fmt.Sprintf("Updated %s (backup: %s)", targetPath, result.BackupPath)
+	} else {
+		result.Message = fmt.Sprintf("Updated %s", targetPath)
+	}
+	return result, nil
+}

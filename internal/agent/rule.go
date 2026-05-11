@@ -24,6 +24,13 @@ var OpenCodeRequestModels = []string{
 	"tingly-opencode",
 }
 
+// CodexRequestModels defines the default request models for the Codex scenario.
+// Users typically add additional rules with their own request_model names; this
+// list only seeds the default rule when none exists yet.
+var CodexRequestModels = []string{
+	"tingly-codex",
+}
+
 // createOrUpdateClaudeCodeRules creates or updates all Claude Code rules
 // For convenience, all tingly/cc-* rules are updated with the same provider + model
 func (aa *AgentApply) createOrUpdateClaudeCodeRules(providerUUID, model string) (int, int, error) {
@@ -79,6 +86,42 @@ func (aa *AgentApply) createOrUpdateOpenCodeRules(providerUUID, model string) (i
 			requestModel,
 			service,
 			fmt.Sprintf("OpenCode - %s routing", requestModel),
+		)
+		if err != nil {
+			return created, updated, fmt.Errorf("failed to update rule %s: %w", requestModel, err)
+		}
+
+		if ruleCreated {
+			created++
+		}
+		if ruleUpdated {
+			updated++
+		}
+	}
+
+	return created, updated, nil
+}
+
+// createOrUpdateCodexRules creates or updates the default Codex rule
+// (`tingly-codex`) to point at the supplied provider+model. Other Codex rules
+// the user has added by hand are left alone — Codex apply just needs *some*
+// active rule to seed the generated config.toml.
+func (aa *AgentApply) createOrUpdateCodexRules(providerUUID, model string) (int, int, error) {
+	created := 0
+	updated := 0
+
+	service := &loadbalance.Service{
+		Active:   true,
+		Provider: providerUUID,
+		Model:    model,
+	}
+
+	for _, requestModel := range CodexRequestModels {
+		ruleCreated, ruleUpdated, err := aa.createOrUpdateRule(
+			typ.ScenarioCodex,
+			requestModel,
+			service,
+			fmt.Sprintf("Codex - %s routing", requestModel),
 		)
 		if err != nil {
 			return created, updated, fmt.Errorf("failed to update rule %s: %w", requestModel, err)
