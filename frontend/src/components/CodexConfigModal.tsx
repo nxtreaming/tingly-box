@@ -8,7 +8,6 @@ import { useScenarioPageModal } from '@/pages/scenario/context/ScenarioPageConte
 interface CodexConfigModalProps {
     open: boolean;
     onClose: () => void;
-    baseUrl: string;
     copyToClipboard: (text: string, label: string) => Promise<void>;
 }
 
@@ -20,10 +19,10 @@ const SHOW_CODEX_SESSION_IMPORT = false;
 const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
     open,
     onClose,
-    baseUrl,
     copyToClipboard,
 }) => {
-    // Get token from context
+    // Keep token in context as a fallback for the auth.json preview while
+    // the preview API request is in flight.
     const { token } = useScenarioPageModal();
     const [configTab, setConfigTab] = React.useState<ScriptTab>('json');
     const [authTab, setAuthTab] = React.useState<ScriptTab>('json');
@@ -33,23 +32,27 @@ const CodexConfigModal: React.FC<CodexConfigModalProps> = ({
     const [error, setError] = React.useState<string | null>(null);
     const [createBackup, setCreateBackup] = React.useState(false);
     const [autoUndoOnStop, setAutoUndoOnStop] = React.useState(false);
+    const [configToml, setConfigToml] = React.useState<string>('# Loading...');
+    const [authJson, setAuthJson] = React.useState<string>(`{\n  "OPENAI_API_KEY": "${token}"\n}`);
 
-    const codexBaseUrl = `${baseUrl}/tingly/codex`;
-
-    const configToml = `model = "tingly-codex"
-model_provider = "tingly-box"
-model_supports_reasoning_summaries = true
-model_reasoning_summary = "auto"
-
-[model_providers.tingly-box]
-name = "OpenAI using Tingly Box"
-base_url = "${codexBaseUrl}"
-preferred_auth_method = "apikey"
-wire_api = "responses"`;
-
-    const authJson = `{
-  "OPENAI_API_KEY": "${token}"
-}`;
+    React.useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const resp = await api.getCodexConfigPreview();
+                if (cancelled) return;
+                if (resp?.success) {
+                    setConfigToml(resp.configToml || '');
+                    setAuthJson(resp.authJson || `{\n  "OPENAI_API_KEY": "${token}"\n}`);
+                }
+            } catch {
+                // Leave existing placeholders in place; the user can still copy the
+                // base URL from the page itself.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [open, token]);
 
     const windowsConfigScript = `$configDir = Join-Path $HOME ".codex"
 $configPath = Join-Path $configDir "config.toml"

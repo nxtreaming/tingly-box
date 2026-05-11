@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	tomlpkg "github.com/pelletier/go-toml/v2"
 	"github.com/tingly-dev/tingly-box/internal"
 )
 
@@ -874,5 +876,196 @@ func ApplyOpenCodeConfig(payload map[string]interface{}) (*ApplyResult, error) {
 		result.Message = fmt.Sprintf("Updated %s", targetPath)
 	}
 
+	return result, nil
+}
+
+// ApplyCodexConfig merges tingly-box Codex settings into ~/.codex/config.toml.
+//
+// MERGE semantics: only fields tingly-box manages are overwritten. Everything
+// else the user put in config.toml — other top-level keys, other entries under
+// `[model_providers.*]`, and unrelated `[profiles.*]` blocks — is left alone.
+//
+// Managed fields:
+//   - top-level `model` (set to models[0] when models is non-empty)
+//   - top-level `model_provider = "tingly-box"`,
+//     `model_supports_reasoning_summaries = true`,
+//     `model_reasoning_summary = "auto"`
+//   - `[model_providers.tingly-box]` (always re-pinned to the supplied base URL)
+//   - `[profiles.<sanitized(model)>]` for each model — overwritten unconditionally
+//     under that key; `agent restore codex` recovers the previous file if needed
+//
+// Orphan tingly profiles from earlier applies are NOT garbage-collected; if
+// the user has trimmed their rules they can remove stale profiles by hand.
+//
+// The previous file (if any) is backed up before being rewritten.
+func ApplyCodexConfig(baseURL string, models []string) (*ApplyResult, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".codex")
+	targetPath := filepath.Join(configDir, "config.toml")
+	result := &ApplyResult{}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		result.Message = fmt.Sprintf("Failed to create directory: %v", err)
+		return result, nil
+	}
+
+	existing := map[string]interface{}{}
+	if data, err := os.ReadFile(targetPath); err == nil {
+		if err := tomlpkg.Unmarshal(data, &existing); err != nil {
+			result.Message = fmt.Sprintf("Failed to parse existing TOML: %v", err)
+			return result, nil
+		}
+		backupPath, err := backupFile(targetPath)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create backup: %v", err)
+			return result, nil
+		}
+		result.BackupPath = backupPath
+		result.Updated = true
+	} else {
+		result.Created = true
+	}
+
+	mergeCodexConfig(existing, baseURL, models)
+
+	out, err := tomlpkg.Marshal(existing)
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to marshal TOML: %v", err)
+		return result, nil
+	}
+	if err := os.WriteFile(targetPath, out, 0644); err != nil {
+		result.Message = fmt.Sprintf("Failed to write file: %v", err)
+		return result, nil
+	}
+
+	result.Success = true
+	if result.Created {
+		result.Message = fmt.Sprintf("Created %s", targetPath)
+	} else if result.BackupPath != "" {
+		result.Message = fmt.Sprintf("Updated %s (backup: %s)", targetPath, result.BackupPath)
+	} else {
+		result.Message = fmt.Sprintf("Updated %s", targetPath)
+	}
+	return result, nil
+}
+
+// RenderCodexConfigTOML returns the TOML that would be written to a fresh
+// ~/.codex/config.toml — i.e. the merge applied to an empty starting point.
+// Used by the preview endpoint so the UI can show exactly what's pending.
+func RenderCodexConfigTOML(baseURL string, models []string) ([]byte, error) {
+	cfg := map[string]interface{}{}
+	mergeCodexConfig(cfg, baseURL, models)
+	return tomlpkg.Marshal(cfg)
+}
+
+// mergeCodexConfig mutates cfg in place, applying tingly-managed fields while
+// preserving everything else. See ApplyCodexConfig for the contract.
+func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []string) {
+	if len(models) > 0 {
+		cfg["model"] = models[0]
+	}
+	cfg["model_provider"] = "tingly-box"
+	cfg["model_supports_reasoning_summaries"] = true
+	cfg["model_reasoning_summary"] = "auto"
+
+	providers, _ := cfg["model_providers"].(map[string]interface{})
+	if providers == nil {
+		providers = map[string]interface{}{}
+	}
+	providers["tingly-box"] = map[string]interface{}{
+		"name":                  "OpenAI using Tingly Box",
+		"base_url":              baseURL,
+		"preferred_auth_method": "apikey",
+		"wire_api":              "responses",
+	}
+	cfg["model_providers"] = providers
+
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	if profiles == nil {
+		profiles = map[string]interface{}{}
+	}
+	for _, model := range models {
+		profiles[sanitizeCodexProfileKey(model)] = map[string]interface{}{
+			"model":          model,
+			"model_provider": "tingly-box",
+		}
+	}
+	if len(profiles) > 0 {
+		cfg["profiles"] = profiles
+	}
+}
+
+var codexProfileKeyInvalid = regexp.MustCompile(`[^A-Za-z0-9_-]`)
+
+// sanitizeCodexProfileKey keeps alphanumerics, `_`, `-`; turns anything else
+// into `-`; trims edge dashes. Empty result falls back to "tingly".
+func sanitizeCodexProfileKey(name string) string {
+	out := strings.Trim(codexProfileKeyInvalid.ReplaceAllString(name, "-"), "-")
+	if out == "" {
+		return "tingly"
+	}
+	return out
+}
+
+// ApplyCodexAuth writes `~/.codex/auth.json` with `OPENAI_API_KEY` set to the
+// tingly-box model token. If the file already exists, other top-level keys are
+// preserved; only `OPENAI_API_KEY` is overwritten. The previous version is
+// backed up before modification.
+func ApplyCodexAuth(apiKey string) (*ApplyResult, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	configDir := filepath.Join(homeDir, ".codex")
+	targetPath := filepath.Join(configDir, "auth.json")
+	result := &ApplyResult{}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		result.Message = fmt.Sprintf("Failed to create directory: %v", err)
+		return result, nil
+	}
+
+	existing := map[string]interface{}{}
+	if data, err := os.ReadFile(targetPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			result.Message = fmt.Sprintf("Failed to parse existing JSON: %v", err)
+			return result, nil
+		}
+		backupPath, err := backupFile(targetPath)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create backup: %v", err)
+			return result, nil
+		}
+		result.BackupPath = backupPath
+		result.Updated = true
+	} else {
+		result.Created = true
+	}
+
+	existing["OPENAI_API_KEY"] = apiKey
+
+	output, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to marshal JSON: %v", err)
+		return result, nil
+	}
+	if err := os.WriteFile(targetPath, output, 0600); err != nil {
+		result.Message = fmt.Sprintf("Failed to write file: %v", err)
+		return result, nil
+	}
+
+	result.Success = true
+	if result.Created {
+		result.Message = fmt.Sprintf("Created %s", targetPath)
+	} else if result.BackupPath != "" {
+		result.Message = fmt.Sprintf("Updated %s (backup: %s)", targetPath, result.BackupPath)
+	} else {
+		result.Message = fmt.Sprintf("Updated %s", targetPath)
+	}
 	return result, nil
 }

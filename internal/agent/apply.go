@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	serverconfig "github.com/tingly-dev/tingly-box/internal/server/config"
+	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
 // AgentApply handles agent configuration application
@@ -37,6 +38,8 @@ func (aa *AgentApply) ApplyAgent(req *ApplyAgentRequest) (*ApplyAgentResult, err
 		return aa.applyClaudeCode(req)
 	case AgentTypeOpenCode:
 		return aa.applyOpenCode(req)
+	case AgentTypeCodex:
+		return aa.applyCodex(req)
 	default:
 		return nil, fmt.Errorf("agent type %s not implemented", req.AgentType)
 	}
@@ -180,6 +183,111 @@ func (aa *AgentApply) applyOpenCode(req *ApplyAgentRequest) (*ApplyAgentResult, 
 	result.Message = aa.buildResultMessage(result)
 
 	return result, nil
+}
+
+// applyCodex applies Codex CLI configuration. Codex has no notion of a
+// per-model rule on the agent side, so this:
+//   - Optionally creates/updates the default Codex rule (`tingly-codex`)
+//     when a provider+model is supplied
+//   - Collects every active Codex scenario rule and emits a
+//     `[profiles.<name>]` block for each in `~/.codex/config.toml`
+//   - Writes the model token into `~/.codex/auth.json`
+//
+// The single `tingly-box` model provider is always pinned to the local
+// tingly-box base URL (`/tingly/codex`).
+func (aa *AgentApply) applyCodex(req *ApplyAgentRequest) (*ApplyAgentResult, error) {
+	result := &ApplyAgentResult{
+		AgentType: req.AgentType,
+	}
+
+	hasService := req.Provider != "" && req.Model != ""
+	if hasService {
+		provider, err := aa.config.GetProviderByUUID(req.Provider)
+		if err != nil || provider == nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("provider %s not found; skipping routing rule update", req.Provider))
+			hasService = false
+		} else {
+			result.ProviderName = provider.Name
+			result.ProviderUUID = provider.UUID
+			result.Model = req.Model
+		}
+	} else {
+		result.Warnings = append(result.Warnings,
+			"no routing service configured; applying config files only (routing rules will not be created)")
+	}
+
+	if hasService {
+		ruleCreated, ruleUpdated, err := aa.createOrUpdateCodexRules(result.ProviderUUID, req.Model)
+		if err != nil {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("failed to create/update routing rules: %v", err))
+		} else {
+			result.RulesCreated = ruleCreated
+			result.RulesUpdated = ruleUpdated
+		}
+	}
+
+	baseURL, apiKey := aa.getBaseURLAndToken()
+	codexBaseURL := baseURL + "/tingly/codex"
+
+	models := aa.collectCodexRuleModels()
+
+	configResult, err := serverconfig.ApplyCodexConfig(codexBaseURL, models)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply Codex config: %w", err)
+	}
+	authResult, err := serverconfig.ApplyCodexAuth(apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply Codex auth: %w", err)
+	}
+
+	result.Success = configResult.Success && authResult.Success
+	if configResult.Success {
+		suffix := " (updated)"
+		if configResult.Created {
+			suffix = " (created)"
+		}
+		result.ConfigFiles = append(result.ConfigFiles, "~/.codex/config.toml"+suffix)
+	}
+	if authResult.Success {
+		suffix := " (updated)"
+		if authResult.Created {
+			suffix = " (created)"
+		}
+		result.ConfigFiles = append(result.ConfigFiles, "~/.codex/auth.json"+suffix)
+	}
+	if configResult.BackupPath != "" {
+		result.BackupPaths = append(result.BackupPaths, configResult.BackupPath)
+	}
+	if authResult.BackupPath != "" {
+		result.BackupPaths = append(result.BackupPaths, authResult.BackupPath)
+	}
+
+	result.Message = aa.buildResultMessage(result)
+	return result, nil
+}
+
+// collectCodexRuleModels returns the request_models of every active rule under
+// the Codex scenario, deduplicated and in declaration order.
+func (aa *AgentApply) collectCodexRuleModels() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, rule := range aa.config.GetRequestConfigs() {
+		if rule.GetScenario() != typ.ScenarioCodex || !rule.Active {
+			continue
+		}
+		model := strings.TrimSpace(rule.RequestModel)
+		if model == "" {
+			continue
+		}
+		if _, dup := seen[model]; dup {
+			continue
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out
 }
 
 // getBaseURLAndToken returns the base URL and API token for configuration

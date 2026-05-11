@@ -975,6 +975,19 @@ export const api = {
         });
     },
 
+    applyCodexConfig: async (): Promise<any> => {
+        return uiAPI('/config/apply/codex', {
+            method: 'POST',
+            body: JSON.stringify({}),
+        });
+    },
+
+    getCodexConfigPreview: async (): Promise<any> => {
+        return uiAPI('/config/preview/codex', {
+            method: 'GET',
+        });
+    },
+
     importCodexOpenAISessions: async (payload: {
         sourceProvider?: string;
         targetProvider?: string;

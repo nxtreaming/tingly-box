@@ -1,6 +1,7 @@
 import CardGrid from "@/components/CardGrid.tsx";
 import AgentSetupCard, { type AgentApplyResult, hasModelOnAnyRule, scrollToModelsCard } from '@/components/AgentSetupCard';
 import CodexConfigModal from "@/components/CodexConfigModal.tsx";
+import { api } from '@/services/api';
 import UnifiedCard from "@/components/UnifiedCard.tsx";
 import ProviderConfigCard from "@/components/ProviderConfigCard.tsx";
 import { Box, Button, IconButton, Tooltip } from '@mui/material';
@@ -24,15 +25,19 @@ const UseCodexPageContent: React.FC = () => {
 
     const [configModalOpen, setConfigModalOpen] = useState(false);
 
-    // Codex has no backend apply — copy config.toml to clipboard as a convenience
     const handleApply = async (): Promise<AgentApplyResult> => {
-        const codexBaseUrl = `${baseUrl}/tingly/codex`;
-        const config = `model = "tingly-codex"\nmodel_provider = "tingly-box"\nmodel_supports_reasoning_summaries = true\nmodel_reasoning_summary = "auto"\n\n[model_providers.tingly-box]\nname = "OpenAI using Tingly Box"\nbase_url = "${codexBaseUrl}"\npreferred_auth_method = "apikey"\nwire_api = "responses"`;
-        await navigator.clipboard.writeText(config);
-        return {
-            success: true,
-            files: ['~/.codex/config.toml (copied to clipboard — paste manually)'],
-        };
+        try {
+            const result = await api.applyCodexConfig();
+            if (result.success) {
+                return {
+                    success: true,
+                    files: ['~/.codex/config.toml', '~/.codex/auth.json'],
+                };
+            }
+            return { success: false, error: result.message || 'Unknown error' };
+        } catch (err: any) {
+            return { success: false, error: err?.message || 'Failed to apply Codex config' };
+        }
     };
 
     return (
@@ -91,7 +96,6 @@ const UseCodexPageContent: React.FC = () => {
                 <CodexConfigModal
                     open={configModalOpen}
                     onClose={() => setConfigModalOpen(false)}
-                    baseUrl={baseUrl}
                     copyToClipboard={copyToClipboard}
                 />
             </CardGrid>

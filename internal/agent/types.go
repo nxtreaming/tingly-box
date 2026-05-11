@@ -14,6 +14,9 @@ const (
 
 	// AgentTypeOpenCode represents OpenCode IDE extension
 	AgentTypeOpenCode AgentType = "opencode"
+
+	// AgentTypeCodex represents the OpenAI Codex CLI
+	AgentTypeCodex AgentType = "codex"
 )
 
 // String returns the string representation of AgentType
@@ -24,7 +27,7 @@ func (at AgentType) String() string {
 // IsValid checks if the AgentType is valid
 func (at AgentType) IsValid() bool {
 	switch at {
-	case AgentTypeClaudeCode, AgentTypeOpenCode:
+	case AgentTypeClaudeCode, AgentTypeOpenCode, AgentTypeCodex:
 		return true
 	default:
 		return false
@@ -36,6 +39,7 @@ func (at AgentType) IsValid() bool {
 // Supported aliases:
 //   - "cc", "claude", "claude-code" -> AgentTypeClaudeCode
 //   - "oc", "opencode" -> AgentTypeOpenCode
+//   - "cx", "codex" -> AgentTypeCodex
 func ParseAgentType(input string) (AgentType, error) {
 	if input == "" {
 		return "", fmt.Errorf("agent type cannot be empty")
@@ -48,8 +52,10 @@ func ParseAgentType(input string) (AgentType, error) {
 		return AgentTypeClaudeCode, nil
 	case "oc", "opencode", "open-code":
 		return AgentTypeOpenCode, nil
+	case "cx", "codex":
+		return AgentTypeCodex, nil
 	default:
-		return "", fmt.Errorf("unknown agent type: %s (supported: cc/claude-code, oc/opencode)", input)
+		return "", fmt.Errorf("unknown agent type: %s (supported: cc/claude-code, oc/opencode, cx/codex)", input)
 	}
 }
 
@@ -190,6 +196,16 @@ func ListAgentInfo() []AgentInfo {
 				"~/.config/opencode/opencode.json",
 			},
 			Scenario: "opencode",
+		},
+		{
+			Type:        AgentTypeCodex,
+			Name:        "Codex",
+			Description: "OpenAI Codex CLI (@codex)",
+			ConfigFiles: []string{
+				"~/.codex/config.toml",
+				"~/.codex/auth.json",
+			},
+			Scenario: "codex",
 		},
 	}
 }

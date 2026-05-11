@@ -33,7 +33,7 @@ func (a *AgentListFlagCmdKong) Run(appManager *AppManager) error {
 
 // AgentApplyFlagCmdKong applies agent configuration via flags
 type AgentApplyFlagCmdKong struct {
-	AgentType  string `kong:"arg,optional,help='Agent type (cc/claude-code, oc/opencode)'"`
+	AgentType  string `kong:"arg,optional,help='Agent type (cc/claude-code, oc/opencode, cx/codex)'"`
 	Provider   string `kong:"flag,name='provider',help='Provider UUID (optional, uses routing rule if not specified)'"`
 	Model      string `kong:"flag,name='model',help='Model name (optional, uses routing rule if not specified)'"`
 	Unified    bool   `kong:"flag,name='unified',default='true',help='Unified mode (claude-code only)'"`
@@ -68,6 +68,7 @@ func (a *AgentApplyFlagCmdKong) Run(appManager *AppManager) error {
 			fmt.Fprintln(os.Stderr, "Available agent types:")
 			fmt.Fprintln(os.Stderr, "  cc, claude-code - Claude Code CLI agent (@cc)")
 			fmt.Fprintln(os.Stderr, "  oc, opencode   - OpenCode editor agent (@oc)")
+			fmt.Fprintln(os.Stderr, "  cx, codex      - OpenAI Codex CLI (@codex)")
 			return fmt.Errorf("invalid agent type: %s", a.AgentType)
 		}
 		req.AgentType = parsedType
@@ -299,6 +300,9 @@ func resolveAgentConfigFromRules(appManager *AppManager, req *agent.ApplyAgentRe
 	case agent.AgentTypeOpenCode:
 		requestModel = "tingly-opencode"
 		scenario = typ.ScenarioOpenCode
+	case agent.AgentTypeCodex:
+		requestModel = "tingly-codex"
+		scenario = typ.ScenarioCodex
 	default:
 		return fmt.Errorf("unsupported agent type: %s", req.AgentType)
 	}
@@ -591,6 +595,8 @@ func showAgentConfig(appManager *AppManager, agentType agent.AgentType) error {
 		requestModel = "tingly/cc"
 	case agent.AgentTypeOpenCode:
 		requestModel = "tingly/oc"
+	case agent.AgentTypeCodex:
+		requestModel = "tingly-codex"
 	}
 
 	rule := globalConfig.GetRuleByRequestModelAndScenario(requestModel, typ.RuleScenario(info.Scenario))

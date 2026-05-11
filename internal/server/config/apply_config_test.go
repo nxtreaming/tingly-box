@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 func TestApplyClaudeSettings_NewFile(t *testing.T) {
@@ -821,5 +823,278 @@ func TestApplyClaudeSettingsToPath_DefaultBackupBehavior(t *testing.T) {
 
 	if _, err := os.Stat(result.BackupPath); os.IsNotExist(err) {
 		t.Errorf("Expected backup file to exist at %s by default", result.BackupPath)
+	}
+}
+
+// ============================================================================
+// ApplyCodexConfig tests
+//
+// Contract: writing ~/.codex/config.toml must MERGE — only fields we manage
+// are overwritten. Unrelated top-level keys, user-defined providers, and
+// user-defined profiles must survive.
+// ============================================================================
+
+func loadCodexConfigForTest(t *testing.T, path string) map[string]interface{} {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	out := map[string]interface{}{}
+	if err := toml.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal toml: %v\n--- content ---\n%s", err, data)
+	}
+	return out
+}
+
+func TestApplyCodexConfig_NewFile_WritesManagedFields(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	result, err := ApplyCodexConfig("http://127.0.0.1:12580/tingly/codex", []string{"tingly-codex", "tingly-gpt5"})
+	if err != nil {
+		t.Fatalf("ApplyCodexConfig: %v", err)
+	}
+	if !result.Success || !result.Created {
+		t.Fatalf("expected success+created, got %+v", result)
+	}
+
+	cfg := loadCodexConfigForTest(t, filepath.Join(tempDir, ".codex", "config.toml"))
+	if cfg["model"] != "tingly-codex" {
+		t.Errorf("model = %v, want tingly-codex", cfg["model"])
+	}
+	if cfg["model_provider"] != "tingly-box" {
+		t.Errorf("model_provider = %v, want tingly-box", cfg["model_provider"])
+	}
+	providers, _ := cfg["model_providers"].(map[string]interface{})
+	tb, _ := providers["tingly-box"].(map[string]interface{})
+	if tb["base_url"] != "http://127.0.0.1:12580/tingly/codex" {
+		t.Errorf("base_url = %v", tb["base_url"])
+	}
+	if tb["wire_api"] != "responses" {
+		t.Errorf("wire_api = %v, want responses", tb["wire_api"])
+	}
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	if len(profiles) != 2 {
+		t.Fatalf("profiles = %d, want 2: %#v", len(profiles), profiles)
+	}
+	for _, model := range []string{"tingly-codex", "tingly-gpt5"} {
+		p, ok := profiles[model].(map[string]interface{})
+		if !ok {
+			t.Fatalf("missing profile %q in %#v", model, profiles)
+		}
+		if p["model"] != model {
+			t.Errorf("profile %s.model = %v", model, p["model"])
+		}
+		if p["model_provider"] != "tingly-box" {
+			t.Errorf("profile %s.model_provider = %v", model, p["model_provider"])
+		}
+	}
+}
+
+func TestApplyCodexConfig_PreservesUserTopLevelFields(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	codexDir := filepath.Join(tempDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `approval_policy = "untrusted"
+disable_response_storage = true
+model = "user-custom-model"
+hide_agent_reasoning = false
+
+[shell_environment_policy]
+inherit = "all"
+`
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyCodexConfig("http://example/tingly/codex", []string{"my-rule"}); err != nil {
+		t.Fatalf("ApplyCodexConfig: %v", err)
+	}
+
+	cfg := loadCodexConfigForTest(t, filepath.Join(codexDir, "config.toml"))
+	if cfg["approval_policy"] != "untrusted" {
+		t.Errorf("approval_policy lost: %v", cfg["approval_policy"])
+	}
+	if cfg["disable_response_storage"] != true {
+		t.Errorf("disable_response_storage lost: %v", cfg["disable_response_storage"])
+	}
+	if cfg["hide_agent_reasoning"] != false {
+		t.Errorf("hide_agent_reasoning lost: %v", cfg["hide_agent_reasoning"])
+	}
+	shell, _ := cfg["shell_environment_policy"].(map[string]interface{})
+	if shell["inherit"] != "all" {
+		t.Errorf("shell_environment_policy.inherit lost: %v", shell)
+	}
+	// Managed field overwritten with our default (first model)
+	if cfg["model"] != "my-rule" {
+		t.Errorf("model = %v, want my-rule (tingly should overwrite the default)", cfg["model"])
+	}
+}
+
+func TestApplyCodexConfig_PreservesOtherProvidersAndProfiles(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	codexDir := filepath.Join(tempDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+wire_api = "chat"
+
+[model_providers.tingly-box]
+name = "Old Tingly"
+base_url = "http://old-host/tingly/codex"
+wire_api = "responses"
+
+[profiles.work]
+model = "gpt-5"
+model_provider = "openai"
+
+[profiles.legacy-tingly]
+model = "tingly-legacy"
+model_provider = "tingly-box"
+`
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyCodexConfig("http://new-host/tingly/codex", []string{"tingly-codex"}); err != nil {
+		t.Fatalf("ApplyCodexConfig: %v", err)
+	}
+
+	cfg := loadCodexConfigForTest(t, filepath.Join(codexDir, "config.toml"))
+	providers, _ := cfg["model_providers"].(map[string]interface{})
+
+	// User's openai provider preserved
+	openai, _ := providers["openai"].(map[string]interface{})
+	if openai["base_url"] != "https://api.openai.com/v1" {
+		t.Errorf("openai provider not preserved: %#v", openai)
+	}
+
+	// Our tingly-box provider overwritten with new base_url
+	tb, _ := providers["tingly-box"].(map[string]interface{})
+	if tb["base_url"] != "http://new-host/tingly/codex" {
+		t.Errorf("tingly-box.base_url = %v, want http://new-host/tingly/codex", tb["base_url"])
+	}
+
+	// User's [profiles.work] preserved
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	work, _ := profiles["work"].(map[string]interface{})
+	if work["model"] != "gpt-5" || work["model_provider"] != "openai" {
+		t.Errorf("profiles.work not preserved: %#v", work)
+	}
+
+	// User's [profiles.legacy-tingly] preserved (we don't garbage-collect
+	// orphaned tingly profiles from previous applies — the user may want
+	// to keep them).
+	if _, ok := profiles["legacy-tingly"]; !ok {
+		t.Errorf("profiles.legacy-tingly removed; expected preservation")
+	}
+
+	// Our new profile present
+	tingly, _ := profiles["tingly-codex"].(map[string]interface{})
+	if tingly["model"] != "tingly-codex" {
+		t.Errorf("profiles.tingly-codex not written: %#v", profiles)
+	}
+}
+
+func TestApplyCodexConfig_Idempotent(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	if _, err := ApplyCodexConfig("http://h/tingly/codex", []string{"a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(tempDir, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyCodexConfig("http://h/tingly/codex", []string{"a", "b"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadCodexConfigForTest(t, filepath.Join(tempDir, ".codex", "config.toml"))
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	if len(profiles) != 2 {
+		t.Errorf("idempotent apply added profiles: got %d, want 2 (%#v)", len(profiles), profiles)
+	}
+	// Sanity: at least the second run produced an updated file (backup exists)
+	// but profile set shouldn't grow.
+	_ = first
+}
+
+// When the sanitized profile key already exists, we overwrite. Backups
+// (restored via `agent restore codex`) are the safety net — extra collision
+// logic isn't worth the complexity for users who have explicitly opted in to
+// tingly-box managing their codex config.
+func TestApplyCodexConfig_OverwritesCollidingProfile(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	codexDir := filepath.Join(tempDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `[profiles.tingly-codex]
+model = "stale-value"
+model_provider = "openai"
+`
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyCodexConfig("http://h/tingly/codex", []string{"tingly-codex"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := loadCodexConfigForTest(t, filepath.Join(codexDir, "config.toml"))
+	profiles, _ := cfg["profiles"].(map[string]interface{})
+	ours, _ := profiles["tingly-codex"].(map[string]interface{})
+	if ours["model"] != "tingly-codex" || ours["model_provider"] != "tingly-box" {
+		t.Errorf("expected colliding profile overwritten with tingly values, got %#v", ours)
+	}
+	if _, suffixed := profiles["tingly-codex-1"]; suffixed {
+		t.Errorf("did not expect suffixed key; profiles=%#v", profiles)
+	}
+}
+
+func TestApplyCodexConfig_NoModels_OnlyTouchesManagedFields(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+
+	codexDir := filepath.Join(tempDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `model = "user-custom"
+some_user_flag = true
+`
+	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ApplyCodexConfig("http://h/tingly/codex", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := loadCodexConfigForTest(t, filepath.Join(codexDir, "config.toml"))
+	// model untouched because we have nothing to put there
+	if cfg["model"] != "user-custom" {
+		t.Errorf("model should be untouched when no models given, got %v", cfg["model"])
+	}
+	if cfg["some_user_flag"] != true {
+		t.Errorf("some_user_flag lost: %v", cfg["some_user_flag"])
+	}
+	// Provider still installed so codex can talk to tingly-box
+	providers, _ := cfg["model_providers"].(map[string]interface{})
+	if _, ok := providers["tingly-box"]; !ok {
+		t.Errorf("tingly-box provider should still be installed: %#v", providers)
 	}
 }
