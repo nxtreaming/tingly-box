@@ -123,10 +123,10 @@ export function useActivityItems(): ActivityItem[] {
             if (scenarioChildren.length > 0) scenarioChildren.push({ type: 'divider' });
             scenarioChildren.push(...group);
         };
-        pushGroup(playgroundTool);
         pushGroup(codingTools);
         pushGroup(sdkTools);
         pushGroup(agentTools);
+        pushGroup(playgroundTool);
 
         const items: ActivityItem[] = [
             {
