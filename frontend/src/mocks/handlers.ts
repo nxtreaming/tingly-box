@@ -550,4 +550,66 @@ export const handlers = [
             }
         })
     }),
+
+    // --- Playground (imagegen) mocks ---
+
+    http.get('/api/v1/token', () => {
+        return HttpResponse.json({ token: 'mock-model-token', type: 'Bearer' })
+    }),
+
+    http.get('/api/v1/rules', ({ request }) => {
+        const url = new URL(request.url)
+        const scenario = url.searchParams.get('scenario')
+        if (scenario === 'imagegen') {
+            return HttpResponse.json({
+                success: true,
+                data: [
+                    {
+                        uuid: 'mock-imagegen-1',
+                        request_model: 'gpt-image-1',
+                        scenario: 'imagegen',
+                        disabled: false,
+                        services: [{ provider: 'mock', model: 'gpt-image-1' }],
+                    },
+                    {
+                        uuid: 'mock-imagegen-2',
+                        request_model: 'dall-e-3',
+                        scenario: 'imagegen',
+                        disabled: false,
+                        services: [{ provider: 'mock', model: 'dall-e-3' }],
+                    },
+                ],
+            })
+        }
+        return HttpResponse.json({ success: true, data: [] })
+    }),
+
+    http.post('*/tingly/imagegen/v1/images/generations', async ({ request }) => {
+        const body = (await request.json()) as any
+        const n = Math.max(1, Math.min(10, Number(body?.n) || 1))
+        const size = typeof body?.size === 'string' ? body.size : '1024x1024'
+        const [w, h] = size.split('x').map(Number)
+        const palette = ['#7c3aed', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#3b82f6']
+        const promptText = String(body?.prompt ?? '').slice(0, 80).replace(/[<>&"]/g, '')
+
+        const makeSvgDataUrl = (idx: number): string => {
+            const bg = palette[idx % palette.length]
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+                + `<rect width="100%" height="100%" fill="${bg}"/>`
+                + `<text x="50%" y="45%" font-family="sans-serif" font-size="${Math.round(w / 18)}" fill="white" text-anchor="middle" font-weight="700">MOCK #${idx + 1}</text>`
+                + `<text x="50%" y="56%" font-family="sans-serif" font-size="${Math.round(w / 36)}" fill="white" fill-opacity="0.85" text-anchor="middle">${promptText}</text>`
+                + `<text x="50%" y="95%" font-family="monospace" font-size="${Math.round(w / 50)}" fill="white" fill-opacity="0.7" text-anchor="middle">${body?.model ?? ''} · ${size} · q=${body?.quality ?? 'auto'}</text>`
+                + `</svg>`
+            const b64 = btoa(unescape(encodeURIComponent(svg)))
+            return `data:image/svg+xml;base64,${b64}`
+        }
+
+        // Simulate a small latency so the loading state is visible
+        await new Promise((r) => setTimeout(r, 600))
+
+        return HttpResponse.json({
+            created: Math.floor(Date.now() / 1000),
+            data: Array.from({ length: n }, (_, i) => ({ url: makeSvgDataUrl(i) })),
+        })
+    }),
 ]
