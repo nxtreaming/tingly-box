@@ -22,6 +22,7 @@ import {
     IconVector,
     IconPhoto,
     IconFlask,
+    IconPlayerPlay,
 } from '@tabler/icons-react';
 import { OpenAI, Anthropic, Claude, OpenCode, Xcode, VSCode, Telegram, Feishu, Lark, DingTalk, Weixin, WeCom, Codex, OpenClaw } from '../components/BrandIcons';
 import { SettingsApplications } from '@mui/icons-material';
@@ -85,6 +86,9 @@ export function useActivityItems(): ActivityItem[] {
         const visible = (group: HideableScenario[]): NavItem[] =>
             group.filter(s => !hiddenScenarios.has(s.id)).map(s => s.nav);
 
+        const playgroundTool: NavItem[] = [
+            { path: '/agent/playground', label: t('layout.nav.playground', { defaultValue: 'Playground' }), icon: <IconPlayerPlay size={20} /> },
+        ];
         const codingTools = visible([
             { id: 'codex', nav: { path: '/agent/codex', label: t('layout.nav.useCodex', { defaultValue: 'Codex' }), icon: <Codex size={20} /> } },
             { id: 'opencode', nav: { path: '/agent/opencode', label: t('layout.nav.useOpenCode', { defaultValue: 'OpenCode' }), icon: <OpenCode size={20} /> } },
@@ -94,7 +98,7 @@ export function useActivityItems(): ActivityItem[] {
         const sdkTools = visible([
             { id: 'openai', nav: { path: '/agent/openai', label: t('layout.nav.useOpenAI', { defaultValue: 'OpenAI' }), icon: <OpenAI size={20} /> } },
             { id: 'anthropic', nav: { path: '/agent/anthropic', label: t('layout.nav.useAnthropic', { defaultValue: 'Anthropic' }), icon: <Anthropic size={20} /> } },
-            { id: 'embed', nav: { path: '/agent/embed', label: t('layout.nav.useEmbed', { defaultValue: 'Embed' }), icon: <IconVector size={20} /> } },
+            { id: 'embed', nav: { path: '/agent/embed', label: t('layout.nav.useEmbed', { defaultValue: 'Embedding' }), icon: <IconVector size={20} /> } },
             { id: 'imagegen', nav: { path: '/agent/imagegen', label: t('layout.nav.useImageGen', { defaultValue: 'Image Gen' }), icon: <IconPhoto size={20} /> } },
         ]);
         const agentTools = visible([
@@ -122,6 +126,7 @@ export function useActivityItems(): ActivityItem[] {
         pushGroup(codingTools);
         pushGroup(sdkTools);
         pushGroup(agentTools);
+        pushGroup(playgroundTool);
 
         const items: ActivityItem[] = [
             {

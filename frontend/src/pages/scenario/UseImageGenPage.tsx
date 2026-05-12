@@ -1,7 +1,10 @@
 import CardGrid from "@/components/CardGrid.tsx";
 import UnifiedCard from "@/components/UnifiedCard.tsx";
 import ProviderConfigCard from "@/components/ProviderConfigCard.tsx";
-import { Box } from '@mui/material';
+import ImageGenQuickStartCard from "@/components/ImageGenQuickStartCard.tsx";
+import { Box, Button } from '@mui/material';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import { useNavigate } from 'react-router-dom';
 import PageLayout from '@/components/PageLayout';
 import TemplatePage from './components/TemplatePage.tsx';
 import { useScenarioPageInternal } from '@/pages/scenario/hooks/useScenarioPageInternal.ts';
@@ -15,7 +18,11 @@ const UseImageGenPageContent: React.FC = () => {
         notification,
         copyToClipboard,
         baseUrl,
+        rules,
     } = useScenarioPageInternal(scenario);
+    const navigate = useNavigate();
+
+    const firstModel = rules?.find((r: any) => !r?.disabled && r?.request_model)?.request_model;
 
     return (
         <PageLayout loading={isLoading} notification={notification}>
@@ -27,6 +34,16 @@ const UseImageGenPageContent: React.FC = () => {
                         </Box>
                     }
                     size="full"
+                    rightAction={
+                        <Button
+                            onClick={() => navigate('/agent/playground')}
+                            variant="contained"
+                            size="small"
+                            startIcon={<PlayArrowIcon />}
+                        >
+                            Open Playground
+                        </Button>
+                    }
                 >
                     <ProviderConfigCard
                         title="Image Generation API Configuration"
@@ -35,6 +52,11 @@ const UseImageGenPageContent: React.FC = () => {
                         onCopy={copyToClipboard}
                     />
                 </UnifiedCard>
+                <ImageGenQuickStartCard
+                    baseUrl={baseUrl}
+                    model={firstModel || 'gpt-image-1'}
+                    onCopy={copyToClipboard}
+                />
                 <TemplatePage
                     scenario={scenario}
                     title="Image Generation Models and Forwarding Rules"

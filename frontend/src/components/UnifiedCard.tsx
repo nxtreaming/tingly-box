@@ -152,7 +152,7 @@ export const UnifiedCard = forwardRef<HTMLDivElement, UnifiedCardProps>(({
         }}
       >
         {title && (
-          <Box sx={{ mb: 1, flexShrink: 0 }}>
+          <Box sx={{ mb: 2, flexShrink: 0 }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: subtitle ? 1 : 0 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
                 <Typography variant="h4" sx={{ fontWeight: 600, color: 'text.primary' }}>
@@ -193,12 +193,11 @@ export const UnifiedCard = forwardRef<HTMLDivElement, UnifiedCardProps>(({
             </Alert>
           </Box>
         )}
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <Box
             sx={{
               flex: 1,
               minHeight: 0,
-              overflow: 'hidden',
               position: 'relative',
             }}
           >

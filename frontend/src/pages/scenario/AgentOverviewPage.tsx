@@ -125,11 +125,15 @@ export const SCENARIOS: ScenarioDescriptor[] = [
 
 const STORAGE_KEY = 'scenario.hiddenScenarios';
 const VISIBILITY_EVENT = 'scenario-visibility-change';
+const DEFAULT_HIDDEN = ['agent'];
 
 const readHidden = (): string[] => {
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return [];
+        if (raw === null) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_HIDDEN));
+            return DEFAULT_HIDDEN;
+        }
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
     } catch {
