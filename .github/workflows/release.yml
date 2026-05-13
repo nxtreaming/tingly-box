@@ -82,7 +82,9 @@ jobs:
         run: corepack enable && corepack prepare pnpm@latest --activate
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm approve-builds --all
+          pnpm install --frozen-lockfile
         working-directory: ./frontend
 
       - name: Run codegen and build frontend
@@ -362,7 +364,7 @@ jobs:
       - name: Install frontend dependencies
         shell: bash
         run: |
-          echo "@swc/core" | pnpm approve-builds
+          pnpm approve-builds --all
           pnpm install --frozen-lockfile
         working-directory: ./frontend
 
