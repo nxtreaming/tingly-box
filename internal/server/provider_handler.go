@@ -588,6 +588,18 @@ func (s *Server) GetProviderModelsByUUID(c *gin.Context) {
 	}
 
 	models := providerModelManager.GetModels(uid)
+
+	// For vmodel providers the model list lives on the provider record, not in the
+	// model manager cache (which is populated by FetchAndSaveProviderModels).
+	// Fall back to the provider's VModelDetail when the cache is empty.
+	if len(models) == 0 {
+		if p, err := s.config.GetProviderByUUID(uid); err == nil && p.IsVirtual() {
+			if p.VModelDetail != nil {
+				models = p.VModelDetail.Models
+			}
+		}
+	}
+
 	providerModels := ProviderModelInfo{
 		Models: models,
 	}

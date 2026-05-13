@@ -1805,6 +1805,15 @@ func (c *Config) FetchAndSaveProviderModels(uid string) error {
 		return fmt.Errorf("provider with UUID %s not found: %w", uid, err)
 	}
 
+	// Vmodel providers store their model list on the provider record itself.
+	if provider.IsVirtual() {
+		var models []string
+		if provider.VModelDetail != nil {
+			models = provider.VModelDetail.Models
+		}
+		return c.modelManager.SaveModels(provider, provider.APIBase, models)
+	}
+
 	// Try provider API first using client layer
 	ctx := context.Background()
 	var models []string
