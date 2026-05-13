@@ -7,18 +7,20 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/openai/openai-go/v3"
 	"github.com/sirupsen/logrus"
 
 	"github.com/tingly-dev/tingly-box/internal/client"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
 // poolVisionClient is the production visionClient. It dispatches each
 // describe call to the appropriate per-service client obtained from the
-// shared ClientPool. First cut supports Anthropic-style providers
-// (APIStyle == "anthropic"); other styles return an error and the
-// processor falls back to the fail-strip marker.
+// shared ClientPool. Supports Anthropic-style and OpenAI-style providers;
+// unknown styles return an error and the processor falls back to the
+// fail-strip marker.
 type poolVisionClient struct {
 	pool     *client.ClientPool
 	resolver providerResolver
@@ -53,12 +55,12 @@ func (a *poolVisionClient) Describe(ctx context.Context, service *loadbalance.Se
 		return "", fmt.Errorf("vision adapter: resolve provider %q: %w", service.Provider, err)
 	}
 
-	switch strings.ToLower(string(provider.APIStyle)) {
-	case "", "anthropic":
+	switch provider.APIStyle {
+	case "", protocol.APIStyleAnthropic:
 		return a.describeViaAnthropic(ctx, provider, service.Model, mediaType, b64Data, remoteURL)
+	case protocol.APIStyleOpenAI:
+		return a.describeViaOpenAI(ctx, provider, service.Model, mediaType, b64Data, remoteURL)
 	default:
-		// OpenAI-style vision is not yet wired through this adapter; the
-		// processor's fail-strip marker will be used instead.
 		return "", fmt.Errorf("vision adapter: api_style %q not supported", provider.APIStyle)
 	}
 }
@@ -104,5 +106,67 @@ func (a *poolVisionClient) describeViaAnthropic(ctx context.Context, provider *t
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
+}
+
+// describeViaOpenAI calls the OpenAI ChatCompletions endpoint with one user
+// message containing the image (as a data: URL for base64, or the remote URL
+// as-is) plus the describe prompt. The first non-empty assistant text is
+// returned; empty/error responses bubble up to the processor's fail-strip.
+func (a *poolVisionClient) describeViaOpenAI(ctx context.Context, provider *typ.Provider, model, mediaType, b64Data, remoteURL string) (string, error) {
+	imageURL, err := openAIImageURL(mediaType, b64Data, remoteURL)
+	if err != nil {
+		return "", err
+	}
+
+	c := a.pool.GetOpenAIClient(ctx, provider, model)
+	if c == nil {
+		return "", errors.New("vision adapter: pool returned nil openai client")
+	}
+	resp, err := c.ChatCompletionsNew(ctx, openai.ChatCompletionNewParams{
+		Model:     openai.ChatModel(model),
+		MaxTokens: openai.Int(defaultVisionMaxTokens),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			{
+				OfUser: &openai.ChatCompletionUserMessageParam{
+					Content: openai.ChatCompletionUserMessageParamContentUnion{
+						OfArrayOfContentParts: []openai.ChatCompletionContentPartUnionParam{
+							{OfImageURL: &openai.ChatCompletionContentPartImageParam{
+								ImageURL: openai.ChatCompletionContentPartImageImageURLParam{URL: imageURL},
+							}},
+							{OfText: &openai.ChatCompletionContentPartTextParam{Text: a.prompt}},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, ch := range resp.Choices {
+		if text := strings.TrimSpace(ch.Message.Content); text != "" {
+			return text, nil
+		}
+	}
+	return "", nil
+}
+
+// openAIImageURL builds the URL string OpenAI's image_url content part
+// expects: a data: URL for base64 sources, or the passthrough remote URL.
+// Mirrors betaImageBlockToOpenAIURL so both conversion paths render
+// identically when the same image is sent through different transports.
+func openAIImageURL(mediaType, b64Data, remoteURL string) (string, error) {
+	switch {
+	case b64Data != "":
+		mt := mediaType
+		if mt == "" {
+			mt = "image/png"
+		}
+		return "data:" + mt + ";base64," + b64Data, nil
+	case remoteURL != "":
+		return remoteURL, nil
+	default:
+		return "", errors.New("vision adapter: no image source")
+	}
 }
 

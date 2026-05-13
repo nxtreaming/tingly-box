@@ -69,7 +69,8 @@ pctx.Request : *anthropic.BetaMessageNewParams (or v1 / OpenAI)
        │       ▼
        │   poolVisionClient (production adapter)
        │     dispatches by provider.APIStyle:
-       │       "anthropic" → BetaMessagesNew with image block + prompt
+       │       "anthropic" → BetaMessagesNew (image block + prompt)
+       │       "openai"    → ChatCompletionsNew (image_url part + prompt)
        │       other       → error → fail-strip marker
        ▼
   describe = "a red apple on a white plate"   (success)
@@ -138,7 +139,5 @@ processor's responsibility.
 
 ## Out of scope (today)
 
-- OpenAI-style vision adapter (provider with `APIStyle == "openai"` returns
-  an error from `poolVisionClient.Describe` → fail-strip).
 - Concurrent image description (sequential, one call per image).
 - Caching describe results across requests.
