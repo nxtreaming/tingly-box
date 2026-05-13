@@ -429,39 +429,3 @@ func (ap *AdaptiveProbe) InvalidateProviderCache(providerUUID string) {
 		ap.server.probeCache.InvalidateProvider(providerUUID)
 	}
 }
-
-// ProbeProviderModels probes all models for a provider concurrently
-func (ap *AdaptiveProbe) ProbeProviderModels(ctx context.Context, provider *typ.Provider, models []string) map[string]*ProbeResult {
-	results := make(map[string]*ProbeResult)
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-
-	// Limit concurrency to avoid overwhelming the provider
-	semaphore := make(chan struct{}, 5)
-
-	for _, model := range models {
-		wg.Add(1)
-		go func(modelID string) {
-			defer wg.Done()
-
-			// Acquire semaphore
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			req := ModelProbeRequest{
-				ProviderUUID: provider.UUID,
-				ModelID:      modelID,
-			}
-
-			result, err := ap.ProbeModelEndpoints(ctx, req)
-			if err == nil {
-				mu.Lock()
-				results[modelID] = result
-				mu.Unlock()
-			}
-		}(model)
-	}
-
-	wg.Wait()
-	return results
-}
