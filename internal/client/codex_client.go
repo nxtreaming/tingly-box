@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/ai"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -36,9 +37,9 @@ type CodexClient struct {
 // NewCodexClient creates a new Codex client wrapper.
 // The base OpenAIClient is configured with codexRoundTripper for path/header transformation.
 func NewCodexClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*CodexClient, error) {
-	if provider.OAuthDetail == nil {
-		logrus.Fatalf("OpenAI client not configured with OAuthDetail")
-		panic("OpenAI client not configured with OAuthDetail")
+	if provider.OAuthDetail == nil && provider.APIBase != protocol.CodexAPIBase {
+		logrus.Fatalf("Codex client not configured with Codex provider")
+		panic("Codex client not configured with Codex provider")
 	}
 
 	if provider.OAuthDetail.Issuer != ai.IssuerCodex {
@@ -117,8 +118,6 @@ func (c *CodexClient) ImagesGenerate(ctx context.Context, req openai.ImageGenera
 
 // applyCodexDefaultsToParams applies Codex-specific defaults to a ResponseNewParams struct.
 func applyCodexDefaultsToParams(req *responses.ResponseNewParams) {
-	logCodexInvalidInputIDs(req, "before_sanitize")
-
 	// Set default instructions if not provided
 	if !req.Instructions.Valid() {
 		req.Instructions = param.NewOpt(defaultInstructions)
@@ -171,87 +170,34 @@ func applyCodexDefaultsToParams(req *responses.ResponseNewParams) {
 	// ChatGPT Codex rejects empty/invalid item ids in input[].
 	// These ids are optional for request items, so strip malformed values.
 	sanitizeResponseInputIDs(req)
-	logCodexInvalidInputIDs(req, "after_sanitize")
 
 	// Set the modified extra fields back
 	req.SetExtraFields(extraFields)
 }
 
 // sanitizeResponseInputIDs sanitizes item IDs in ResponseNewParams.Input for Codex.
-// ChatGPT Codex rejects empty/invalid item ids, so we strip malformed values.
+// ChatGPT Codex rejects empty/invalid item ids, so we strip malformed values
+// and drop reasoning items whose required plain-string ID cannot be omitted.
 func sanitizeResponseInputIDs(req *responses.ResponseNewParams) {
-	// Check if Input is set and is of type OfInputItemList
 	if req.Input.OfInputItemList == nil {
 		return
 	}
 
 	inputItems := req.Input.OfInputItemList
+	sanitized := inputItems[:0]
 	for i := range inputItems {
-		item := &inputItems[i]
-		sanitizeInputItemID(item)
-	}
-
-	req.Input.OfInputItemList = inputItems
-}
-
-func logCodexInvalidInputIDs(req *responses.ResponseNewParams, stage string) {
-	if req.Input.OfInputItemList == nil {
-		return
-	}
-
-	for i := range req.Input.OfInputItemList {
-		logCodexInvalidItemIDs(req.Input.OfInputItemList[i], i, stage)
-	}
-}
-
-func logCodexInvalidItemIDs(item responses.ResponseInputItemUnionParam, index int, stage string) {
-	check := func(kind string, field string, id string, valid bool) {
-		trimmed := strings.TrimSpace(id)
-		if trimmed == "" || !valid {
-			logrus.Warnf("[Codex] Invalid input item id detected stage=%s index=%d kind=%s field=%s raw_id=%q trimmed_id=%q", stage, index, kind, field, id, trimmed)
-		} else {
-			logrus.Warnf("[Codex] Valid input item id observed stage=%s index=%d kind=%s field=%s raw_id=%q", stage, index, kind, field, id)
+		item := inputItems[i]
+		if sanitizeInputItemID(&item) {
+			sanitized = append(sanitized, item)
 		}
 	}
 
-	if item.OfFunctionCall != nil && item.OfFunctionCall.ID.Valid() {
-		check("function_call", "id", item.OfFunctionCall.ID.Value, isValidCodexID(strings.TrimSpace(item.OfFunctionCall.ID.Value)))
-	}
-	if item.OfFunctionCallOutput != nil && item.OfFunctionCallOutput.ID.Valid() {
-		check("function_call_output", "id", item.OfFunctionCallOutput.ID.Value, isValidCodexID(strings.TrimSpace(item.OfFunctionCallOutput.ID.Value)))
-	}
-	if item.OfComputerCallOutput != nil && item.OfComputerCallOutput.ID.Valid() {
-		check("computer_call_output", "id", item.OfComputerCallOutput.ID.Value, isValidCodexID(strings.TrimSpace(item.OfComputerCallOutput.ID.Value)))
-	}
-	if item.OfCustomToolCall != nil && item.OfCustomToolCall.ID.Valid() {
-		check("custom_tool_call", "id", item.OfCustomToolCall.ID.Value, isValidCodexID(strings.TrimSpace(item.OfCustomToolCall.ID.Value)))
-	}
-	if item.OfCustomToolCallOutput != nil && item.OfCustomToolCallOutput.ID.Valid() {
-		check("custom_tool_call_output", "id", item.OfCustomToolCallOutput.ID.Value, isValidCodexID(strings.TrimSpace(item.OfCustomToolCallOutput.ID.Value)))
-	}
-	if item.OfToolSearchCall != nil && item.OfToolSearchCall.ID.Valid() {
-		check("tool_search_call", "id", item.OfToolSearchCall.ID.Value, isValidCodexID(strings.TrimSpace(item.OfToolSearchCall.ID.Value)))
-	}
-	if item.OfShellCall != nil && item.OfShellCall.ID.Valid() {
-		check("shell_call", "id", item.OfShellCall.ID.Value, isValidCodexID(strings.TrimSpace(item.OfShellCall.ID.Value)))
-	}
-	if item.OfShellCallOutput != nil && item.OfShellCallOutput.ID.Valid() {
-		check("shell_call_output", "id", item.OfShellCallOutput.ID.Value, isValidCodexID(strings.TrimSpace(item.OfShellCallOutput.ID.Value)))
-	}
-	if item.OfApplyPatchCall != nil && item.OfApplyPatchCall.ID.Valid() {
-		check("apply_patch_call", "id", item.OfApplyPatchCall.ID.Value, isValidCodexID(strings.TrimSpace(item.OfApplyPatchCall.ID.Value)))
-	}
-	if item.OfApplyPatchCallOutput != nil && item.OfApplyPatchCallOutput.ID.Valid() {
-		check("apply_patch_call_output", "id", item.OfApplyPatchCallOutput.ID.Value, isValidCodexID(strings.TrimSpace(item.OfApplyPatchCallOutput.ID.Value)))
-	}
-	if item.OfMcpApprovalResponse != nil && item.OfMcpApprovalResponse.ID.Valid() {
-		check("mcp_approval_response", "id", item.OfMcpApprovalResponse.ID.Value, isValidCodexID(strings.TrimSpace(item.OfMcpApprovalResponse.ID.Value)))
-	}
+	req.Input.OfInputItemList = sanitized
 }
 
 // sanitizeInputItemID sanitizes the ID field in a ResponseInputItemUnionParam
 // by clearing invalid IDs directly on the inner SDK struct fields.
-func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) {
+func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) bool {
 	if item.OfFunctionCall != nil {
 		sanitizeOptID(&item.OfFunctionCall.ID)
 	}
@@ -267,6 +213,14 @@ func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) {
 	if item.OfCustomToolCallOutput != nil {
 		sanitizeOptID(&item.OfCustomToolCallOutput.ID)
 	}
+	if item.OfReasoning != nil {
+		item.OfReasoning.ID = strings.TrimSpace(item.OfReasoning.ID)
+		if item.OfReasoning.ID == "" || !isValidCodexID(item.OfReasoning.ID) {
+			logrus.Warnf("[Codex] Dropping reasoning input item with invalid id: %q", item.OfReasoning.ID)
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeOptID(id *param.Opt[string]) {
