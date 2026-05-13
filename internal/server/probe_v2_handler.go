@@ -131,6 +131,23 @@ func (s *Server) probeStream(ctx context.Context, req *ProbeV2Request) (*client.
 
 // resolveTargetToProviderModel resolves a probe request (rule or provider) to a provider and model
 func (s *Server) resolveTargetToProviderModel(ctx context.Context, req *ProbeV2Request) (*typ.Provider, string, error) {
+	provider, model, err := s.resolveTargetToProviderModelRaw(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+	if provider.IsVirtual() {
+		// Vmodel APIBase ("vmodel://local") is a sentinel that no HTTP client
+		// can dial. Re-resolve as an inline provider_config pointing at this
+		// server's own /virtual/{style}/v1 loopback route. The probe then
+		// exercises the in-process vmodel handler end-to-end (route, auth
+		// middleware, registry lookup, streaming response) without mutating
+		// the stored provider record.
+		return s.resolveVModelLoopbackTarget(ctx, provider, model)
+	}
+	return provider, model, nil
+}
+
+func (s *Server) resolveTargetToProviderModelRaw(ctx context.Context, req *ProbeV2Request) (*typ.Provider, string, error) {
 	switch req.TargetType {
 	case ProbeV2TargetProvider:
 		return s.resolveProviderTarget(ctx, req)
@@ -141,6 +158,35 @@ func (s *Server) resolveTargetToProviderModel(ctx context.Context, req *ProbeV2R
 	default:
 		return nil, "", fmt.Errorf("invalid target type: %s", req.TargetType)
 	}
+}
+
+// resolveVModelLoopbackTarget reuses the resolveProviderConfigTarget shape:
+// it synthesizes an inline provider config that points at this server's own
+// /virtual/{style}/v1 route over loopback, authenticated with the global
+// model token.
+func (s *Server) resolveVModelLoopbackTarget(ctx context.Context, provider *typ.Provider, model string) (*typ.Provider, string, error) {
+	port := s.config.GetServerPort()
+	if port == 0 {
+		return nil, "", fmt.Errorf("server port unknown; cannot probe vmodel provider %q", provider.Name)
+	}
+
+	var path string
+	switch provider.APIStyle {
+	case protocol.APIStyleAnthropic:
+		path = "/virtual/anthropic/v1"
+	case protocol.APIStyleOpenAI:
+		path = "/virtual/openai/v1"
+	default:
+		return nil, "", fmt.Errorf("vmodel probe unsupported for APIStyle %q", provider.APIStyle)
+	}
+
+	return s.resolveProviderConfigTarget(ctx, &ProbeV2Request{
+		Name:     provider.Name,
+		APIBase:  fmt.Sprintf("http://127.0.0.1:%d%s", port, path),
+		APIStyle: string(provider.APIStyle),
+		Token:    s.config.GetModelToken(),
+		Model:    model,
+	})
 }
 
 // resolveProviderTarget resolves a provider target to provider and model

@@ -130,13 +130,15 @@ path.
 ### Probe
 
 `APIBase` is the sentinel `vmodel://local`, which no HTTP client can dial.
-The probe path (`probe_v2_sdk.getClientForProvider`) detects
-`provider.IsVirtual()` and substitutes a shallow-copy provider whose
-`APIBase` points at this server's own loopback route
-(`http://127.0.0.1:<port>/virtual/{anthropic,openai}/v1`) with the global
-model token. The probe then round-trips through HTTP loopback into the
-in-process vmodel handler — validating the full request/response pipeline
-without leaving the process.
+The probe resolution layer (`probe_v2_handler.resolveTargetToProviderModel`)
+detects `provider.IsVirtual()` after the initial resolve and re-routes
+through `resolveProviderConfigTarget` with a synthetic inline config:
+`APIBase = http://127.0.0.1:<port>/virtual/{anthropic,openai}/v1`,
+`Token = cfg.GetModelToken()`. From there the SDK probe is identical to a
+user-supplied provider_config target — round-tripping through HTTP loopback
+into the in-process vmodel handler, exercising route, auth middleware,
+registry lookup, and streaming response without leaving the process. The
+stored provider record is never mutated.
 
 ### Builtin providers
 
