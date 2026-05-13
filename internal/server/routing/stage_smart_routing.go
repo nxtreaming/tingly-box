@@ -146,7 +146,14 @@ func indexToString(i int) string {
 	return string(digits)
 }
 
-// Evaluate evaluates smart routing rules and selects a service
+// Evaluate evaluates smart routing rules and selects a service. When a
+// matched rule carries op-level processors, the stage runs them (the
+// "implicit bypass") and then **re-evaluates** the rule list against the
+// mutated request — this lets a downstream rule that only became eligible
+// after the mutation (e.g. an image-stripped request matching a text-only
+// model rule) win the selection. Only one bypass per request is allowed:
+// if the re-evaluation matches another processor-bearing rule, the stage
+// returns (nil, false) and lets the LoadBalancer act as the fallback.
 func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionState) (*SelectionResult, bool) {
 	rule := ctx.Rule
 
@@ -180,7 +187,8 @@ func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionStat
 
 	// Pre-collect capacity info for all services across all smart routing rules.
 	// evaluateRule will filter this down to per-rule services when evaluating.
-	reqCtx.ServiceCapacity = s.collectAllCapacityInfo(rule.SmartRouting)
+	capacityInfo := s.collectAllCapacityInfo(rule.SmartRouting)
+	reqCtx.ServiceCapacity = capacityInfo
 
 	// Create router and evaluate
 	router, err := smartrouting.NewRouter(rule.SmartRouting)
@@ -190,37 +198,47 @@ func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionStat
 		return nil, false
 	}
 
-	matchedServices, matchedRuleIndex, matched, trace := router.Evaluate(reqCtx)
+	// First-pass evaluation honors any pre-existing BypassedSmartRules set
+	// (e.g. an earlier stage already bypassed a rule). bypassDone tracks
+	// whether THIS invocation has consumed its one allowed bypass.
+	bypassDone := false
+	matchedServices, matchedRuleIndex, matched, trace := router.EvaluateSkipping(reqCtx, ctx.BypassedSmartRules)
 	if !matched || len(matchedServices) == 0 {
 		logrus.Debugf("[smart_routing] no rule matched - matched=%v, services=%d", matched, len(matchedServices))
 		s.emitTrace(ctx, reqCtx, trace, -1, 0, 0, nil, "no_match", "no rule matched the request")
 		return nil, false
 	}
 
-	// Implicit bypass: if any of the matched rule's ops carries a registered
-	// processor, run them and let the pipeline continue. The processor mutates
-	// ctx.Request in place; downstream stages see the mutation. The matched
-	// rule's services act as the processor's upstream candidate pool, NOT the
-	// downstream selection set.
-	matchedRule := rule.SmartRouting[matchedRuleIndex]
-	if _, already := ctx.BypassedSmartRules[matchedRuleIndex]; already {
-		// Same rule already bypassed in an earlier pass — skip the entire
-		// stage to prevent loops on residual matchable content.
-		s.emitTrace(ctx, reqCtx, trace, matchedRuleIndex, len(matchedServices), 0, nil,
-			"bypass_already_done", "rule already bypassed by op-level processor; skipping")
-		return nil, false
-	}
-	type collectedProc struct {
-		op   smartrouting.SmartOp
-		proc smartrouting.OpProcessor
-	}
-	var procs []collectedProc
-	for _, op := range matchedRule.Ops {
-		if p, ok := smartrouting.LookupProcessor(op.Position, op.Operation); ok {
-			procs = append(procs, collectedProc{op: op, proc: p})
+	// Implicit bypass: if the matched rule's ops carry registered processors,
+	// run them (they mutate ctx.Request in place) then re-evaluate. The
+	// mutated request can now match a different, non-processor rule whose
+	// services become the final selection — or, if no rule matches, fall
+	// through so the LoadBalancer (the global fallback) picks an upstream.
+	for {
+		matchedRule := rule.SmartRouting[matchedRuleIndex]
+		type collectedProc struct {
+			op   smartrouting.SmartOp
+			proc smartrouting.OpProcessor
 		}
-	}
-	if len(procs) > 0 {
+		var procs []collectedProc
+		for _, op := range matchedRule.Ops {
+			if p, ok := smartrouting.LookupProcessor(op.Position, op.Operation); ok {
+				procs = append(procs, collectedProc{op: op, proc: p})
+			}
+		}
+		if len(procs) == 0 {
+			// Non-processor rule — fall through to terminal selection below.
+			break
+		}
+		if bypassDone {
+			// Re-evaluation matched another processor-bearing rule. Per the
+			// "only one bypass per request" contract, do NOT run a second
+			// processor; let the LoadBalancer act as the fallback instead.
+			s.emitTrace(ctx, reqCtx, trace, matchedRuleIndex, len(matchedServices), 0, nil,
+				"bypass_skipped_second", "another processor rule matched after bypass; only one bypass allowed — falling through to LoadBalancer")
+			return nil, false
+		}
+
 		processorCtx := context.Background()
 		if ctx.GinContext != nil && ctx.GinContext.Request != nil {
 			processorCtx = ctx.GinContext.Request.Context()
@@ -243,9 +261,31 @@ func (s *SmartRoutingStage) Evaluate(ctx *SelectionContext, state *selectionStat
 			ctx.BypassedSmartRules = make(map[int]struct{})
 		}
 		ctx.BypassedSmartRules[matchedRuleIndex] = struct{}{}
+		bypassDone = true
 		s.emitTrace(ctx, reqCtx, trace, matchedRuleIndex, len(matchedServices), 0, nil,
-			"bypass_processor_run", "op-level processor ran; pipeline continues")
-		return nil, false
+			"bypass_processor_run", "op-level processor ran; re-evaluating with mutated request")
+
+		// Re-extract request context from the now-mutated request so a
+		// downstream rule that only became eligible after the mutation
+		// (e.g. an image-stripped request matching a text-only model rule)
+		// gets a fair shot at matching.
+		newReqCtx, err := ExtractRequestContext(ctx.Request)
+		if err != nil || newReqCtx == nil {
+			logrus.Debugf("[smart_routing] re-extract after bypass failed: %v", err)
+			return nil, false
+		}
+		if ctx.Scenario == typ.ScenarioClaudeCode {
+			newReqCtx.ClaudeCodeRequestKind = smartrouting.DetectClaudeCodeRequestKind(newReqCtx)
+		}
+		newReqCtx.ServiceCapacity = capacityInfo
+		reqCtx = newReqCtx
+
+		matchedServices, matchedRuleIndex, matched, trace = router.EvaluateSkipping(reqCtx, ctx.BypassedSmartRules)
+		if !matched || len(matchedServices) == 0 {
+			s.emitTrace(ctx, reqCtx, trace, -1, 0, 0, nil, "no_match_after_bypass",
+				"no rule matched after processor bypass; falling through to LoadBalancer")
+			return nil, false
+		}
 	}
 
 	if state != nil && len(state.candidateServices) > 0 {

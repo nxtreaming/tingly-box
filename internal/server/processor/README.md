@@ -3,9 +3,20 @@
 Op-level processors for `smart_routing`. A processor is a side-effect handler
 bound to a `(SmartOpPosition, SmartOpOperation)` tuple. When the smart-routing
 stage matches a rule whose ops carry a registered processor, the stage runs
-the processor(s) and returns `(nil, false)` — letting the rest of the
-pipeline (LoadBalancer, etc.) pick the real downstream with the **mutated**
-request. This is the *implicit bypass* contract.
+the processor(s), mutates the request, and **re-evaluates the rule list**
+against the mutated request. The re-evaluation is the heart of the bypass
+contract: it lets a downstream non-processor rule (e.g. "model contains
+'claude-haiku' → upstream X") win the selection only after the processor
+has prepared the request for it.
+
+- If the re-evaluation picks a non-processor rule, that rule's services
+  become the final selection (terminal).
+- If nothing matches on re-evaluation, the stage returns `(nil, false)` and
+  the **LoadBalancer** (global fallback) picks an upstream from the rule's
+  top-level `Services`.
+- Only **one** bypass per request is allowed. If re-evaluation matches
+  another processor-bearing rule, the stage refuses to run a second
+  processor and falls through to the LoadBalancer.
 
 The matched rule's `Services` are treated as the **processor's upstream
 candidate pool**, not the routing destination.
@@ -28,13 +39,35 @@ boot (server.go)
             registry["proxy_vision|enabled"] = visionProc
 
 per request (internal/server/routing/stage_smart_routing.go)
-  for op in matchedRule.Ops:
-      if p, ok := smartrouting.LookupProcessor(op.Position, op.Operation); ok:
-          collect p
-  if len(collected) > 0:
-      run each in op-order with a ProcessorContext
-      mark ctx.BypassedSmartRules[ruleIndex] = struct{}{}
-      return (nil, false)   // pipeline continues
+
+  pass 1: router.EvaluateSkipping(reqCtx, ctx.BypassedSmartRules)
+            │
+            ├── no match           ──► (nil, false) → next stage
+            │
+            └── match rule R
+                 │
+                 ├── R has no processors ──► terminal selection
+                 │                            (intersect, filter active,
+                 │                             return result)
+                 │
+                 └── R has processors
+                       run each Process(pctx) in op order
+                       ctx.BypassedSmartRules[R] = struct{}{}
+                       re-extract reqCtx from mutated request
+                       │
+                       ▼
+  pass 2: router.EvaluateSkipping(reqCtx, ctx.BypassedSmartRules)
+            │
+            ├── no match           ──► (nil, false) → LoadBalancer
+            │
+            └── match rule R'
+                 │
+                 ├── R' has no processors ──► terminal selection
+                 │                             (final selection wins)
+                 │
+                 └── R' has processors
+                       (only one bypass allowed)
+                       ──► (nil, false) → LoadBalancer
 ```
 
 ## VisionProxyProcessor

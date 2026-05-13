@@ -123,12 +123,15 @@ that contains one, it:
    place. The matched rule's `Services` are passed as the processor's
    upstream candidate pool — these are the providers the processor itself
    can call, NOT the downstream selection set.
-3. Returns `(nil, false)` so the routing pipeline continues to the
-   LoadBalancer stage. The downstream forwarder serializes the **mutated**
-   typed request to the model selected by the LoadBalancer (this is the
-   *implicit bypass*).
-4. Marks the rule index in `SelectionContext.BypassedSmartRules` so a
-   subsequent re-evaluation cannot loop on residual matchable content.
+3. Marks the rule index in `SelectionContext.BypassedSmartRules` and
+   **re-evaluates the rule list** with that rule excluded
+   (`Router.EvaluateSkipping`). The mutated request can now match a
+   downstream non-processor rule whose services become the final
+   selection — this is the *implicit bypass* contract.
+4. If re-evaluation finds nothing, returns `(nil, false)` so the
+   LoadBalancer stage acts as the fallback. Only one bypass per request is
+   allowed: a second processor-bearing match on re-evaluation also returns
+   `(nil, false)` instead of running another processor.
 
 Processor implementations live in `internal/server/processor/`; they
 register at server boot via `processor.RegisterAll`. Only
