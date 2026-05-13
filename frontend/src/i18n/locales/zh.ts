@@ -109,6 +109,8 @@ export default {
     "modelKey": "模型密钥",
     "tinglyBox": "共享分发",
     "tinglyBoxTooltip": "不暴露你的 Provider 凭据即可分发模型访问。每个分发令牌独立计量，可以随时单独吊销而不影响其他令牌。",
+    "virtualModels": "虚拟模型",
+    "virtualModelsTooltip": "内置的合成模型 Provider，用于上手演示与本地试跑——无需联网即在进程内返回响应。",
     "accessControl": "访问控制",
     "status": "状态",
     "system": "系统",

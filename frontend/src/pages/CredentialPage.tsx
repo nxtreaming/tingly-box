@@ -4,7 +4,6 @@ import ImportModal from '@/components/ImportModal';
 import OAuthDetailDialog from '@/components/OAuthDetailDialog.tsx';
 import OAuthDialog from '@/components/OAuthDialog.tsx';
 import OAuthTable from '@/components/OAuthTable.tsx';
-import VirtualModelsTable from '@/components/VirtualModelsTable';
 import { PageLayout } from '@/components/PageLayout';
 import ProviderFormDialog, { type EnhancedProviderFormData } from '@/components/ProviderFormDialog.tsx';
 import UnifiedCard from '@/components/UnifiedCard';
@@ -427,22 +426,19 @@ const CredentialPage = () => {
         setProviderFormData(prev => ({ ...prev, [field]: value }));
     }, []);
 
-    // Derived state. Providers are partitioned by auth_type into three
-    // mutually-exclusive groups; vmodel providers are seeded by the backend
-    // (Source=builtin) and rendered as a read-only section.
-    const { apiKeyProviders, oauthProviders, vmodelProviders, credentialCounts } = useMemo(() => {
+    // Derived state. Providers are partitioned by auth_type into two
+    // user-credential groups; vmodel providers are excluded here and rendered
+    // on the dedicated /credentials/virtual-models page.
+    const { apiKeyProviders, oauthProviders, credentialCounts } = useMemo(() => {
         const apiKeys = providers.filter((p: any) => p.auth_type !== 'oauth' && p.auth_type !== 'vmodel');
         const oauth = providers.filter((p: any) => p.auth_type === 'oauth');
-        const vmodels = providers.filter((p: any) => p.auth_type === 'vmodel');
         return {
             apiKeyProviders: apiKeys,
             oauthProviders: oauth,
-            vmodelProviders: vmodels,
             credentialCounts: {
                 apiKeys: apiKeys.length,
                 oauth: oauth.length,
-                vmodels: vmodels.length,
-                total: providers.length,
+                total: apiKeys.length + oauth.length,
             },
         };
     }, [providers]);
@@ -576,35 +572,6 @@ const CredentialPage = () => {
                     )}
                 </Box>
 
-                {/* Virtual Models Section. Seeded by the backend on startup and
-                    rendered as a read-only list — only the enabled toggle is
-                    interactive. Hidden entirely when no vmodel providers exist
-                    (e.g. older databases that predate the seeding migration). */}
-                {credentialCounts.vmodels > 0 && (
-                    <>
-                        <Divider sx={{ my: 3 }} />
-                        <Box>
-                            <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-                                <Typography variant="subtitle1" fontWeight={500}>
-                                    Virtual Models
-                                </Typography>
-                                <Chip
-                                    label={credentialCounts.vmodels}
-                                    size="small"
-                                    variant="outlined"
-                                    sx={{ height: 20, minWidth: 20, fontSize: '0.7rem', color: 'text.secondary' }}
-                                />
-                                <Typography variant="caption" color="text.secondary">
-                                    Built-in synthetic providers for testing &amp; onboarding
-                                </Typography>
-                            </Stack>
-                            <VirtualModelsTable
-                                providers={vmodelProviders}
-                                onToggle={handleToggleProvider}
-                            />
-                        </Box>
-                    </>
-                )}
             </UnifiedCard>
 
             {/* API Key Provider Dialog */}

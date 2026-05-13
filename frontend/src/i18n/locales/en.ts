@@ -109,6 +109,8 @@ export default {
     "modelKey": "Model Key",
     "tinglyBox": "Sharing",
     "tinglyBoxTooltip": "Distribute model access without sharing your provider credentials. Each share token tracks usage independently and can be revoked at any time without affecting the others.",
+    "virtualModels": "Virtual Models",
+    "virtualModelsTooltip": "Built-in synthetic model providers for onboarding, demos, and dry-runs. They respond locally without contacting any upstream.",
     "accessControl": "Access Control",
     "status": "Status",
     "system": "System",

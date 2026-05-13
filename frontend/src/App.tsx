@@ -22,6 +22,7 @@ import Guiding from './pages/Guiding';
 import Onboarding from './pages/Onboarding';
 import { api } from './services/api';
 import APITokensPage from './pages/APITokensPage';
+import VirtualModelsPage from './pages/VirtualModelsPage';
 import UseOpenAIPage from './pages/scenario/UseOpenAIPage';
 import UseAnthropicPage from './pages/scenario/UseAnthropicPage';
 import UseCodexPage from './pages/scenario/UseCodexPage';
@@ -369,6 +370,8 @@ function AppContent() {
                     <Route path="/credentials" element={<CredentialPage />} />
                     {/* Provider List page - must come before :tab wildcard */}
                     <Route path="/credentials/providers" element={<ProviderListPage />} />
+                    {/* Virtual Models page - peer of Model Key and Sharing */}
+                    <Route path="/credentials/virtual-models" element={<VirtualModelsPage />} />
                     {/* Legacy redirects for backward compatibility */}
                     <Route path="/api-keys" element={<Navigate to="/credentials" replace />} />
                     <Route path="/oauth" element={<Navigate to="/credentials" replace />} />

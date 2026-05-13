@@ -212,6 +212,14 @@ export function useActivityItems(): ActivityItem[] {
                         icon: <IconKey size={20} />,
                         tooltip: t('layout.tinglyBoxTooltip'),
                     },
+                    {
+                        path: '/credentials/virtual-models',
+                        label: t('layout.virtualModels', { defaultValue: 'Virtual Models' }),
+                        icon: <IconFlask size={20} />,
+                        tooltip: t('layout.virtualModelsTooltip', {
+                            defaultValue: 'Built-in synthetic model providers for onboarding and dry-runs.',
+                        }),
+                    },
                 ],
             },
             {
