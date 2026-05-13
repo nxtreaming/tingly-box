@@ -13,6 +13,7 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/client"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
+	"github.com/tingly-dev/tingly-box/internal/protocol/assembler"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
@@ -85,8 +86,9 @@ func (a *poolVisionClient) describeViaAnthropic(ctx context.Context, provider *t
 	}
 	// Streaming variant: most providers (especially proxy gateways and
 	// regional Anthropic-compatible vendors) require the streaming endpoint
-	// for vision requests. We accumulate every text_delta into a single
-	// string and return it as if it were a non-streaming response.
+	// for vision requests. Use the shared SDK assembler to fold the events
+	// back into a *BetaMessage so we surface a non-streaming result without
+	// hand-rolling the accumulation logic.
 	stream := c.BetaMessagesNewStreaming(ctx, &anthropic.BetaMessageNewParams{
 		Model:     anthropic.Model(model),
 		MaxTokens: defaultVisionMaxTokens,
@@ -101,15 +103,21 @@ func (a *poolVisionClient) describeViaAnthropic(ctx context.Context, provider *t
 		},
 	})
 	defer stream.Close()
-	var sb strings.Builder
+	asm := assembler.NewAnthropicBetaSDKAssembler()
 	for stream.Next() {
-		evt := stream.Current()
-		if evt.Type == "content_block_delta" && evt.Delta.Type == "text_delta" && evt.Delta.Text != "" {
-			sb.WriteString(evt.Delta.Text)
+		if err := asm.Accumulate(stream.Current()); err != nil {
+			return "", fmt.Errorf("vision adapter: accumulate beta stream: %w", err)
 		}
 	}
 	if err := stream.Err(); err != nil {
 		return "", err
+	}
+	msg := asm.Finish()
+	var sb strings.Builder
+	for _, b := range msg.Content {
+		if b.Type == "text" {
+			sb.WriteString(b.Text)
+		}
 	}
 	return strings.TrimSpace(sb.String()), nil
 }
@@ -130,8 +138,8 @@ func (a *poolVisionClient) describeViaOpenAI(ctx context.Context, provider *typ.
 	}
 	// Streaming variant: many OpenAI-compatible vision endpoints
 	// (Qwen-VL, GLM-4V, custom proxies, etc.) only support streaming for
-	// multimodal inputs. We accumulate every content delta into a single
-	// string and return it as if it were a non-streaming response.
+	// multimodal inputs. Use the shared SDK assembler to fold the chunks
+	// back into a *ChatCompletion.
 	stream := c.ChatCompletionsNewStreaming(ctx, openai.ChatCompletionNewParams{
 		Model:     openai.ChatModel(model),
 		MaxTokens: openai.Int(defaultVisionMaxTokens),
@@ -151,19 +159,22 @@ func (a *poolVisionClient) describeViaOpenAI(ctx context.Context, provider *typ.
 		},
 	})
 	defer stream.Close()
-	var sb strings.Builder
+	asm := assembler.NewOpenAIStreamAssembler()
 	for stream.Next() {
-		chunk := stream.Current()
-		for _, ch := range chunk.Choices {
-			if ch.Delta.Content != "" {
-				sb.WriteString(ch.Delta.Content)
-			}
+		if !asm.AddChunk(stream.Current()) {
+			return "", errors.New("vision adapter: openai stream accumulator rejected chunk")
 		}
 	}
 	if err := stream.Err(); err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(sb.String()), nil
+	resp := asm.Finish()
+	for _, ch := range resp.Choices {
+		if text := strings.TrimSpace(ch.Message.Content); text != "" {
+			return text, nil
+		}
+	}
+	return "", nil
 }
 
 // openAIImageURL builds the URL string OpenAI's image_url content part

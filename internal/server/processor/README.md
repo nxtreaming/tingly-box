@@ -69,10 +69,16 @@ pctx.Request : *anthropic.BetaMessageNewParams (or v1 / OpenAI)
        │       ▼
        │   poolVisionClient (production adapter)
        │     dispatches by provider.APIStyle and ALWAYS uses streaming
-       │     (most providers require it for vision); deltas are
-       │     accumulated into a single string before returning:
-       │       "anthropic" → BetaMessagesNewStreaming → join text_deltas
-       │       "openai"    → ChatCompletionsNewStreaming → join Delta.Content
+       │     (most providers require it for vision); events are folded
+       │     back into a non-streaming message via the shared
+       │     internal/protocol/assembler package so we never re-implement
+       │     accumulation logic:
+       │       "anthropic" → BetaMessagesNewStreaming →
+       │                     assembler.NewAnthropicBetaSDKAssembler →
+       │                     read text blocks from *BetaMessage
+       │       "openai"    → ChatCompletionsNewStreaming →
+       │                     assembler.NewOpenAIStreamAssembler →
+       │                     read Choice.Message.Content from *ChatCompletion
        │       other       → error → fail-strip marker
        ▼
   describe = "a red apple on a white plate"   (success)
