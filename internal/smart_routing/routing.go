@@ -30,21 +30,9 @@ func NewRouter(rules []SmartRouting) (*Router, error) {
 // and the per-rule trace. All other public Evaluate* / TraceEvaluation methods
 // are thin wrappers around this.
 func (r *Router) Evaluate(ctx *RequestContext) (services []*loadbalance.Service, ruleIdx int, matched bool, trace []RuleEvalResult) {
-	return r.EvaluateSkipping(ctx, nil)
-}
-
-// EvaluateSkipping is Evaluate but skips any rule whose index is present in
-// `skip`. Used by the smart-routing stage to re-evaluate after an op-level
-// processor bypass: the rule that triggered the processor is recorded in
-// `skip` so the second pass picks a different (non-processor) rule, or
-// nothing — letting the LoadBalancer take over as the fallback.
-func (r *Router) EvaluateSkipping(ctx *RequestContext, skip map[int]struct{}) (services []*loadbalance.Service, ruleIdx int, matched bool, trace []RuleEvalResult) {
 	trace = make([]RuleEvalResult, 0, len(r.rules))
 	ruleIdx = -1
 	for i := range r.rules {
-		if _, skipped := skip[i]; skipped {
-			continue
-		}
 		rule := &r.rules[i]
 		ruleRes := r.evaluateRule(ctx, rule, i)
 		trace = append(trace, ruleRes)
