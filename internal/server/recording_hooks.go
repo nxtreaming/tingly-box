@@ -6,6 +6,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/assembler"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
@@ -15,8 +16,14 @@ import (
 const streamRecorderContextKey = "stream_event_recorder"
 
 // streamRecorder couples a ProtocolRecorder with a stream assembler so that
-// raw SSE events are mirrored into both the recorder's chunk log and an
-// assembler that synthesises the final response body once the stream ends.
+// raw SSE events emitted during protocol conversion are mirrored into both
+// the recorder's chunk log and an assembler that synthesises the final
+// response body once the stream ends.
+//
+// It backs the gin-context StreamEventRecorder path used by the
+// Responses→Anthropic conversion handlers. Native Anthropic streams instead
+// use AttachRecorderHooks, which relies on the assembler that protocol's
+// HandleContext now owns.
 type streamRecorder struct {
 	recorder     *ProtocolRecorder
 	assembler    *assembler.AnthropicStreamAssembler
@@ -34,22 +41,6 @@ func newStreamRecorder(recorder *ProtocolRecorder) *streamRecorder {
 		recorder:  recorder,
 		assembler: assembler.NewAnthropicStreamAssembler(),
 	}
-}
-
-func (sr *streamRecorder) RecordV1Event(event *anthropic.MessageStreamEventUnion) {
-	if sr == nil {
-		return
-	}
-	sr.recorder.RecordStreamChunk(event.Type, event)
-	sr.assembler.RecordV1Event(event)
-}
-
-func (sr *streamRecorder) RecordV1BetaEvent(event *anthropic.BetaRawMessageStreamEventUnion) {
-	if sr == nil {
-		return
-	}
-	sr.recorder.RecordStreamChunk(event.Type, event)
-	sr.assembler.RecordV1BetaEvent(event)
 }
 
 func (sr *streamRecorder) Finish(model string, inputTokens, outputTokens int) {
@@ -131,13 +122,6 @@ func mapInt(m map[string]interface{}, key string) (int, bool) {
 	return 0, false
 }
 
-func (sr *streamRecorder) StreamEventRecorder() interface{} {
-	if sr == nil {
-		return nil
-	}
-	return sr
-}
-
 func (sr *streamRecorder) SetupStreamRecorderInContext(c *gin.Context) {
 	if sr == nil {
 		return
@@ -145,61 +129,44 @@ func (sr *streamRecorder) SetupStreamRecorderInContext(c *gin.Context) {
 	c.Set(streamRecorderContextKey, sr)
 }
 
-func (sr *streamRecorder) updateUsageFromTyped(in, out int64) {
-	if in > 0 {
-		sr.inputTokens = int(in)
-		sr.hasUsage = true
+// AttachRecorderHooks wires a ProtocolRecorder into a native Anthropic stream
+// HandleContext. Raw SSE chunks are mirrored into the recorder's chunk log;
+// the assembled final response is produced by the protocol-side assembler
+// (HandleContext.streamAssembler) and delivered via the assembled hook;
+// completion and error finalise the record.
+func AttachRecorderHooks(hc *protocol.HandleContext, recorder *ProtocolRecorder, model string, provider *typ.Provider) {
+	if recorder == nil {
+		return
 	}
-	if out > 0 {
-		sr.outputTokens = int(out)
-		sr.hasUsage = true
-	}
+	recorder.EnableStreaming()
+
+	hc.WithOnStreamEvent(func(event interface{}) error {
+		recorder.RecordStreamChunk(streamEventType(event), event)
+		return nil
+	})
+	hc.WithOnStreamAssembled(func(msg *anthropic.Message) {
+		if msg == nil {
+			return
+		}
+		msg.Model = anthropic.Model(model)
+		recorder.SetAssembledResponse(msg)
+	})
+	hc.WithOnStreamComplete(func() {
+		recorder.RecordResponse(provider, model)
+	})
+	hc.WithOnStreamError(func(err error) {
+		recorder.RecordError(err)
+	})
 }
 
-// NewRecorderHooks builds streaming hooks bound to a recorder. On completion
-// the assembled response is finalised and RecordResponse is invoked with the
-// provided model/provider — callers that want to defer RecordResponse should
-// pass an empty model and call RecordResponse themselves.
-func NewRecorderHooks(recorder *ProtocolRecorder, model string, provider *typ.Provider) (onStreamEvent func(event interface{}) error, onStreamComplete func(), onStreamError func(err error)) {
-	if recorder == nil {
-		return nil, nil, nil
+// streamEventType extracts the SSE event type from a typed Anthropic stream
+// event union, used as a fallback label for the recorder's chunk log.
+func streamEventType(event interface{}) string {
+	switch evt := event.(type) {
+	case *anthropic.MessageStreamEventUnion:
+		return evt.Type
+	case *anthropic.BetaRawMessageStreamEventUnion:
+		return evt.Type
 	}
-
-	streamRec := newStreamRecorder(recorder)
-
-	onStreamEvent = func(event interface{}) error {
-		if streamRec == nil {
-			return nil
-		}
-		switch evt := event.(type) {
-		case *anthropic.MessageStreamEventUnion:
-			streamRec.RecordV1Event(evt)
-			streamRec.updateUsageFromTyped(evt.Usage.InputTokens, evt.Usage.OutputTokens)
-		case *anthropic.BetaRawMessageStreamEventUnion:
-			streamRec.RecordV1BetaEvent(evt)
-			streamRec.updateUsageFromTyped(evt.Usage.InputTokens, evt.Usage.OutputTokens)
-		case map[string]interface{}:
-			if eventType, ok := evt["type"].(string); ok {
-				streamRec.RecordRawMapEvent(eventType, evt)
-			}
-		}
-		return nil
-	}
-
-	onStreamComplete = func() {
-		if streamRec == nil {
-			return
-		}
-		streamRec.Finish(model, streamRec.inputTokens, streamRec.outputTokens)
-		streamRec.RecordResponse(provider, model)
-	}
-
-	onStreamError = func(err error) {
-		if streamRec == nil {
-			return
-		}
-		streamRec.RecordError(err)
-	}
-
-	return onStreamEvent, onStreamComplete, onStreamError
+	return ""
 }

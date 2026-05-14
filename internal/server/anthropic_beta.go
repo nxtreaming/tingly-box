@@ -116,18 +116,7 @@ func (s *Server) handleAnthropicStreamResponseV1Beta(c *gin.Context, req *anthro
 	})
 
 	// Add recorder hooks if recorder is available
-	if recorder != nil {
-		onEvent, onComplete, onError := NewRecorderHooks(recorder, actualModel, provider)
-		if onEvent != nil {
-			hc.WithOnStreamEvent(onEvent)
-		}
-		if onComplete != nil {
-			hc.WithOnStreamComplete(onComplete)
-		}
-		if onError != nil {
-			hc.WithOnStreamError(onError)
-		}
-	}
+	AttachRecorderHooks(hc, recorder, actualModel, provider)
 
 	// response guardrails
 	_, _, _, _, scenario, _, _ := GetTrackingContext(c)
