@@ -83,7 +83,7 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 	)
 
 	// Process the stream with context cancellation checking
-	c.Stream(func(w io.Writer) bool {
+	StreamLoop(c, func(w io.Writer) bool {
 		// Check context cancellation first
 		select {
 		case <-c.Request.Context().Done():

@@ -305,7 +305,7 @@ func (s *Server) handleOpenAIStreamResponse(c *gin.Context, streamResp *ssestrea
 	}
 
 	// Process the stream with context cancellation checking
-	c.Stream(func(w io.Writer) bool {
+	stream.StreamLoop(c, func(w io.Writer) bool {
 		// Check context cancellation first
 		select {
 		case <-c.Request.Context().Done():

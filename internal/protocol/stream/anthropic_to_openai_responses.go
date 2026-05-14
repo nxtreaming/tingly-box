@@ -69,7 +69,7 @@ func HandleAnthropicToOpenAIResponsesStream(
 	completedSent := false
 
 	// Process the stream
-	c.Stream(func(w io.Writer) bool {
+	StreamLoop(c, func(w io.Writer) bool {
 		// Check context cancellation first
 		select {
 		case <-c.Request.Context().Done():
@@ -548,7 +548,11 @@ func sendResponsesEvent(c *gin.Context, event any, flusher http.Flusher) {
 	default:
 	}
 
-	OpenAISSE(c, event)
+	if e, ok := event.(responsesEvent); ok {
+		OpenAIResponsesEvent(c, e.EventType(), event)
+	} else {
+		OpenAISSE(c, event)
+	}
 }
 
 // sendResponsesErrorEvent sends an error event in Responses API format

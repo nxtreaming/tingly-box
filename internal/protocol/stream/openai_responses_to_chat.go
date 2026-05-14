@@ -95,7 +95,7 @@ func HandleResponsesToOpenAIChatStream(
 	}
 
 	// Process the stream
-	c.Stream(func(w io.Writer) bool {
+	StreamLoop(c, func(w io.Writer) bool {
 		select {
 		case <-c.Request.Context().Done():
 			logrus.Debug("Client disconnected, stopping Responses to Chat stream")

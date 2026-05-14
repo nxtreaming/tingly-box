@@ -98,7 +98,7 @@ func HandleOpenAIChatToResponsesStream(c *gin.Context, stream *openaistream.Stre
 	completedSent := false
 
 	// Process the stream
-	c.Stream(func(w io.Writer) bool {
+	StreamLoop(c, func(w io.Writer) bool {
 		// Check context cancellation first
 		select {
 		case <-c.Request.Context().Done():
@@ -238,7 +238,7 @@ func HandleOpenAIChatToResponsesStream(c *gin.Context, stream *openaistream.Stre
 				Type:    "stream_error",
 			},
 		}
-		OpenAISSE(c, errorEvent)
+		OpenAIResponsesEvent(c, errorEvent.EventType(), errorEvent)
 
 		return protocol.NewTokenUsageWithCache(int(state.inputTokens), int(state.outputTokens), int(state.cacheTokens)), err
 	}
@@ -269,7 +269,7 @@ func sendResponsesCreatedEvent(c *gin.Context, state *chatToResponsesState, flus
 		SequenceNumber: nextSequenceNumber(state),
 		Response:       newResponsesWireResponse(state, "in_progress", nil, ""),
 	}
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 func sendResponsesOutputTextItemAdded(c *gin.Context, state *chatToResponsesState, flusher http.Flusher) {
@@ -282,7 +282,7 @@ func sendResponsesOutputTextItemAdded(c *gin.Context, state *chatToResponsesStat
 		OutputIndex:    0,
 		Item:           newResponsesMessageItem(state.textItemID, "in_progress", ""),
 	}
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 // sendResponsesOutputTextDelta sends response.output_text.delta event
@@ -296,7 +296,7 @@ func sendResponsesOutputTextDelta(c *gin.Context, state *chatToResponsesState, d
 		Delta:          delta,
 		Logprobs:       []interface{}{},
 	}
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 // sendResponsesOutputItemAdded sends response.output_item.added event for tool calls
@@ -310,7 +310,7 @@ func sendResponsesOutputItemAdded(c *gin.Context, state *chatToResponsesState, i
 		OutputIndex:    outputIndex,
 		Item:           newResponsesFunctionCallItem(itemID, callID, name, "", "in_progress"),
 	}
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 // sendResponsesFunctionCallArgumentsDelta sends response.function_call_arguments.delta event
@@ -322,7 +322,7 @@ func sendResponsesFunctionCallArgumentsDelta(c *gin.Context, state *chatToRespon
 		OutputIndex:    outputIndex,
 		Delta:          delta,
 	}
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 // sendResponsesCompletedEvent sends the response.completed event
@@ -338,7 +338,7 @@ func sendResponsesCompletedEvent(c *gin.Context, state *chatToResponsesState, mo
 			Text:           text,
 			Logprobs:       []interface{}{},
 		}
-		OpenAISSE(c, textDone)
+		OpenAIResponsesEvent(c, textDone.EventType(), textDone)
 
 		textItemDone := responsesOutputItemDoneEvent{
 			Type:           "response.output_item.done",
@@ -346,7 +346,7 @@ func sendResponsesCompletedEvent(c *gin.Context, state *chatToResponsesState, mo
 			OutputIndex:    0,
 			Item:           newResponsesMessageItem(state.textItemID, "completed", text),
 		}
-		OpenAISSE(c, textItemDone)
+		OpenAIResponsesEvent(c, textItemDone.EventType(), textItemDone)
 	}
 
 	sortedIndexes := make([]int, 0, len(state.pendingToolCalls))
@@ -370,7 +370,7 @@ func sendResponsesCompletedEvent(c *gin.Context, state *chatToResponsesState, mo
 			Name:           ptc.name,
 			Arguments:      arguments,
 		}
-		OpenAISSE(c, argumentsDone)
+		OpenAIResponsesEvent(c, argumentsDone.EventType(), argumentsDone)
 
 		itemDone := responsesOutputItemDoneEvent{
 			Type:           "response.output_item.done",
@@ -378,7 +378,7 @@ func sendResponsesCompletedEvent(c *gin.Context, state *chatToResponsesState, mo
 			OutputIndex:    ptc.outputIdx,
 			Item:           newResponsesFunctionCallItem(ptc.itemID, callID, ptc.name, arguments, "completed"),
 		}
-		OpenAISSE(c, itemDone)
+		OpenAIResponsesEvent(c, itemDone.EventType(), itemDone)
 	}
 
 	var output []responsesOutputItemWire
@@ -401,7 +401,7 @@ func sendResponsesCompletedEvent(c *gin.Context, state *chatToResponsesState, mo
 		Response:       newResponsesWireResponse(state, "completed", output, model),
 	}
 
-	OpenAISSE(c, event)
+	OpenAIResponsesEvent(c, event.EventType(), event)
 }
 
 func newResponsesWireResponse(state *chatToResponsesState, status string, output []responsesOutputItemWire, model string) responsesWireResponse {

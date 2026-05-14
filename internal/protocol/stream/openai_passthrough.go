@@ -15,6 +15,8 @@ import (
 	openaistream "github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/token"
 )
@@ -316,40 +318,7 @@ func HandleOpenAIResponsesStream(hc *protocol.HandleContext, stream *openaistrea
 	var inputTokens, outputTokens, cacheTokens int64
 	var hasUsage bool
 
-	// Panic recovery
-	defer func() {
-		if r := recover(); r != nil {
-			logrus.Errorf("Panic in Responses streaming handler: %v", r)
-			if hasUsage {
-				// Track panic as error with any usage we accumulated
-				// Usage tracking will be handled by caller
-			}
-			// Try to send an error event if possible
-			if c.Writer != nil {
-				c.Writer.WriteHeader(http.StatusInternalServerError)
-				c.Writer.Write([]byte("data: {\"error\":{\"message\":\"Internal streaming error\",\"type\":\"internal_error\"}}\n\n"))
-				if flusher, ok := c.Writer.(http.Flusher); ok {
-					flusher.Flush()
-				}
-			}
-		}
-	}()
-
-	_, ok := c.Writer.(http.Flusher)
-	if !ok {
-		c.JSON(http.StatusInternalServerError, protocol.ErrorResponse{
-			Error: protocol.ErrorDetail{
-				Message: "Streaming not supported by this connection",
-				Type:    "api_error",
-				Code:    "streaming_unsupported",
-			},
-		})
-		return protocol.ZeroTokenUsage(), fmt.Errorf("streaming not supported")
-	}
-
-	// Process the stream with context cancellation checking
-	c.Stream(func(w io.Writer) bool {
-		// Check context cancellation first
+	StreamLoop(c, func(w io.Writer) bool {
 		select {
 		case <-c.Request.Context().Done():
 			logrus.Debug("Client disconnected, stopping Responses stream")
@@ -357,9 +326,7 @@ func HandleOpenAIResponsesStream(hc *protocol.HandleContext, stream *openaistrea
 		default:
 		}
 
-		// Try to get next event
 		if !stream.Next() {
-			// Stream ended naturally
 			return false
 		}
 
@@ -373,63 +340,46 @@ func HandleOpenAIResponsesStream(hc *protocol.HandleContext, stream *openaistrea
 		if evt.Response.Usage.OutputTokens > 0 {
 			outputTokens = evt.Response.Usage.OutputTokens
 		}
+
 		// Note: Responses API may include cache tokens in usage details
 		// Check if available in the raw JSON
-		var evtParsed map[string]interface{}
-		if err := json.Unmarshal([]byte(evt.RawJSON()), &evtParsed); err == nil {
-			if response, ok := evtParsed["response"].(map[string]interface{}); ok {
-				if usage, ok := response["usage"].(map[string]interface{}); ok {
-					if details, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
-						if cached, ok := details["cached_tokens"].(float64); ok {
-							cacheTokens = int64(cached)
-						}
-					}
-				}
-			}
-		}
-
 		// Marshal event using RawJSON() to avoid serializing empty union fields
-		jsonBytes := []byte(evt.RawJSON())
+		eventRaw := evt.RawJSON()
+		eventType := evt.Type
 
-		// Apply model override if the event contains a response object with a model field
-		if len(jsonBytes) > 0 {
-			var parsed map[string]interface{}
-			if err := json.Unmarshal(jsonBytes, &parsed); err == nil {
-				// Check if this event has a response field with a model
-				if response, ok := parsed["response"].(map[string]interface{}); ok {
-					if model, ok2 := response["model"].(string); ok2 && model != "" {
-						response["model"] = responseModel
-						modified, err := json.Marshal(parsed)
-						if err == nil {
-							jsonBytes = modified
-						}
-					}
+		if gjson.Get(eventRaw, "response.usage.input_tokens_details").Exists() {
+			if cachedTokens := gjson.Get(eventRaw, "response.usage.input_tokens_details.cached_tokens"); cachedTokens.Exists() {
+				cacheTokens = cachedTokens.Int()
+				logrus.Debugf("cached tokens: %v", cacheTokens)
+			} else {
+				// set raw use "0" as 0
+				if modified, err := sjson.SetRaw(eventRaw, "response.usage.input_tokens_details.cached_tokens", "0"); err == nil {
+					eventRaw = modified
+				} else {
+					logrus.WithError(err).Error("Failed to set cached tokens")
 				}
 			}
 		}
 
-		// Send SSE event with event type (e.g., "response.created", "response.output_text.delta")
-		OpenAISSE(c, json.RawMessage(jsonBytes))
+		if len(eventRaw) > 0 {
+			if model := gjson.Get(eventRaw, "response.model"); model.Exists() && model.String() != "" {
+				if modified, err := sjson.Set(eventRaw, "response.model", responseModel); err == nil {
+					eventRaw = modified
+				}
+			}
+		}
+
+		OpenAIResponsesEvent(c, eventType, eventRaw)
 		return true
 	})
 
-	// Check for stream errors after loop completes
 	if err := stream.Err(); err != nil {
-		// Check if it was a client cancellation
 		if errors.Is(err, context.Canceled) || protocol.IsContextCanceled(err) {
 			logrus.Debug("Responses stream canceled by client")
-			if hasUsage {
-				return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), nil
-			}
-			return protocol.ZeroTokenUsage(), nil
+			return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), nil
 		}
 
 		logrus.Errorf("Responses stream error: %v", err)
-		if hasUsage {
-			return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), err
-		}
-
-		// Send error chunk
 		errorChunk := map[string]interface{}{
 			"error": map[string]interface{}{
 				"message": err.Error(),
@@ -437,20 +387,12 @@ func HandleOpenAIResponsesStream(hc *protocol.HandleContext, stream *openaistrea
 				"code":    "stream_failed",
 			},
 		}
-
-		OpenAISSE(c, errorChunk)
+		OpenAIResponsesEvent(c, "error", errorChunk)
 		return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), err
 	}
 
-	// Send final [DONE] message
-	OpenAISSEDone(c)
-
-	// Track successful streaming completion
-	if hasUsage {
-		return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), nil
-	}
-
-	return protocol.ZeroTokenUsage(), nil
+	_ = hasUsage
+	return protocol.NewTokenUsageWithCache(int(inputTokens), int(outputTokens), int(cacheTokens)), nil
 }
 
 // ===================================================================

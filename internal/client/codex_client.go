@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/ai"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -36,9 +37,9 @@ type CodexClient struct {
 // NewCodexClient creates a new Codex client wrapper.
 // The base OpenAIClient is configured with codexRoundTripper for path/header transformation.
 func NewCodexClient(provider *typ.Provider, model string, sessionID typ.SessionID) (*CodexClient, error) {
-	if provider.OAuthDetail == nil {
-		logrus.Fatalf("OpenAI client not configured with OAuthDetail")
-		panic("OpenAI client not configured with OAuthDetail")
+	if provider.OAuthDetail == nil && provider.APIBase != protocol.CodexAPIBase {
+		logrus.Fatalf("Codex client not configured with Codex provider")
+		panic("Codex client not configured with Codex provider")
 	}
 
 	if provider.OAuthDetail.Issuer != ai.IssuerCodex {
@@ -175,25 +176,28 @@ func applyCodexDefaultsToParams(req *responses.ResponseNewParams) {
 }
 
 // sanitizeResponseInputIDs sanitizes item IDs in ResponseNewParams.Input for Codex.
-// ChatGPT Codex rejects empty/invalid item ids, so we strip malformed values.
+// ChatGPT Codex rejects empty/invalid item ids, so we strip malformed values
+// and drop reasoning items whose required plain-string ID cannot be omitted.
 func sanitizeResponseInputIDs(req *responses.ResponseNewParams) {
-	// Check if Input is set and is of type OfInputItemList
 	if req.Input.OfInputItemList == nil {
 		return
 	}
 
 	inputItems := req.Input.OfInputItemList
+	sanitized := inputItems[:0]
 	for i := range inputItems {
-		item := &inputItems[i]
-		sanitizeInputItemID(item)
+		item := inputItems[i]
+		if sanitizeInputItemID(&item) {
+			sanitized = append(sanitized, item)
+		}
 	}
 
-	req.Input.OfInputItemList = inputItems
+	req.Input.OfInputItemList = sanitized
 }
 
 // sanitizeInputItemID sanitizes the ID field in a ResponseInputItemUnionParam
 // by clearing invalid IDs directly on the inner SDK struct fields.
-func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) {
+func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) bool {
 	if item.OfFunctionCall != nil {
 		sanitizeOptID(&item.OfFunctionCall.ID)
 	}
@@ -209,6 +213,14 @@ func sanitizeInputItemID(item *responses.ResponseInputItemUnionParam) {
 	if item.OfCustomToolCallOutput != nil {
 		sanitizeOptID(&item.OfCustomToolCallOutput.ID)
 	}
+	if item.OfReasoning != nil {
+		item.OfReasoning.ID = strings.TrimSpace(item.OfReasoning.ID)
+		if item.OfReasoning.ID == "" || !isValidCodexID(item.OfReasoning.ID) {
+			logrus.Warnf("[Codex] Dropping reasoning input item with invalid id: %q", item.OfReasoning.ID)
+			return false
+		}
+	}
+	return true
 }
 
 func sanitizeOptID(id *param.Opt[string]) {

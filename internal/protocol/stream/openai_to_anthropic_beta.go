@@ -128,7 +128,7 @@ func handleOpenAIToAnthropicBetaStream(
 
 	// Process the stream with context cancellation checking
 	chunkCount := 0
-	c.Stream(func(w io.Writer) bool {
+	StreamLoop(c, func(w io.Writer) bool {
 		// Check context cancellation first
 		select {
 		case <-c.Request.Context().Done():

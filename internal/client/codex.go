@@ -50,7 +50,6 @@ func (t *codexRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 	// ChatGPT backend API does NOT support: max_tokens, max_completion_tokens, temperature, top_p, max_output_tokens
 
 	var filtered []byte
-	var isStreaming = false
 	if req.Body != nil && req.Method == "POST" {
 		body, err := io.ReadAll(req.Body)
 		_ = req.Body.Close()
@@ -84,11 +83,8 @@ func (t *codexRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		return nil, fmt.Errorf("request failed with status %s: %s", resp.Status, string(errorBody))
 	}
 
-	if isStreaming {
-		resp.Header.Set("Content-Type", "text/event-stream")
-	} else {
-		logrus.Warnf("[Codex] Do not support request without stream: %s", resp.Status)
-	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+	logrus.Debugf("[Codex] Must use stream: %s", resp.Status)
 
 	return resp, nil
 }

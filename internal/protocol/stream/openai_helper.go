@@ -12,26 +12,43 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+func OpenAIResponsesEvent(c *gin.Context, event string, v any) {
+	switch vv := v.(type) {
+	case []byte:
+		c.Writer.WriteString(fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(vv)))
+	case string:
+		c.Writer.WriteString(fmt.Sprintf("event: %s\ndata: %s\n\n", event, vv))
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			logrus.Errorf("OpenAISSE: failed to marshal: %v", err)
+			return
+		}
+		c.Writer.WriteString(fmt.Sprintf("event: %s\ndata: %s\n\n", event, data))
+	}
+}
+
 // OpenAISSE marshals v to JSON and writes it as an OpenAI-style SSE data line, then flushes.
 // MENTION: Must keep extra space after "data:" to match OpenAI wire format.
 func OpenAISSE(c *gin.Context, v any) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		logrus.Errorf("OpenAISSE: failed to marshal: %v", err)
-		return
-	}
-	c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", data))
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		flusher.Flush()
+	switch vv := v.(type) {
+	case []byte:
+		c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", string(vv)))
+	case string:
+		c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", vv))
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			logrus.Errorf("OpenAISSE: failed to marshal: %v", err)
+			return
+		}
+		c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", data))
 	}
 }
 
 // OpenAISSEDone writes the SSE [DONE] terminator and flushes.
 func OpenAISSEDone(c *gin.Context) {
 	c.Writer.WriteString("data: [DONE]\n\n")
-	if flusher, ok := c.Writer.(http.Flusher); ok {
-		flusher.Flush()
-	}
 }
 
 func nextSequenceNumber(state *chatToResponsesState) int64 {

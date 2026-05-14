@@ -3,6 +3,25 @@ package stream
 // Responses stream DTOs preserve the minimal outbound JSON shape emitted by this proxy.
 // Keep these fields checked against openai-go Responses SDK event types when updating the SDK.
 
+// responsesEvent is implemented by all Responses API SSE event structs.
+// The EventType() return value is used as the SSE event name.
+type responsesEvent interface {
+	EventType() string
+}
+
+func (e responsesStreamErrorEvent) EventType() string                { return e.Type }
+func (e responsesCreatedEvent) EventType() string                    { return e.Type }
+func (e responsesInProgressEvent) EventType() string                 { return e.Type }
+func (e responsesCompletedEvent) EventType() string                  { return e.Type }
+func (e responsesOutputItemAddedEvent) EventType() string            { return e.Type }
+func (e responsesOutputItemDoneEvent) EventType() string             { return e.Type }
+func (e responsesContentPartAddedEvent) EventType() string           { return e.Type }
+func (e responsesContentPartDoneEvent) EventType() string            { return e.Type }
+func (e responsesOutputTextDeltaEvent) EventType() string            { return e.Type }
+func (e responsesOutputTextDoneEvent) EventType() string             { return e.Type }
+func (e responsesFunctionCallArgumentsDeltaEvent) EventType() string { return e.Type }
+func (e responsesFunctionCallArgumentsDoneEvent) EventType() string  { return e.Type }
+
 type responsesStreamErrorEvent struct {
 	Type           string                   `json:"type"`
 	SequenceNumber int64                    `json:"sequence_number"`
