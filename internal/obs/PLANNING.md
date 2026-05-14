@@ -1,9 +1,13 @@
-# Recording Phase 2 — Pipeline-Driven Design
+# obs Package Planning
 
-Status: draft / proposal. No code yet. This document supersedes the
+Living planning doc for the `internal/obs` recording subsystem.
+
+## Recording Phase 2 — Pipeline-Driven Design
+
+Status: draft / proposal. No code yet. This section supersedes the
 post-cleanup state delivered in phase 1.
 
-## Why a phase 2
+### Why a phase 2
 
 Phase 1 collapsed the duplicated `ScenarioRecorder` / `ProtocolRecorder`
 pair, dropped dead types in `internal/obs`, and merged the two transform
@@ -25,7 +29,7 @@ helpers (`NewRecorderHooks`, `NewTransformRecorder`, `streamRecorder`,
 ad-hoc `recorder.RecordError(...)` calls in handlers) and why every new
 recording shape (new mode, new stage, new exporter) keeps touching `server`.
 
-## Goal
+### Goal
 
 Recording becomes a pipeline concern, not a server concern. After phase 2:
 
@@ -40,7 +44,7 @@ Recording becomes a pipeline concern, not a server concern. After phase 2:
   the **exporter** layer, not at the recorder. The hot path always builds
   the full record; trimming happens at egress.
 
-## Target topology
+### Target topology
 
 ```
        handler (gin)
@@ -76,7 +80,7 @@ Key:
   server-defined recorder type. Reverses the current `StreamEventRecorder`
   coupling direction (protocol no longer depends on server).
 
-## Public API after phase 2
+### Public API after phase 2
 
 In `internal/obs`:
 
@@ -135,7 +139,7 @@ No `RecordError`, no `RecordResponse`, no explicit `SetAssembledResponse`
 from handler code — the recorder reads everything it needs off the
 pipeline.
 
-## Mode handling — at the exporter
+### Mode handling — at the exporter
 
 `internal/obs` gains a `ModeFilterExporter`:
 
@@ -156,7 +160,7 @@ It strips fields per mode before delegating:
 exporters with this filter. The recorder always sets every field it has;
 trimming happens once, at egress.
 
-## Migration plan (sequential, each step ships independently)
+### Migration plan (sequential, each step ships independently)
 
 1. **Extract `RecordCtx` into `transform.TransformContext`.** Server still
    owns `*ProtocolRecorder`, but it writes into `ctx.RecordCtx` instead of
@@ -178,14 +182,14 @@ trimming happens once, at egress.
 Each step is mechanical, vet- and test-green on its own, and reviewable
 without holding the full design in your head.
 
-## Out of scope (phase 3+)
+### Out of scope (phase 3+)
 
 - A separate exporter for OTLP / remote collector. Current `RecordExporter`
   interface already supports it; phase 2 doesn’t need to land it.
 - Replay tooling on top of the CAS exporter.
 - Cross-session correlation (already partially supported via `SessionID`).
 
-## Open questions
+### Open questions
 
 - Should `RecordCtx` live in `transform.TransformContext` or in a separate
   context carrier (e.g. `context.Context` value)? The pipeline already
