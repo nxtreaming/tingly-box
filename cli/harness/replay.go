@@ -44,7 +44,7 @@ var replayScenarios = map[string]replayScenario{
 	"text": {
 		matrix:        protocol_validate.TextScenario(),
 		streaming:     false,
-		defaultVModel: "virtual-claude-3",
+		defaultVModel: "echo-model",
 		structural: []protocol_validate.Assertion{
 			protocol_validate.AssertHTTPStatus(200),
 			protocol_validate.AssertContentNonEmpty(),
@@ -62,7 +62,7 @@ var replayScenarios = map[string]replayScenario{
 	"streaming_text": {
 		matrix:        protocol_validate.StreamingTextScenario(),
 		streaming:     true,
-		defaultVModel: "virtual-claude-3",
+		defaultVModel: "echo-model",
 		structural: []protocol_validate.Assertion{
 			protocol_validate.AssertHTTPStatus(200),
 			protocol_validate.AssertStreamEventCount(1),
@@ -83,27 +83,10 @@ var replaySkip = map[string]string{
 	// Transform-pipeline gap: codex speaks the OpenAI Responses API, and
 	// tool_use round-trips through the Responses source path, whose
 	// tool_call conversion is incomplete. Mirrors protocol_validate's
-	// skipSourceScenarios["openai_responses|tool_use"]. Fails on every
-	// upstream (on vmodel it also hits the missing short-circuit below).
+	// skipSourceScenarios["openai_responses|tool_use"]. Fails on every upstream.
 	"virtual/codex/tool_use": "Responses API source: tool_use conversion incomplete",
 	"vmodel/codex/tool_use":  "Responses API source: tool_use conversion incomplete",
 	"real/codex/tool_use":    "Responses API source: tool_use conversion incomplete",
-
-	// Gateway bug: ResponsesCreate (internal/server/openai_responses.go) has
-	// no provider.IsVirtual() short-circuit — unlike anthropic.go and the
-	// OpenAI Chat path in openai.go. A codex request resolving to a vmodel
-	// provider is dispatched outbound to the "vmodel://local" sentinel base
-	// URL instead of the in-process handler.
-	"vmodel/codex/text":           "openai_responses.go ResponsesCreate missing vmodel short-circuit",
-	"vmodel/codex/streaming_text": "openai_responses.go ResponsesCreate missing vmodel short-circuit",
-
-	// Gateway bug: protocol.AnthropicMessagesRequest has a custom
-	// UnmarshalJSON but no MarshalJSON. The embedded anthropic SDK type's
-	// MarshalJSON is promoted, so re-marshaling drops the outer Stream
-	// field. The anthropic.go vmodel short-circuit re-marshals the request,
-	// losing stream:true — the vmodel handler then replies non-streaming.
-	"vmodel/claude/streaming_text":   "anthropic.go vmodel short-circuit drops stream flag on re-marshal",
-	"vmodel/opencode/streaming_text": "anthropic.go vmodel short-circuit drops stream flag on re-marshal",
 }
 
 // ReplayCmd replays captured agent request fixtures through the gateway's
