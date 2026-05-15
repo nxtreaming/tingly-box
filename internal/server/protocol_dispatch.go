@@ -182,15 +182,7 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 	fc := forwarding.NewForwardContext(ctx, provider)
 
 	if isStreaming {
-		disableStreamUsage := false
-		if v, ok := reqCtx.Extra["cursor_compat"]; ok {
-			disableStreamUsage = v.(bool)
-		}
-		if v, ok := reqCtx.Extra["skip_usage"]; ok {
-			if b, _ := v.(bool); b {
-				disableStreamUsage = true
-			}
-		}
+		disableStreamUsage := shouldStripUsage(reqCtx.Extra)
 		if reqCtx.ScenarioFlags != nil {
 			disableStreamUsage = disableStreamUsage || reqCtx.ScenarioFlags.DisableStreamUsage
 		}
@@ -284,16 +276,7 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 			}
 			openaiResp = roundtripped
 		}
-		stripUsage := false
-		if v, ok := reqCtx.Extra["cursor_compat"]; ok {
-			stripUsage = v.(bool)
-		}
-		if v, ok := reqCtx.Extra["skip_usage"]; ok {
-			if b, _ := v.(bool); b {
-				stripUsage = true
-			}
-		}
-		if stripUsage {
+		if shouldStripUsage(reqCtx.Extra) {
 			delete(openaiResp, "usage")
 		}
 
@@ -667,15 +650,7 @@ func (s *Server) dispatchOpenAIChat(
 			s.streamOpenAIChatToAnthropicBetaWithMCP(c, provider, req, actualModel, responseModel, recorder)
 		case protocol.TypeOpenAIChat:
 			// OpenAI passthrough: source and target are both OpenAI Chat format
-			disableStreamUsage := false
-			if v, ok := reqCtx.Extra["cursor_compat"]; ok {
-				disableStreamUsage = v.(bool)
-			}
-			if v, ok := reqCtx.Extra["skip_usage"]; ok {
-				if b, _ := v.(bool); b {
-					disableStreamUsage = true
-				}
-			}
+			disableStreamUsage := shouldStripUsage(reqCtx.Extra)
 			if reqCtx.ScenarioFlags != nil {
 				disableStreamUsage = disableStreamUsage || reqCtx.ScenarioFlags.DisableStreamUsage
 			}
@@ -693,15 +668,7 @@ func (s *Server) dispatchOpenAIChat(
 		switch reqCtx.SourceAPI {
 		case protocol.TypeOpenAIChat:
 			// OpenAI passthrough: delegate to handleNonStreamingRequest for tool interceptor support
-			stripUsage := false
-			if v, ok := reqCtx.Extra["cursor_compat"]; ok {
-				stripUsage = v.(bool)
-			}
-			if v, ok := reqCtx.Extra["skip_usage"]; ok {
-				if b, _ := v.(bool); b {
-					stripUsage = true
-				}
-			}
+			stripUsage := shouldStripUsage(reqCtx.Extra)
 
 			if hasDeclaredMCPTools(req) && s.mcpEnabled() {
 				s.dispatchGenericOpenAIChatNonStream(c, reqCtx, rule, provider, recorder)

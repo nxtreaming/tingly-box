@@ -2,12 +2,15 @@ import { Add as AddIcon, Extension as ExtensionIcon } from '@mui/icons-material'
 import { Box, Chip, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import { styled } from '@mui/material/styles';
 import React from 'react';
+import { PROVIDER_NODE_STYLES } from '@/components/nodes/styles';
 import type { FlagSpec, RuleFlags } from '@/components/RoutingGraphTypes';
 
+// Matches ProviderNode dimensions so the extensions card aligns with the
+// providers row visually. Content overflow scrolls inside the card body.
 const CARD_STYLES = {
     width: 180,
-    minHeight: 120,
-    padding: 10,
+    height: PROVIDER_NODE_STYLES.height,
+    padding: 6,
 } as const;
 
 const StyledExtensionsCard = styled(Box, {
@@ -21,10 +24,11 @@ const StyledExtensionsCard = styled(Box, {
     borderColor: theme.palette.divider,
     backgroundColor: theme.palette.background.paper,
     width: CARD_STYLES.width,
-    minHeight: CARD_STYLES.minHeight,
+    height: CARD_STYLES.height,
     boxShadow: theme.shadows[1],
     opacity: active ? 1 : 0.6,
     transition: 'all 0.2s ease-in-out',
+    overflow: 'hidden',
 }));
 
 export interface RuleExtensionsCardProps {
@@ -80,14 +84,15 @@ export const RuleExtensionsCard: React.FC<RuleExtensionsCardProps> = ({
 
     return (
         <StyledExtensionsCard active={active}>
-            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
-                <ExtensionIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', flexGrow: 1 }}>
-                    Extensions
+            {/* Fixed-height header so the body has a stable scroll region */}
+            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0, mb: 0.25 }}>
+                <ExtensionIcon sx={{ fontSize: 12, color: 'text.secondary' }} />
+                <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.65rem', color: 'text.secondary', flexGrow: 1, lineHeight: 1 }}>
+                    Extensions{enabled.length > 0 ? ` (${enabled.length})` : ''}
                 </Typography>
                 <Tooltip title="Configure rule extensions">
-                    <IconButton size="small" onClick={onOpenCatalog} sx={{ p: 0.25 }}>
-                        <AddIcon sx={{ fontSize: 14 }} />
+                    <IconButton size="small" onClick={onOpenCatalog} sx={{ p: 0.125 }}>
+                        <AddIcon sx={{ fontSize: 12 }} />
                     </IconButton>
                 </Tooltip>
             </Stack>
@@ -101,42 +106,54 @@ export const RuleExtensionsCard: React.FC<RuleExtensionsCardProps> = ({
                         alignItems: 'center',
                         justifyContent: 'center',
                         color: 'text.disabled',
-                        fontSize: '0.7rem',
+                        fontSize: '0.65rem',
                         cursor: 'pointer',
                         textAlign: 'center',
-                        px: 0.5,
+                        px: 0.25,
                     }}
                 >
                     None enabled. Click to configure.
                 </Box>
             ) : (
-                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.25 }}>
-                    {enabled.map((spec) => {
-                        const isString = spec.type === 'string';
-                        const stringVal = isString ? flagStringValue(flags, spec.key) : '';
-                        const label = isString && stringVal ? `${spec.label}: ${stringVal}` : spec.label;
-                        const title = isString && stringVal
-                            ? `${spec.description}\nValue: ${stringVal}`
-                            : spec.description;
-                        return (
-                            <Tooltip key={spec.key} title={title}>
-                                <Chip
-                                    size="small"
-                                    label={label}
-                                    color="primary"
-                                    variant="outlined"
-                                    onClick={onOpenCatalog}
-                                    onDelete={
-                                        spec.type === 'bool' && onToggleFlag
-                                            ? () => onToggleFlag(spec.key)
-                                            : undefined
-                                    }
-                                    sx={{ maxWidth: '100%', fontSize: '0.65rem', height: 20 }}
-                                />
-                            </Tooltip>
-                        );
-                    })}
-                </Stack>
+                <Box
+                    sx={{
+                        flexGrow: 1,
+                        minHeight: 0,
+                        overflowY: 'auto',
+                        // Hide scrollbar visually but keep it functional.
+                        scrollbarWidth: 'thin',
+                        '&::-webkit-scrollbar': { width: 4 },
+                        '&::-webkit-scrollbar-thumb': { backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: 2 },
+                    }}
+                >
+                    <Stack direction="row" flexWrap="wrap" gap={0.25}>
+                        {enabled.map((spec) => {
+                            const isString = spec.type === 'string';
+                            const stringVal = isString ? flagStringValue(flags, spec.key) : '';
+                            const label = isString && stringVal ? `${spec.label}: ${stringVal}` : spec.label;
+                            const title = isString && stringVal
+                                ? `${spec.description}\nValue: ${stringVal}`
+                                : spec.description;
+                            return (
+                                <Tooltip key={spec.key} title={title}>
+                                    <Chip
+                                        size="small"
+                                        label={label}
+                                        color="primary"
+                                        variant="outlined"
+                                        onClick={onOpenCatalog}
+                                        onDelete={
+                                            spec.type === 'bool' && onToggleFlag
+                                                ? () => onToggleFlag(spec.key)
+                                                : undefined
+                                        }
+                                        sx={{ maxWidth: '100%', fontSize: '0.6rem', height: 18 }}
+                                    />
+                                </Tooltip>
+                            );
+                        })}
+                    </Stack>
+                </Box>
             )}
         </StyledExtensionsCard>
     );
