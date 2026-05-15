@@ -1,8 +1,25 @@
 package server
 
 import (
+	"github.com/tingly-dev/tingly-box/internal/protocol/transform"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
+
+// ruleExtraTransforms builds the per-rule list of post-base transforms to
+// append to the protocol chain. Returns nil when no rule-level flag requires
+// a chain stage so callers can pass the result straight to a variadic
+// `extraTransforms ...transform.Transform` parameter.
+func ruleExtraTransforms(rule *typ.Rule) []transform.Transform {
+	flags := resolveRuleFlags(rule)
+	var extras []transform.Transform
+	if flags.UseMaxCompletionTokens || flags.UseMaxTokens {
+		extras = append(extras, NewOpenAIMaxTokensRewriteTransform(
+			flags.UseMaxCompletionTokens,
+			flags.UseMaxTokens,
+		))
+	}
+	return extras
+}
 
 // resolveRuleFlags returns a copy of the rule's flags, or the zero value when
 // no rule is bound. Callers may always read fields without nil-checking.

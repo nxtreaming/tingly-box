@@ -252,12 +252,6 @@ func (s *Server) OpenAIChatCompletion(c *gin.Context, req protocol.OpenAIChatCom
 	cursorCompat := resolveCursorCompat(c, rule)
 	applyCursorCompatFlag(&req.ChatCompletionNewParams, cursorCompat)
 	ruleFlags := resolveRuleFlags(rule)
-	if ruleFlags.UseMaxCompletionTokens {
-		ops.ApplyMaxCompletionTokensRewrite(&req.ChatCompletionNewParams)
-	}
-	if ruleFlags.UseMaxTokens {
-		ops.ApplyMaxTokensRewrite(&req.ChatCompletionNewParams)
-	}
 	if ruleFlags.CustomUserAgent != "" {
 		c.Request = c.Request.WithContext(typ.WithCustomUserAgent(c.Request.Context(), ruleFlags.CustomUserAgent))
 	}
@@ -307,7 +301,7 @@ func (s *Server) OpenAIChatCompletion(c *gin.Context, req protocol.OpenAIChatCom
 	}
 
 	// === Transform via pipeline ===
-	reqCtx, err := s.transformOpenAIChat(c, req, target, provider, isStreaming, nil, scenarioType)
+	reqCtx, err := s.transformOpenAIChat(c, req, target, provider, isStreaming, nil, scenarioType, ruleExtraTransforms(rule)...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Error: ErrorDetail{
