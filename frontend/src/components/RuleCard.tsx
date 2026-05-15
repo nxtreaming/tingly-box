@@ -1,7 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/services/api';
 import type { Provider, ProviderModelsDataByUuid, ProviderModelData } from '@/types/provider';
-import type { ConfigRecord, Rule } from '@/components/RoutingGraphTypes';
+import type { ConfigRecord, FlagSpec, Rule, RuleFlags } from '@/components/RoutingGraphTypes';
 import {
     useRuleCardExpanded,
     useRuleCardData,
@@ -14,7 +14,31 @@ import RoutingGraph from '@/components/RoutingGraph';
 import SmartRoutingGraph from '@/components/SmartRoutingGraph';
 import SmartRuleEditDialog from '@/components/SmartRuleEditDialog';
 import GraphSettingsMenu from '@/components/GraphSettingsMenu';
+import RuleExtensionsCard from '@/components/rule-card/RuleExtensionsCard';
+import FlagCatalogDialog from '@/components/rule-card/FlagCatalogDialog';
 import { formatRuleFlags, parseRuleFlags } from '@/components/rule-card/utils';
+
+// Module-level cache so we only fetch the flag catalog once per session.
+let _flagRegistryCache: FlagSpec[] | null = null;
+let _flagRegistryPromise: Promise<FlagSpec[]> | null = null;
+
+async function loadFlagRegistry(): Promise<FlagSpec[]> {
+    if (_flagRegistryCache) return _flagRegistryCache;
+    if (_flagRegistryPromise) return _flagRegistryPromise;
+    _flagRegistryPromise = (async () => {
+        try {
+            const result = await api.getRuleFlagRegistry();
+            const data: FlagSpec[] = Array.isArray(result?.data) ? result.data : [];
+            _flagRegistryCache = data;
+            return data;
+        } catch {
+            return [];
+        } finally {
+            _flagRegistryPromise = null;
+        }
+    })();
+    return _flagRegistryPromise;
+}
 
 export interface RuleCardProps {
     rule: Rule;
@@ -86,6 +110,27 @@ export const RuleCard: React.FC<RuleCardProps> = ({
     const [flagDialogOpen, setFlagDialogOpen] = useState(false);
     const [flagInput, setFlagInput] = useState('');
     const [flagError, setFlagError] = useState<string | undefined>(undefined);
+
+    // Catalog dialog state + registry
+    const [catalogOpen, setCatalogOpen] = useState(false);
+    const [flagRegistry, setFlagRegistry] = useState<FlagSpec[]>(_flagRegistryCache || []);
+    const [registryLoading, setRegistryLoading] = useState(false);
+
+    useEffect(() => {
+        if (flagRegistry.length > 0) return;
+        let cancelled = false;
+        setRegistryLoading(true);
+        loadFlagRegistry()
+            .then((data) => {
+                if (!cancelled) setFlagRegistry(data);
+            })
+            .finally(() => {
+                if (!cancelled) setRegistryLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [flagRegistry.length]);
 
     // Handler: Switch routing mode (simple toggle, preserves data)
     const handleRoutingModeSwitch = useCallback(async () => {
@@ -192,7 +237,46 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         setFlagDialogOpen(false);
     }, [configRecord, flagInput, updateField, setConfigRecord]);
 
+    const handleSaveCatalogFlags = useCallback(async (next: RuleFlags) => {
+        if (!configRecord) return;
+        await updateField(configRecord, setConfigRecord, 'flags', next);
+        setCatalogOpen(false);
+    }, [configRecord, updateField, setConfigRecord]);
+
+    const handleToggleFlagFromCard = useCallback((key: string) => {
+        if (!configRecord) return;
+        const current = configRecord.flags || {};
+        let next: RuleFlags = { ...current };
+        switch (key) {
+            case 'cursor_compat':
+                next = { ...next, cursorCompat: !current.cursorCompat };
+                break;
+            case 'cursor_compat_auto':
+                next = { ...next, cursorCompatAuto: !current.cursorCompatAuto };
+                break;
+            case 'skip_usage':
+                next = { ...next, skipUsage: !current.skipUsage };
+                break;
+            case 'use_max_completion_tokens':
+                next = { ...next, useMaxCompletionTokens: !current.useMaxCompletionTokens };
+                break;
+            default:
+                return;
+        }
+        void updateField(configRecord, setConfigRecord, 'flags', next);
+    }, [configRecord, updateField, setConfigRecord]);
+
     if (!configRecord) return null;
+
+    const extensionsCard = (
+        <RuleExtensionsCard
+            flags={configRecord.flags}
+            registry={flagRegistry}
+            active={configRecord.active}
+            onOpenCatalog={() => setCatalogOpen(true)}
+            onToggleFlag={handleToggleFlagFromCard}
+        />
+    );
 
     // Extra actions menu - shared between RoutingGraph and SmartRoutingGraph
     const extraActions = (
@@ -237,6 +321,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                     expanded={expanded}
                     onToggleExpanded={handleToggleExpanded}
                     extraActions={extraActions}
+                    extensionsCard={extensionsCard}
                     onUpdateRecord={(field, value) => updateField(configRecord, setConfigRecord, field, value)}
                     onAddSmartRule={smartHandlers.handleAddSmartRule}
                     onEditSmartRule={smartHandlers.handleEditSmartRule}
@@ -263,6 +348,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                     onProviderNodeClick={handleProviderNodeClick}
                     onAddProviderButtonClick={handleAddProviderButtonClick}
                     extraActions={extraActions}
+                    extensionsCard={extensionsCard}
                     onAddSmartRule={smartHandlers.handleAddSmartRule}
                     onEditSmartRule={smartHandlers.handleEditSmartRule}
                     onDeleteSmartRule={smartHandlers.handleDeleteSmartRule}
@@ -286,6 +372,16 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                 }}
                 onClose={() => setFlagDialogOpen(false)}
                 onSave={handleSaveFlags}
+            />
+
+            {/* Flag Catalog Dialog - rich UI for picking + configuring rule flags */}
+            <FlagCatalogDialog
+                open={catalogOpen}
+                flags={configRecord.flags}
+                registry={flagRegistry}
+                loading={registryLoading}
+                onClose={() => setCatalogOpen(false)}
+                onSave={handleSaveCatalogFlags}
             />
 
             {/* Smart Rule Edit Dialog */}

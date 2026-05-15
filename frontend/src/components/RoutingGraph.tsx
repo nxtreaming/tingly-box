@@ -90,6 +90,8 @@ interface RuleGraphProps {
     onProviderNodeClick: (providerUuid: string) => void;
     onAddProviderButtonClick: () => void;
     extraActions?: React.ReactNode;
+    // Slot rendered at the right end of the rule group (e.g. rule extensions card)
+    extensionsCard?: React.ReactNode;
     // Smart routing props
     onAddSmartRule?: () => void;
     onEditSmartRule?: (ruleUuid: string) => void;
@@ -174,6 +176,7 @@ const RoutingGraph: React.FC<RuleGraphProps> = ({
     onProviderNodeClick,
     onAddProviderButtonClick,
     extraActions,
+    extensionsCard,
     // Smart routing props
     onAddSmartRule,
     onEditSmartRule,
@@ -581,6 +584,13 @@ const RoutingGraph: React.FC<RuleGraphProps> = ({
                                             />
                                         </Box>
                                     </Box>
+
+                                    {/* Rule Extensions slot - sits on the right side of the rule group */}
+                                    {extensionsCard && (
+                                        <Box onClick={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', ml: 1 }}>
+                                            {extensionsCard}
+                                        </Box>
+                                    )}
 
                                 </GraphRow>
                             </GraphContainer>

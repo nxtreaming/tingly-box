@@ -186,6 +186,11 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 		if v, ok := reqCtx.Extra["cursor_compat"]; ok {
 			disableStreamUsage = v.(bool)
 		}
+		if v, ok := reqCtx.Extra["skip_usage"]; ok {
+			if b, _ := v.(bool); b {
+				disableStreamUsage = true
+			}
+		}
 		if reqCtx.ScenarioFlags != nil {
 			disableStreamUsage = disableStreamUsage || reqCtx.ScenarioFlags.DisableStreamUsage
 		}
@@ -279,11 +284,16 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 			}
 			openaiResp = roundtripped
 		}
-		cursorCompat := false
+		stripUsage := false
 		if v, ok := reqCtx.Extra["cursor_compat"]; ok {
-			cursorCompat = v.(bool)
+			stripUsage = v.(bool)
 		}
-		if cursorCompat {
+		if v, ok := reqCtx.Extra["skip_usage"]; ok {
+			if b, _ := v.(bool); b {
+				stripUsage = true
+			}
+		}
+		if stripUsage {
 			delete(openaiResp, "usage")
 		}
 
@@ -661,6 +671,11 @@ func (s *Server) dispatchOpenAIChat(
 			if v, ok := reqCtx.Extra["cursor_compat"]; ok {
 				disableStreamUsage = v.(bool)
 			}
+			if v, ok := reqCtx.Extra["skip_usage"]; ok {
+				if b, _ := v.(bool); b {
+					disableStreamUsage = true
+				}
+			}
 			if reqCtx.ScenarioFlags != nil {
 				disableStreamUsage = disableStreamUsage || reqCtx.ScenarioFlags.DisableStreamUsage
 			}
@@ -681,6 +696,11 @@ func (s *Server) dispatchOpenAIChat(
 			stripUsage := false
 			if v, ok := reqCtx.Extra["cursor_compat"]; ok {
 				stripUsage = v.(bool)
+			}
+			if v, ok := reqCtx.Extra["skip_usage"]; ok {
+				if b, _ := v.(bool); b {
+					stripUsage = true
+				}
 			}
 
 			if hasDeclaredMCPTools(req) && s.mcpEnabled() {

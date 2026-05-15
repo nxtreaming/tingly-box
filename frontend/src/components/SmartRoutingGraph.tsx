@@ -84,6 +84,7 @@ interface SmartRoutingGraphProps {
     expanded?: boolean;
     onToggleExpanded?: () => void;
     extraActions?: React.ReactNode;
+    extensionsCard?: React.ReactNode;
     onUpdateRecord?: (field: keyof ConfigRecord, value: any) => void;
     // Routing mode switch
     onSwitchRoutingMode?: () => void;
@@ -166,6 +167,7 @@ const SmartRoutingGraph: React.FC<SmartRoutingGraphProps> = ({
                                                                  expanded = true,
                                                                  onToggleExpanded,
                                                                  extraActions,
+                                                                 extensionsCard,
                                                                  onUpdateRecord,
                                                                  onSwitchRoutingMode,
                                                              }) => {
@@ -493,6 +495,12 @@ const SmartRoutingGraph: React.FC<SmartRoutingGraphProps> = ({
                                             </Box>
                                         </GraphRow>
                                     </Box>
+                                    {/* Rule Extensions slot - sits on the right side of the rule group */}
+                                    {extensionsCard && (
+                                        <Box onClick={(e) => e.stopPropagation()} sx={{ display: 'flex', alignItems: 'center', ml: 1, alignSelf: 'center' }}>
+                                            {extensionsCard}
+                                        </Box>
+                                    )}
                                 </GraphRow>
                             </GraphContainer>
                         </Box>

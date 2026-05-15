@@ -251,6 +251,13 @@ func (s *Server) OpenAIChatCompletion(c *gin.Context, req protocol.OpenAIChatCom
 	maxAllowed := s.templateManager.GetMaxTokensForModelByProvider(provider, actualModel)
 	cursorCompat := resolveCursorCompat(c, rule)
 	applyCursorCompatFlag(&req.ChatCompletionNewParams, cursorCompat)
+	ruleFlags := resolveRuleFlags(rule)
+	if ruleFlags.UseMaxCompletionTokens {
+		applyMaxCompletionTokensRewrite(&req.ChatCompletionNewParams)
+	}
+	if ruleFlags.CustomUserAgent != "" {
+		c.Request = c.Request.WithContext(typ.WithCustomUserAgent(c.Request.Context(), ruleFlags.CustomUserAgent))
+	}
 
 	// Inject session ID into request context so all downstream code can access it
 	sessionID := resolveSessionID(c, &req.ChatCompletionNewParams)
@@ -308,6 +315,7 @@ func (s *Server) OpenAIChatCompletion(c *gin.Context, req protocol.OpenAIChatCom
 		return
 	}
 	reqCtx.Extra["cursor_compat"] = cursorCompat
+	reqCtx.Extra["skip_usage"] = ruleFlags.SkipUsage
 
 	// === Dispatch via transform chain ===
 	reqCtx.RequestModel = actualModel

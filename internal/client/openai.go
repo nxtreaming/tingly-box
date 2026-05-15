@@ -73,6 +73,7 @@ func NewOpenAIClient(provider *typ.Provider, model string, sessionID typ.Session
 
 	// For non-OAuth providers without proxy, use default transport
 	transport = http.DefaultTransport
+	transport = &customUserAgentTransport{base: transport}
 
 	httpClient := &http.Client{
 		Transport: transport,
