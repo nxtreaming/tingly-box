@@ -94,12 +94,15 @@ func NewSink(baseDir string, mode RecordMode, opts ...SinkOption) *Sink {
 		return nil
 	case RecordModeAll, RecordModeScenario,
 		RecordModeRequestOnly, RecordModeRequestResponse, RecordModeStagedRequestResponse:
-		if baseDir == "" {
-			return nil
-		}
 		cfg := sinkConfig{}
 		for _, opt := range opts {
 			opt(&cfg)
+		}
+		// baseDir is only required when the default file-backed exporters
+		// are used. WithExporters supplies a complete exporter list and
+		// makes baseDir irrelevant (the test in-memory exporter case).
+		if baseDir == "" && len(cfg.explicitExporters) == 0 {
+			return nil
 		}
 		exp, err := buildExporter(baseDir, &cfg)
 		if err != nil {
@@ -186,6 +189,16 @@ func (s *Sink) GetBaseDir() string {
 		return ""
 	}
 	return s.baseDir
+}
+
+// ForceFlush drains any pending records by delegating to the underlying
+// processor. Used by tests that need a synchronisation point before
+// inspecting exported records.
+func (s *Sink) ForceFlush(ctx context.Context) error {
+	if s == nil || s.processor == nil {
+		return nil
+	}
+	return s.processor.ForceFlush(ctx)
 }
 
 // Close drains pending records and shuts down the pipeline.
