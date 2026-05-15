@@ -64,7 +64,7 @@ func RuleFlagRegistry() []FlagSpec {
 		{
 			Key:         "custom_user_agent",
 			Label:       "Custom User-Agent",
-			Description: "Override the outbound User-Agent header sent to the upstream provider.",
+			Description: "Override the outbound User-Agent header sent to the upstream provider. Takes precedence over the provider-level User-Agent for generic OpenAI / Anthropic clients; vendor-specific clients (Claude Code OAuth, Codex, Gemini, Google) keep their dedicated User-Agent.",
 			Type:        FlagTypeString,
 			Category:    FlagCategoryRequest,
 			Placeholder: "e.g. MyApp/1.0",
