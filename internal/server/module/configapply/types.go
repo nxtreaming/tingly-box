@@ -1,8 +1,20 @@
 package configapply
 
 import (
+	"github.com/tingly-dev/tingly-box/internal/agent"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
 )
+
+// ApplyClaudeConfigRequest is the request body for ApplyClaudeConfig.
+//
+// `preferences` is the source of truth: each field's JSON tag is the
+// Claude Code env var it controls, and ToEnv emits exactly the map
+// written under "env" in ~/.claude/settings.json. `installStatusLine`
+// is orthogonal — it just toggles the statusLine stanza in settings.json.
+type ApplyClaudeConfigRequest struct {
+	InstallStatusLine bool                   `json:"installStatusLine"`
+	Preferences       *agent.ClaudeCodePrefs `json:"preferences"`
+}
 
 // ApplyConfigResponse is the response for ApplyClaudeConfig
 type ApplyConfigResponse struct {

@@ -1,6 +1,8 @@
 package configapply
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tingly-dev/tingly-box/internal/agent"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
 )
 
@@ -54,8 +57,10 @@ func TestApplyClaudeConfig_NilConfig(t *testing.T) {
 	assert.Contains(t, body, "Global config not available")
 }
 
-func TestApplyClaudeConfig_NoActiveRules(t *testing.T) {
-	// Create a config with a temp directory (no built-in rules)
+// A request body with valid preferences must reach the rule-lookup stage.
+// With no rules configured, the response is a NoActiveRules error — but
+// that's downstream of binding, which is what this test exercises.
+func TestApplyClaudeConfig_AcceptsPreferencesPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg, err := config.NewConfig(config.WithConfigDir(tmpDir))
 	require.NoError(t, err)
@@ -65,23 +70,112 @@ func TestApplyClaudeConfig_NoActiveRules(t *testing.T) {
 	router := gin.New()
 	router.POST("/apply/claude", handler.ApplyClaudeConfig)
 
-	req, _ := http.NewRequest("POST", "/apply/claude", nil)
+	body, _ := json.Marshal(ApplyClaudeConfigRequest{
+		Preferences: &agent.ClaudeCodePrefs{
+			AnthropicModel:   "tingly/cc",
+			APITimeoutMs:     "3000000",
+			DisableTelemetry: "1",
+		},
+	})
+	req, _ := http.NewRequest("POST", "/apply/claude", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Should return an error (either no rules or no services)
 	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected status %d, got %d", http.StatusBadRequest, w.Code)
+		t.Errorf("expected status %d (NoActiveRules), got %d. body: %s",
+			http.StatusBadRequest, w.Code, w.Body.String())
 	}
-
-	body := w.Body.String()
-	assert.Contains(t, body, `"success":false`)
-	// Error message depends on whether built-in rules are loaded
-	// Can be "No active Claude Code rules found" or "No services configured in Claude Code rule"
+	resp := w.Body.String()
+	assert.Contains(t, resp, `"success":false`)
 	assert.True(t,
-		strings.Contains(body, "No active Claude Code rules found") ||
-			strings.Contains(body, "No services configured"),
-		"Expected error about no rules or no services")
+		strings.Contains(resp, "No active Claude Code rules found") ||
+			strings.Contains(resp, "No services configured"),
+		"expected NoActiveRules-style error after binding succeeded")
+}
+
+// preferences is required: missing it (or sending nil) is a client error,
+// not a 500. Guards against accidentally re-introducing the legacy
+// mode-only fallback.
+func TestApplyClaudeConfig_RequiresPreferences(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg, err := config.NewConfig(config.WithConfigDir(tmpDir))
+	require.NoError(t, err)
+	handler := NewHandler(cfg, "localhost")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/apply/claude", handler.ApplyClaudeConfig)
+
+	body := []byte(`{"installStatusLine":false}`)
+	req, _ := http.NewRequest("POST", "/apply/claude", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d. body: %s", w.Code, w.Body.String())
+	}
+	assert.Contains(t, w.Body.String(), "preferences field is required")
+}
+
+// Malformed JSON returns a structured 400 — never a 500 or panic.
+func TestApplyClaudeConfig_MalformedBodyReturns400(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg, err := config.NewConfig(config.WithConfigDir(tmpDir))
+	require.NoError(t, err)
+	handler := NewHandler(cfg, "localhost")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/apply/claude", handler.ApplyClaudeConfig)
+
+	req, _ := http.NewRequest("POST", "/apply/claude", strings.NewReader("not-json{"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d. body: %s", w.Code, w.Body.String())
+	}
+	assert.Contains(t, w.Body.String(), "Invalid request body")
+}
+
+// Verify the wire shape — frontend serializes preferences with env-name
+// JSON keys; the handler binds them into the typed struct.
+func TestApplyClaudeConfigRequest_JSONShape(t *testing.T) {
+	wire := []byte(`{
+		"installStatusLine": true,
+		"preferences": {
+			"ANTHROPIC_MODEL": "tingly/cc-default",
+			"ANTHROPIC_DEFAULT_SONNET_MODEL": "tingly/cc-sonnet[1m]",
+			"API_TIMEOUT_MS": "3000000",
+			"DISABLE_TELEMETRY": "1"
+		}
+	}`)
+
+	var req ApplyClaudeConfigRequest
+	if err := json.Unmarshal(wire, &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !req.InstallStatusLine {
+		t.Error("InstallStatusLine = false, want true")
+	}
+	if req.Preferences == nil {
+		t.Fatal("Preferences = nil, want populated")
+	}
+	if req.Preferences.AnthropicModel != "tingly/cc-default" {
+		t.Errorf("AnthropicModel = %q", req.Preferences.AnthropicModel)
+	}
+	if req.Preferences.AnthropicDefaultSonnetModel != "tingly/cc-sonnet[1m]" {
+		t.Errorf("AnthropicDefaultSonnetModel = %q", req.Preferences.AnthropicDefaultSonnetModel)
+	}
+	if req.Preferences.APITimeoutMs != "3000000" {
+		t.Errorf("APITimeoutMs = %q", req.Preferences.APITimeoutMs)
+	}
+	if req.Preferences.DisableTelemetry != "1" {
+		t.Errorf("DisableTelemetry = %q", req.Preferences.DisableTelemetry)
+	}
 }
 
 func TestApplyOpenCodeConfig_NilConfig(t *testing.T) {
