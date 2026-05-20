@@ -706,6 +706,16 @@ export const handlers = [
         })
     }),
 
+    http.get('/api/v1/status', () => {
+        return HttpResponse.json({
+            success: true,
+            data: {
+                server_running: true,
+                uptime: 'Mock mode',
+            }
+        })
+    }),
+
     // ============================================
     // v2 Providers API
     // ============================================

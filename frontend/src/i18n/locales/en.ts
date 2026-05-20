@@ -408,7 +408,8 @@ export default {
       "connected": "Connected",
       "uptime": "Uptime",
       "lastUpdated": "Last Updated: {{time}}",
-      "loading": "Loading..."
+      "loading": "Loading...",
+      "unavailable": "Unavailable"
     },
     "prompts": {
       "enterPort": "Enter port for server:",

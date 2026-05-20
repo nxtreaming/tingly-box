@@ -409,7 +409,8 @@ export default {
       "connected": "已连接",
       "uptime": "运行时间",
       "lastUpdated": "最后更新：{{time}}",
-      "loading": "加载中..."
+      "loading": "加载中...",
+      "unavailable": "不可用"
     },
     "prompts": {
       "enterPort": "输入服务器端口：",

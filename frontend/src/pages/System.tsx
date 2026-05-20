@@ -1,11 +1,11 @@
 import CardGrid from '@/components/CardGrid';
 import { PageLayout } from '@/components/PageLayout';
 import UnifiedCard from '@/components/UnifiedCard';
-import { BrightnessAuto, DarkMode, LightMode, Logout } from '@mui/icons-material';
+import { Logout } from '@mui/icons-material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconWorld, IconCheck } from '@tabler/icons-react';
+import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconWorld, IconCheck, IconClock } from '@tabler/icons-react';
 import { Box, Button, CircularProgress, IconButton, InputAdornment, Link, Stack, TextField, Tooltip, Typography, Chip } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useHealth } from '@/contexts/HealthContext';
 import { useVersion } from '@/contexts/VersionContext';
@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useThemeMode } from '@/contexts/ThemeContext';
 import { useNotify } from '@/hooks/useNotify';
 import { api } from '@/services/api';
+import { getThemeOptions } from '@/theme/options';
 
 const System = () => {
     const { t, i18n } = useTranslation();
@@ -20,6 +21,7 @@ const System = () => {
     const { isHealthy, checking, checkHealth } = useHealth();
     const { logout: authLogout } = useAuth();
     const { mode: themeMode, setTheme } = useThemeMode();
+    const themeOptions = useMemo(() => getThemeOptions(t), [t]);
     const notify = useNotify();
     const [serverStatus, setServerStatus] = useState<any>(null);
     const [loading, setLoading] = useState(true);
@@ -27,6 +29,10 @@ const System = () => {
     const [globalProxyUrl, setGlobalProxyUrl] = useState('');
     const [globalProxyInput, setGlobalProxyInput] = useState('');
     const [proxyUrlSaving, setProxyUrlSaving] = useState(false);
+    const isServerStatusAvailable = Boolean(serverStatus);
+    const serverStatusLabel = !isServerStatusAvailable
+        ? t('system.status.unavailable')
+        : serverStatus.server_running ? t('system.status.running') : t('system.status.stopped');
 
     const handleForceLogout = () => {
         authLogout();
@@ -139,171 +145,168 @@ const System = () => {
                         </Stack>
                     }
                 >
-                    {serverStatus ? (
-                        <Stack spacing={1.5}>
-                            {/* Server Status */}
+                    <Stack spacing={1.5}>
+                        {/* Server Status */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
+                                {serverStatus?.server_running ? (
+                                    <IconCircleCheck size={16} style={{ color: 'var(--mui-palette-success-main)' }} />
+                                ) : (
+                                    <IconCircleX
+                                        size={16}
+                                        style={{
+                                            color: isServerStatusAvailable
+                                                ? 'var(--mui-palette-error-main)'
+                                                : 'var(--mui-palette-text-secondary)',
+                                        }}
+                                    />
+                                )}
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                    {t('system.serverStatus.server')}
+                                </Typography>
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" sx={{ color: 'text.primary' }}>
+                                    {serverStatusLabel}
+                                    {isHealthy && (
+                                        <Typography component="span" variant="body2" color="success.main" sx={{ ml: 1 }}>
+                                            · {t('system.status.connected')}
+                                        </Typography>
+                                    )}
+                                </Typography>
+                            </Box>
+                        </Box>
+
+                        {/* Uptime */}
+                        {serverStatus?.uptime && (
                             <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                    {serverStatus.server_running ? (
-                                        <IconCircleCheck size={16} style={{ color: 'var(--mui-palette-success-main)' }} />
-                                    ) : (
-                                        <IconCircleX size={16} style={{ color: 'var(--mui-palette-error-main)' }} />
-                                    )}
+                                    <IconClock size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
                                     <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('system.serverStatus.server')}
+                                        {t('system.status.uptime')}
                                     </Typography>
                                 </Box>
                                 <Box sx={{ flex: 1 }}>
                                     <Typography variant="body2" sx={{ color: 'text.primary' }}>
-                                        {serverStatus.server_running ? t('system.status.running') : t('system.status.stopped')}
-                                        {isHealthy && (
-                                            <Typography component="span" variant="body2" color="success.main" sx={{ ml: 1 }}>
-                                                · {t('system.status.connected')}
-                                            </Typography>
-                                        )}
+                                        {serverStatus.uptime}
                                     </Typography>
                                 </Box>
                             </Box>
+                        )}
 
-                            {/* Uptime */}
-                            {serverStatus.uptime && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                            {t('system.status.uptime')}
-                                        </Typography>
-                                    </Box>
-                                    <Box sx={{ flex: 1 }}>
-                                        <Typography variant="body2" sx={{ color: 'text.primary' }}>
-                                            {serverStatus.uptime}
-                                        </Typography>
-                                    </Box>
-                                </Box>
-                            )}
-
-                            {/* Proxy Settings */}
-                            <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                    <IconLock size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
-                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('system.proxy.label')}
-                                    </Typography>
-                                </Box>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
-                                    {respectEnvProxy !== null && (
-                                        <Tooltip
-                                            title={t('system.proxy.respectEnvProxy.helper')}
-                                            arrow
-                                        >
-                                            <Chip
-                                                label={`${respectEnvProxy ? t('system.proxy.respectEnvProxy.label') : t('common.direct')} · ${respectEnvProxy ? t('common.on') : t('common.off')}`}
-                                                onClick={toggleProxy}
-                                                size="small"
-                                                sx={(theme) => ({
-                                                    bgcolor: respectEnvProxy ? 'primary.main' : 'action.hover',
-                                                    color: respectEnvProxy ? 'primary.contrastText' : 'text.primary',
-                                                    fontWeight: respectEnvProxy ? 600 : 400,
-                                                    border: respectEnvProxy ? 'none' : '1px solid',
-                                                    borderColor: 'divider',
-                                                    '&:hover': {
-                                                        bgcolor: respectEnvProxy ? 'primary.dark' : 'action.selected',
-                                                    },
-                                                })}
-                                            />
-                                        </Tooltip>
-                                    )}
-                                </Box>
+                        {/* Proxy Settings */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
+                                <IconLock size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                    {t('system.proxy.label')}
+                                </Typography>
                             </Box>
-
-                            {/* Language — merged from the standalone Language Settings card */}
-                            <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                    <IconLanguage size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
-                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('system.language.title')}
-                                    </Typography>
-                                </Box>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
-                                    <Chip
-                                        label={t('system.language.en')}
-                                        onClick={() => changeLanguage('en')}
-                                        size="small"
-                                        sx={{
-                                            bgcolor: i18n.language === 'en' ? 'primary.main' : 'action.hover',
-                                            color: i18n.language === 'en' ? 'primary.contrastText' : 'text.primary',
-                                            fontWeight: i18n.language === 'en' ? 600 : 400,
-                                            border: i18n.language === 'en' ? 'none' : '1px solid',
-                                            borderColor: 'divider',
-                                            cursor: 'pointer',
-                                            '&:hover': {
-                                                bgcolor: i18n.language === 'en' ? 'primary.dark' : 'action.selected',
-                                            },
-                                        }}
-                                    />
-                                    <Chip
-                                        label={t('system.language.zh')}
-                                        onClick={() => changeLanguage('zh')}
-                                        size="small"
-                                        sx={{
-                                            bgcolor: i18n.language === 'zh' ? 'primary.main' : 'action.hover',
-                                            color: i18n.language === 'zh' ? 'primary.contrastText' : 'text.primary',
-                                            fontWeight: i18n.language === 'zh' ? 600 : 400,
-                                            border: i18n.language === 'zh' ? 'none' : '1px solid',
-                                            borderColor: 'divider',
-                                            cursor: 'pointer',
-                                            '&:hover': {
-                                                bgcolor: i18n.language === 'zh' ? 'primary.dark' : 'action.selected',
-                                            },
-                                        }}
-                                    />
-                                </Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1 }}>
+                                {respectEnvProxy !== null && (
+                                    <Tooltip title={t('system.proxy.respectEnvProxy.helper')} arrow>
+                                        <Chip
+                                            label={`${respectEnvProxy ? t('system.proxy.respectEnvProxy.label') : t('common.direct')} · ${respectEnvProxy ? t('common.on') : t('common.off')}`}
+                                            onClick={toggleProxy}
+                                            size="small"
+                                            sx={(theme) => ({
+                                                bgcolor: respectEnvProxy ? 'primary.main' : 'action.hover',
+                                                color: respectEnvProxy ? 'primary.contrastText' : 'text.primary',
+                                                fontWeight: respectEnvProxy ? 600 : 400,
+                                                border: respectEnvProxy ? 'none' : '1px solid',
+                                                borderColor: 'divider',
+                                                '&:hover': {
+                                                    bgcolor: respectEnvProxy ? 'primary.dark' : 'action.selected',
+                                                },
+                                            })}
+                                        />
+                                    </Tooltip>
+                                )}
                             </Box>
+                        </Box>
 
-                            {/* Theme — moved from the activity bar */}
-                            <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
-                                    <IconBrush size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
-                                    <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                                        {t('common.theme')}
-                                    </Typography>
-                                </Box>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, flexWrap: 'wrap' }}>
-                                    {([
-                                        { value: 'light', label: t('layout.activityBar.light'), Icon: LightMode },
-                                        { value: 'dark', label: t('layout.activityBar.dark'), Icon: DarkMode },
-                                        { value: 'system', label: t('layout.activityBar.system'), Icon: BrightnessAuto },
-                                    ] as const).map(({ value, label, Icon }) => {
-                                        const selected = themeMode === value;
-                                        return (
-                                            <Chip
-                                                key={value}
-                                                icon={<Icon sx={{ fontSize: 14 }} />}
-                                                label={label}
-                                                onClick={() => setTheme(value)}
-                                                size="small"
-                                                sx={{
-                                                    bgcolor: selected ? 'primary.main' : 'action.hover',
-                                                    color: selected ? 'primary.contrastText' : 'text.primary',
-                                                    fontWeight: selected ? 600 : 400,
-                                                    border: selected ? 'none' : '1px solid',
-                                                    borderColor: 'divider',
-                                                    cursor: 'pointer',
-                                                    '& .MuiChip-icon': {
-                                                        color: 'inherit',
-                                                    },
-                                                    '&:hover': {
-                                                        bgcolor: selected ? 'primary.dark' : 'action.selected',
-                                                    },
-                                                }}
-                                            />
-                                        );
-                                    })}
-                                </Box>
+                        {/* Language — merged from the standalone Language Settings card */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
+                                <IconLanguage size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                    {t('system.language.title')}
+                                </Typography>
                             </Box>
-                        </Stack>
-                    ) : (
-                        <Typography color="text.secondary">{t('system.status.loading')}</Typography>
-                    )}
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                                <Chip
+                                    label={t('system.language.en')}
+                                    onClick={() => changeLanguage('en')}
+                                    size="small"
+                                    sx={{
+                                        bgcolor: i18n.language === 'en' ? 'primary.main' : 'action.hover',
+                                        color: i18n.language === 'en' ? 'primary.contrastText' : 'text.primary',
+                                        fontWeight: i18n.language === 'en' ? 600 : 400,
+                                        border: i18n.language === 'en' ? 'none' : '1px solid',
+                                        borderColor: 'divider',
+                                        cursor: 'pointer',
+                                        '&:hover': {
+                                            bgcolor: i18n.language === 'en' ? 'primary.dark' : 'action.selected',
+                                        },
+                                    }}
+                                />
+                                <Chip
+                                    label={t('system.language.zh')}
+                                    onClick={() => changeLanguage('zh')}
+                                    size="small"
+                                    sx={{
+                                        bgcolor: i18n.language === 'zh' ? 'primary.main' : 'action.hover',
+                                        color: i18n.language === 'zh' ? 'primary.contrastText' : 'text.primary',
+                                        fontWeight: i18n.language === 'zh' ? 600 : 400,
+                                        border: i18n.language === 'zh' ? 'none' : '1px solid',
+                                        borderColor: 'divider',
+                                        cursor: 'pointer',
+                                        '&:hover': {
+                                            bgcolor: i18n.language === 'zh' ? 'primary.dark' : 'action.selected',
+                                        },
+                                    }}
+                                />
+                            </Box>
+                        </Box>
+
+                        {/* Theme — moved from the activity bar */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
+                                <IconBrush size={14} style={{ color: 'var(--mui-palette-text-secondary)' }} />
+                                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                                    {t('common.theme')}
+                                </Typography>
+                            </Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, flexWrap: 'wrap' }}>
+                                {themeOptions.map(({ value, label, renderIcon }) => {
+                                    const selected = themeMode === value;
+                                    return (
+                                        <Chip
+                                            key={value}
+                                            icon={renderIcon({ size: 14 })}
+                                            label={label}
+                                            onClick={() => setTheme(value)}
+                                            size="small"
+                                            sx={{
+                                                bgcolor: selected ? 'primary.main' : 'action.hover',
+                                                color: selected ? 'primary.contrastText' : 'text.primary',
+                                                fontWeight: selected ? 600 : 400,
+                                                border: selected ? 'none' : '1px solid',
+                                                borderColor: 'divider',
+                                                cursor: 'pointer',
+                                                '& .MuiChip-icon': {
+                                                    color: 'inherit',
+                                                },
+                                                '&:hover': {
+                                                    bgcolor: selected ? 'primary.dark' : 'action.selected',
+                                                },
+                                            }}
+                                        />
+                                    );
+                                })}
+                            </Box>
+                        </Box>
+                    </Stack>
                 </UnifiedCard>
 
                 {/* Quick Proxy — dedicated card for the reusable proxy preset */}
