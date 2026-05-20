@@ -10,12 +10,10 @@ import UnifiedCard from '@/components/UnifiedCard';
 import { useProviderQuota } from '@/hooks/useProviderQuota';
 import { Add, ListAlt, Upload, VpnKey } from '@mui/icons-material';
 import {
-    Alert,
     Box,
     Button,
     Chip,
     Divider,
-    Snackbar,
     Stack,
     Typography,
 } from '@mui/material';
@@ -23,6 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { useFeatureFlags } from '@/contexts/FeatureFlagsContext';
+import { useNotify } from '@/hooks/useNotify';
 
 type ProviderFormData = EnhancedProviderFormData;
 
@@ -39,11 +38,7 @@ const CredentialPage = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const [providers, setProviders] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [snackbar, setSnackbar] = useState<{
-        open: boolean;
-        message: string;
-        severity: 'success' | 'error';
-    }>({ open: false, message: '', severity: 'success' });
+    const notify = useNotify();
 
     // API Key Dialog state
     const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
@@ -112,7 +107,7 @@ const CredentialPage = () => {
     } = useProviderQuota(providers, { fetchOnMount: true });
 
     const showNotification = (message: string, severity: 'success' | 'error') => {
-        setSnackbar({ open: true, message, severity });
+        notify[severity](message);
     };
 
     const handleAddApiKey = () => {
@@ -155,11 +150,15 @@ const CredentialPage = () => {
     // - Flag OFF + BOTH protocols → return an ARRAY of two single-protocol
     //   payloads, restoring the legacy "create two providers" behavior.
     // - Single protocol selected → single provider payload (unchanged).
-    const buildAddProviderPayload = (): any | any[] => {
+    const buildAddProviderPayload = (override?: Partial<ProviderFormData>): any | any[] => {
+        // Merge dialog-resolved fields (e.g. free-typed apiBase / auto name)
+        // over the form state; those land via async onChange and may not be in
+        // state yet when submit fires.
+        const fd: any = { ...providerFormData, ...(override || {}) };
         const protocols =
-            (providerFormData as any).protocols as ('openai' | 'anthropic')[] ||
-            [providerFormData.apiStyle].filter(Boolean) as ('openai' | 'anthropic')[];
-        const providerBaseUrls = (providerFormData as any).providerBaseUrls as
+            (fd as any).protocols as ('openai' | 'anthropic')[] ||
+            [fd.apiStyle].filter(Boolean) as ('openai' | 'anthropic')[];
+        const providerBaseUrls = (fd as any).providerBaseUrls as
             | { openai?: string; anthropic?: string }
             | undefined;
 
@@ -167,20 +166,20 @@ const CredentialPage = () => {
             protocols.length === 2 &&
             !!providerBaseUrls?.openai &&
             !!providerBaseUrls?.anthropic;
-        const shouldCreateFusion = enableFusion && !!(providerFormData as any).createFusionProvider;
+        const shouldCreateFusion = enableFusion && !!(fd as any).createFusionProvider;
 
         if (bothProtocols && shouldCreateFusion) {
             return {
-                name: providerFormData.name,
+                name: fd.name,
                 api_base: providerBaseUrls!.openai,
                 api_style: 'openai' as const,
                 api_base_openai: providerBaseUrls!.openai,
                 api_base_anthropic: providerBaseUrls!.anthropic,
-                token: providerFormData.token,
-                no_key_required: (providerFormData as any).noKeyRequired || false,
+                token: fd.token,
+                no_key_required: (fd as any).noKeyRequired || false,
                 enabled: true,
-                proxy_url: (providerFormData as any).proxyUrl ?? '',
-                user_agent: (providerFormData as any).userAgent ?? '',
+                proxy_url: (fd as any).proxyUrl ?? '',
+                user_agent: (fd as any).userAgent ?? '',
                 auth_type: 'api_key',
             };
         }
@@ -189,23 +188,23 @@ const CredentialPage = () => {
             // Legacy split: emit one record per protocol so the user gets
             // two independent Provider entries sharing the same credential.
             const baseRecord = {
-                token: providerFormData.token,
-                no_key_required: (providerFormData as any).noKeyRequired || false,
+                token: fd.token,
+                no_key_required: (fd as any).noKeyRequired || false,
                 enabled: true,
-                proxy_url: (providerFormData as any).proxyUrl ?? '',
-                user_agent: (providerFormData as any).userAgent ?? '',
+                proxy_url: (fd as any).proxyUrl ?? '',
+                user_agent: (fd as any).userAgent ?? '',
                 auth_type: 'api_key',
             };
             return [
                 {
                     ...baseRecord,
-                    name: providerFormData.name,
+                    name: fd.name,
                     api_base: providerBaseUrls!.openai,
                     api_style: 'openai' as const,
                 },
                 {
                     ...baseRecord,
-                    name: providerFormData.name,
+                    name: fd.name,
                     api_base: providerBaseUrls!.anthropic,
                     api_style: 'anthropic' as const,
                 },
@@ -213,16 +212,16 @@ const CredentialPage = () => {
         }
 
         const protocol = protocols[0];
-        const apiBase = providerBaseUrls?.[protocol] || providerFormData.apiBase;
+        const apiBase = providerBaseUrls?.[protocol] || fd.apiBase;
         return {
-            name: providerFormData.name,
+            name: fd.name,
             api_base: apiBase,
             api_style: protocol,
-            token: providerFormData.token,
-            no_key_required: (providerFormData as any).noKeyRequired || false,
+            token: fd.token,
+            no_key_required: (fd as any).noKeyRequired || false,
             enabled: true,
-            proxy_url: (providerFormData as any).proxyUrl ?? '',
-            user_agent: (providerFormData as any).userAgent ?? '',
+            proxy_url: (fd as any).proxyUrl ?? '',
+            user_agent: (fd as any).userAgent ?? '',
             auth_type: 'api_key',
         };
     };
@@ -230,20 +229,21 @@ const CredentialPage = () => {
     // Build the body for an edit/update request. When fusion is OFF, omit
     // the fusion fields entirely so the backend (which ignores them under
     // flag-off anyway) doesn't get spurious empty-string pointers.
-    const buildEditProviderPayload = () => {
+    const buildEditProviderPayload = (override?: Partial<ProviderFormData>) => {
+        const fd: any = { ...providerFormData, ...(override || {}) };
         const base: any = {
-            name: providerFormData.name,
-            api_base: providerFormData.apiBase,
-            api_style: providerFormData.apiStyle,
-            token: providerFormData.token || undefined,
-            no_key_required: (providerFormData as any).noKeyRequired || false,
-            enabled: providerFormData.enabled,
-            proxy_url: (providerFormData as any).proxyUrl ?? '',
-            user_agent: (providerFormData as any).userAgent ?? '',
+            name: fd.name,
+            api_base: fd.apiBase,
+            api_style: fd.apiStyle,
+            token: fd.token || undefined,
+            no_key_required: (fd as any).noKeyRequired || false,
+            enabled: fd.enabled,
+            proxy_url: (fd as any).proxyUrl ?? '',
+            user_agent: (fd as any).userAgent ?? '',
         };
         if (enableFusion) {
-            base.api_base_openai = (providerFormData as any).apiBaseOpenAI ?? '';
-            base.api_base_anthropic = (providerFormData as any).apiBaseAnthropic ?? '';
+            base.api_base_openai = (fd as any).apiBaseOpenAI ?? '';
+            base.api_base_anthropic = (fd as any).apiBaseAnthropic ?? '';
         }
         return base;
     };
@@ -269,11 +269,11 @@ const CredentialPage = () => {
     };
 
     // API Key handlers
-    const handleProviderSubmit = async (e: React.FormEvent) => {
+    const handleProviderSubmit = async (e: React.FormEvent, resolved?: Partial<ProviderFormData>) => {
         e.preventDefault();
 
         if (apiKeyDialogMode === 'edit') {
-            const providerData = buildEditProviderPayload();
+            const providerData = buildEditProviderPayload(resolved);
             const result = await api.updateProvider(providerFormData.uuid!, providerData);
             if (result.success) {
                 showNotification('Provider updated successfully!', 'success');
@@ -283,7 +283,7 @@ const CredentialPage = () => {
                 showNotification(`Failed to update provider: ${result.error}`, 'error');
             }
         } else {
-            const result = await submitProviderPayloads(buildAddProviderPayload());
+            const result = await submitProviderPayloads(buildAddProviderPayload(resolved));
             if (result.success) {
                 showNotification('Provider added successfully!', 'success');
                 setApiKeyDialogOpen(false);
@@ -519,9 +519,7 @@ const CredentialPage = () => {
                             onToggle={handleToggleProvider}
                             onDelete={handleDeleteProvider}
                             onRefreshToken={handleRefreshToken}
-                            onNotification={(message, severity) => {
-                                setSnackbar({ open: true, message, severity });
-                            }}
+                            onNotification={showNotification}
                             providerQuotas={quotaData}
                             refreshingQuotas={refreshing}
                             onQuotaRefresh={refreshQuota}
@@ -560,9 +558,7 @@ const CredentialPage = () => {
                             onEdit={handleEditProvider}
                             onToggle={handleToggleProvider}
                             onDelete={handleDeleteProvider}
-                            onNotification={(message, severity) => {
-                                setSnackbar({ open: true, message, severity });
-                            }}
+                            onNotification={showNotification}
                             providerQuotas={quotaData}
                             refreshingQuotas={refreshing}
                             onQuotaRefresh={refreshQuota}
@@ -628,23 +624,6 @@ const CredentialPage = () => {
                 onImport={handleImportData}
                 loading={importing}
             />
-
-            {/* Snackbar for notifications */}
-            <Snackbar
-                open={snackbar.open}
-                autoHideDuration={6000}
-                onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-            >
-                <Alert
-                    onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
-                    severity={snackbar.severity}
-                    variant="filled"
-                    sx={{ width: '100%' }}
-                >
-                    {snackbar.message}
-                </Alert>
-            </Snackbar>
         </PageLayout>
     );
 };

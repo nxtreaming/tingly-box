@@ -53,7 +53,11 @@ export interface EnhancedProviderFormData {
 interface PresetProviderFormDialogProps {
     open: boolean;
     onClose: () => void;
-    onSubmit: (e: React.FormEvent) => void;
+    // `resolved` carries fields the dialog finalises at submit time (free-typed
+    // apiBase, the auto-generated name, etc). Parents must merge it over their
+    // form state because those values are committed via async onChange and are
+    // not yet visible in state when this fires.
+    onSubmit: (e: React.FormEvent, resolved?: Partial<EnhancedProviderFormData>) => void | Promise<void>;
     onForceAdd?: () => void;
     data: EnhancedProviderFormData;
     onChange: (field: keyof EnhancedProviderFormData, value: any) => void;
@@ -79,6 +83,7 @@ const ProviderFormDialog = ({
     const defaultSubmitText = mode === 'add' ? t('providerDialog.addButton') : t('common.saveChanges');
 
     const [verifying, setVerifying] = useState(false);
+    const [submitting, setSubmitting] = useState(false);
     const [noApiKey, setNoApiKey] = useState(data.noKeyRequired || false);
     const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
     const [selectedProvider, setSelectedProvider] = useState<UniqueProvider | null>(null);
@@ -462,19 +467,40 @@ const ProviderFormDialog = ({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
+        // Collect the values we finalise here so the parent can use them
+        // directly. onChange writes to parent state asynchronously, so the
+        // parent's submit closure would otherwise read stale values — that's
+        // why a free-typed provider could not be added without first clicking
+        // "Test Connection" (which triggered extra renders that flushed state).
+        const resolved: Partial<EnhancedProviderFormData> = {};
+
         // Make sure any free-form text in the provider input is committed before submit.
         if (!selectedProvider && data.apiBase !== providerInputValue) {
             onChangeRef.current('apiBase', providerInputValue);
             onChangeRef.current('providerBaseUrls', undefined);
+            resolved.apiBase = providerInputValue;
+            (resolved as any).providerBaseUrls = undefined;
         }
 
-        ensureName();
+        resolved.name = ensureName();
 
         // NO MANDATORY VERIFICATION - allow adding keys without testing
-        // Verification is optional via the "Test Connection" button
-
-        onClose();
-        onSubmit(e);
+        // Verification is optional via the "Test Connection" button.
+        //
+        // Do NOT close the dialog here: the parent's submit handler is async
+        // and closes the dialog itself only after the add/update succeeds.
+        // Closing eagerly dismissed the dialog even when the request failed,
+        // making it look like the key was saved when it was not.
+        //
+        // Await so the button can show a spinner while the request is in
+        // flight. On success the parent unmounts this dialog; on failure it
+        // stays open and the spinner clears so the user can retry.
+        setSubmitting(true);
+        try {
+            await onSubmit(e, resolved);
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const hasAnyProtocol = protocolOpenAI || protocolAnthropic;
@@ -627,7 +653,7 @@ const ProviderFormDialog = ({
                         type="button"
                         variant="outlined"
                         size="small"
-                        disabled={!hasAnyProtocol || verifying}
+                        disabled={!hasAnyProtocol || verifying || submitting}
                         onClick={handleVerify}
                         title="Test connection using available endpoints (optional check)"
                     >
@@ -641,12 +667,12 @@ const ProviderFormDialog = ({
                         type="submit"
                         variant="contained"
                         size="small"
-                        disabled={!hasAnyProtocol}
+                        disabled={!hasAnyProtocol || verifying || submitting}
                         sx={{
-                            minWidth: verifying ? '80px' : 'auto',
+                            minWidth: verifying || submitting ? '80px' : 'auto',
                         }}
                     >
-                        {verifying ? (
+                        {submitting ? (
                             <CircularProgress size={20} thickness={4}/>
                         ) : (
                             submitText || defaultSubmitText
