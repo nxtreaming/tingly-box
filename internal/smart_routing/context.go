@@ -29,6 +29,11 @@ type RequestContext struct {
 	ToolUses          []string
 	LatestRole        string // Latest message role (user, assistant, tool, function, etc.)
 	LatestContentType string
+	// LatestUserHasText is true when the most recent user-role message contained
+	// extractable text content. It is false when the last user message was a
+	// tool_result (no text), which means GetLatestUserMessage() would return a
+	// stale previous message — not suitable for latest_user matching.
+	LatestUserHasText bool
 	// HasImage is true when ANY message in the conversation (any role,
 	// any position — not just the latest) contains an image content block.
 	// proxy_vision uses this because its responsibilities include cleaning
@@ -97,10 +102,11 @@ func ExtractContextFromBetaRequest(req *anthropic.BetaMessageNewParams) *Request
 		}
 	}
 
-	if req.Messages != nil {
+	if len(req.Messages) > 0 {
+		// Pass 1 — accumulate data that spans the entire history.
+		// HasImage, UserMessages, and ToolUses are cumulative: a single
+		// scan from oldest to newest is enough.
 		for _, msg := range req.Messages {
-			ctx.LatestRole = string(msg.Role)
-
 			// HasImage tracks images across every role so proxy_vision
 			// (which cleans historical images) matches when the image
 			// lives in an assistant message or tool result — not only
@@ -108,21 +114,34 @@ func ExtractContextFromBetaRequest(req *anthropic.BetaMessageNewParams) *Request
 			if hasImageInBetaContent(msg.Content) {
 				ctx.HasImage = true
 			}
-
 			if string(msg.Role) != "user" {
 				continue
 			}
-
 			contentStr, toolUses := extractBetaContent(msg.Content)
-
 			if contentStr != "" {
 				ctx.UserMessages = append(ctx.UserMessages, contentStr)
 			}
-			if ctx.HasImage {
+			ctx.ToolUses = append(ctx.ToolUses, toolUses...)
+		}
+
+		// Step 2 — locate: what is the role of the very last message?
+		ctx.LatestRole = string(req.Messages[len(req.Messages)-1].Role)
+
+		// Step 3 — locate then analyze: find the last user-role message and
+		// inspect only that message for latest_user op fields. Walking
+		// backwards keeps the intent explicit and avoids any state bleed from
+		// earlier turns.
+		for i := len(req.Messages) - 1; i >= 0; i-- {
+			msg := req.Messages[i]
+			if string(msg.Role) != "user" {
+				continue
+			}
+			contentStr, _ := extractBetaContent(msg.Content)
+			ctx.LatestUserHasText = contentStr != ""
+			if hasImageInBetaContent(msg.Content) {
 				ctx.LatestContentType = "image"
 			}
-
-			ctx.ToolUses = append(ctx.ToolUses, toolUses...)
+			break
 		}
 	}
 
