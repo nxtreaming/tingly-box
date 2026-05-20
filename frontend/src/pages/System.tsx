@@ -1,9 +1,9 @@
 import CardGrid from '@/components/CardGrid';
 import { PageLayout } from '@/components/PageLayout';
 import UnifiedCard from '@/components/UnifiedCard';
-import { Logout } from '@mui/icons-material';
+import { BrightnessAuto, DarkMode, LightMode, Logout } from '@mui/icons-material';
 import { Refresh as RefreshIcon } from '@mui/icons-material';
-import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconSun, IconMoon, IconSunHigh, IconSparkles, IconWorld, IconCheck } from '@tabler/icons-react';
+import { IconCircleCheck, IconCircleX, IconInfoCircle, IconLock, IconStar, IconLicense, IconBrandGithub, IconLanguage, IconBrush, IconWorld, IconCheck } from '@tabler/icons-react';
 import { Box, Button, CircularProgress, IconButton, InputAdornment, Link, Stack, TextField, Tooltip, Typography, Chip } from '@mui/material';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -269,16 +269,15 @@ const System = () => {
                                 </Box>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, flexWrap: 'wrap' }}>
                                     {([
-                                        { value: 'light', label: t('layout.activityBar.light'), Icon: IconSun },
-                                        { value: 'dark', label: t('layout.activityBar.dark'), Icon: IconMoon },
-                                        { value: 'sunlit', label: t('layout.activityBar.sunlit'), Icon: IconSunHigh },
-                                        { value: 'claude', label: t('layout.activityBar.claude'), Icon: IconSparkles },
+                                        { value: 'light', label: t('layout.activityBar.light'), Icon: LightMode },
+                                        { value: 'dark', label: t('layout.activityBar.dark'), Icon: DarkMode },
+                                        { value: 'system', label: t('layout.activityBar.system'), Icon: BrightnessAuto },
                                     ] as const).map(({ value, label, Icon }) => {
                                         const selected = themeMode === value;
                                         return (
                                             <Chip
                                                 key={value}
-                                                icon={<Icon size={14} />}
+                                                icon={<Icon sx={{ fontSize: 14 }} />}
                                                 label={label}
                                                 onClick={() => setTheme(value)}
                                                 size="small"

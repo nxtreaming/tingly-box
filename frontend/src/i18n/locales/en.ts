@@ -72,6 +72,7 @@ export default {
       "theme": "Theme",
       "light": "Light",
       "dark": "Dark",
+      "system": "System",
       "sunlit": "Sunlit",
       "claude": "Claude",
       "zenMode": "Zen Mode",

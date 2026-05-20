@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
-import { SunlitBackground } from './components/SunlitBackground';
 import { AuthProvider } from './contexts/AuthContext';
 import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
 import { HealthProvider, useHealth } from './contexts/HealthContext';
@@ -457,14 +456,12 @@ function AppContent() {
 
 // Inner component that uses theme context
 function AppWithTheme() {
-    const { mode } = useThemeMode();
-    const theme = useMemo(() => createAppTheme(mode), [mode]);
+    const { effectiveMode } = useThemeMode();
+    const theme = useMemo(() => createAppTheme(effectiveMode), [effectiveMode]);
 
     return (
         <ThemeProvider theme={theme}>
             <CssBaseline />
-            {/* Sunlit background effect */}
-            {mode === 'sunlit' && <SunlitBackground />}
             <NotificationProvider>
                 <BrowserRouter>
                     <HealthProvider>

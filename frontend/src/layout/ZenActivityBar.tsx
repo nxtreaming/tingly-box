@@ -6,11 +6,13 @@ import {
     IconWand,
     IconMessageReport,
 } from '@tabler/icons-react';
+import { BrightnessAuto, DarkMode, LightMode } from '@mui/icons-material';
 import { Box, Divider, ListItemButton, ListItemIcon, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
 import React, { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useVersion as useAppVersion } from '../contexts/VersionContext';
+import { useThemeMode } from '../contexts/ThemeContext';
 import {
     activityBarWidth,
     activityContainerPaddingY,
@@ -43,7 +45,11 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
 }) => {
     const { t, i18n } = useTranslation();
     const { currentVersion } = useAppVersion();
+    const { mode: themeMode, effectiveMode, setTheme } = useThemeMode();
     const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<HTMLElement | null>(null);
+    const [themeMenuAnchorEl, setThemeMenuAnchorEl] = useState<HTMLElement | null>(null);
+
+    const CurrentThemeIcon = themeMode === 'system' ? BrightnessAuto : effectiveMode === 'dark' ? DarkMode : LightMode;
 
     const handleLanguageMenuClick = (event: React.MouseEvent<HTMLElement>) => {
         setLanguageMenuAnchorEl(event.currentTarget);
@@ -57,6 +63,19 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
         i18n.changeLanguage(lng);
         localStorage.setItem('i18nextLng', lng);
         handleLanguageMenuClose();
+    };
+
+    const handleThemeMenuClick = (event: React.MouseEvent<HTMLElement>) => {
+        setThemeMenuAnchorEl(event.currentTarget);
+    };
+
+    const handleThemeMenuClose = () => {
+        setThemeMenuAnchorEl(null);
+    };
+
+    const handleThemeChange = (mode: 'light' | 'dark' | 'system') => {
+        setTheme(mode);
+        handleThemeMenuClose();
     };
 
     return (
@@ -204,6 +223,40 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
                     </Menu>
                 )}
 
+                {!zenEnabled && (
+                    <Menu
+                        anchorEl={themeMenuAnchorEl}
+                        open={Boolean(themeMenuAnchorEl)}
+                        onClose={handleThemeMenuClose}
+                        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                        slotProps={{
+                            paper: {
+                                sx: {
+                                    minWidth: 156,
+                                    mt: 1,
+                                },
+                            },
+                        }}
+                    >
+                        {([
+                            { value: 'light', label: t('layout.activityBar.light'), Icon: LightMode },
+                            { value: 'dark', label: t('layout.activityBar.dark'), Icon: DarkMode },
+                            { value: 'system', label: t('layout.activityBar.system'), Icon: BrightnessAuto },
+                        ] as const).map(({ value, label, Icon }) => (
+                            <MenuItem
+                                key={value}
+                                selected={themeMode === value}
+                                onClick={() => handleThemeChange(value)}
+                                sx={{ gap: 1.5 }}
+                            >
+                                <Icon sx={{ fontSize: 18 }} />
+                                <Typography>{label}</Typography>
+                            </MenuItem>
+                        ))}
+                    </Menu>
+                )}
+
                 {/* Onboarding Quick Add Button - above Zen */}
                 {!zenEnabled && (
                     <Tooltip title={t('layout.onboarding', { defaultValue: 'Quick Add Provider' })} placement="right" arrow>
@@ -342,6 +395,48 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
                             </ListItemIcon>
                             <Typography variant="caption" sx={{ fontSize: '0.5rem', color: 'inherit', textAlign: 'center', lineHeight: 1.1 }}>
                                 {i18n.language === 'zh' ? '中文' : 'EN'}
+                            </Typography>
+                        </ListItemButton>
+                    </Tooltip>
+                </Box>
+            )}
+
+            {/* Theme button - bottom-left, above language icon */}
+            {!zenEnabled && (
+                <Box
+                    sx={{
+                        py: 0.5,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                    }}
+                >
+                    <Tooltip title={t('layout.activityBar.theme')} placement="right" arrow>
+                        <ListItemButton
+                            onClick={handleThemeMenuClick}
+                            sx={{
+                                minHeight: 48,
+                                mx: 0.5,
+                                px: activityItemPaddingX,
+                                py: 0.75,
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 0.25,
+                                position: 'relative',
+                                color: 'text.secondary',
+                                borderRadius: activityItemRadius,
+                                cursor: 'pointer',
+                                '&:hover': { bgcolor: 'action.hover', color: 'primary.main' },
+                            }}
+                        >
+                            <ListItemIcon sx={{ minWidth: 0, color: 'inherit', justifyContent: 'center' }}>
+                                <CurrentThemeIcon sx={{ fontSize: 22 }} />
+                            </ListItemIcon>
+                            <Typography variant="caption" sx={{ fontSize: '0.5rem', color: 'inherit', textAlign: 'center', lineHeight: 1.1 }}>
+                                {themeMode === 'system' ? 'SYS' : effectiveMode === 'dark' ? 'Dark' : 'Light'}
                             </Typography>
                         </ListItemButton>
                     </Tooltip>

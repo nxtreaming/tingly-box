@@ -1,5 +1,6 @@
 import { Box, Drawer, IconButton, Popover, Tooltip, Typography, Menu, MenuItem, Stack } from '@mui/material';
-import { IconMenu, IconDots, IconYinYang, IconSun, IconMoon, IconSunHigh, IconSparkles, IconPencil } from '@tabler/icons-react';
+import { BrightnessAuto, DarkMode, LightMode } from '@mui/icons-material';
+import { IconMenu, IconDots, IconYinYang, IconPencil } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -439,20 +440,16 @@ const Layout = ({ children }: LayoutProps) => {
                                     </Typography>
                                 </MenuItem>
                                 <MenuItem onClick={() => setTheme('light')} sx={{ gap: 1.5 }}>
-                                    <IconSun size={18} />
+                                    <LightMode sx={{ fontSize: 18 }} />
                                     <Typography>{t('layout.activityBar.light')}</Typography>
                                 </MenuItem>
                                 <MenuItem onClick={() => setTheme('dark')} sx={{ gap: 1.5 }}>
-                                    <IconMoon size={18} />
+                                    <DarkMode sx={{ fontSize: 18 }} />
                                     <Typography>{t('layout.activityBar.dark')}</Typography>
                                 </MenuItem>
-                                <MenuItem onClick={() => setTheme('sunlit')} sx={{ gap: 1.5 }}>
-                                    <IconSunHigh size={18} />
-                                    <Typography>{t('layout.activityBar.sunlit')}</Typography>
-                                </MenuItem>
-                                <MenuItem onClick={() => setTheme('claude')} sx={{ gap: 1.5 }}>
-                                    <IconSparkles size={18} />
-                                    <Typography>{t('layout.activityBar.claude')}</Typography>
+                                <MenuItem onClick={() => setTheme('system')} sx={{ gap: 1.5 }}>
+                                    <BrightnessAuto sx={{ fontSize: 18 }} />
+                                    <Typography>{t('layout.activityBar.system')}</Typography>
                                 </MenuItem>
                             </>
                         )}
