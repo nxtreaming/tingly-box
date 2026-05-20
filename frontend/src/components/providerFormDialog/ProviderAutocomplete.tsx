@@ -1,5 +1,6 @@
 import {Autocomplete, Box, TextField, Typography} from '@mui/material';
 import React from 'react';
+import {useTranslation} from 'react-i18next';
 import type {UniqueProvider} from '../../services/serviceProviders';
 import ProviderIcon from '../ProviderIcon';
 
@@ -10,6 +11,9 @@ interface ProviderAutocompleteProps {
     onChange: (newValue: string | UniqueProvider | null) => void;
     onInputChange: (event: React.SyntheticEvent, newValue: string) => void;
     onBlur: () => void;
+    required?: boolean;
+    error?: boolean;
+    helperText?: string;
 }
 
 const ProviderAutocomplete: React.FC<ProviderAutocompleteProps> = ({
@@ -19,7 +23,11 @@ const ProviderAutocomplete: React.FC<ProviderAutocompleteProps> = ({
     onChange,
     onInputChange,
     onBlur,
+    required,
+    error,
+    helperText,
 }) => {
+    const {t} = useTranslation();
     return (
         <Autocomplete
             freeSolo
@@ -58,8 +66,11 @@ const ProviderAutocomplete: React.FC<ProviderAutocompleteProps> = ({
             renderInput={(params) => (
                 <TextField
                     {...params}
-                    label="Provider"
-                    placeholder="Select a provider or enter custom base URL"
+                    label={t('providerDialog.provider.label')}
+                    placeholder={t('providerDialog.provider.placeholder')}
+                    required={required}
+                    error={error}
+                    helperText={helperText}
                 />
             )}
             renderOption={(props, option) => {

@@ -1,5 +1,8 @@
-import {Close} from '@mui/icons-material';
+import {Close, ExpandMore, InfoOutlined} from '@mui/icons-material';
 import {
+    Accordion,
+    AccordionDetails,
+    AccordionSummary,
     Alert,
     Box,
     Button,
@@ -98,6 +101,8 @@ const ProviderFormDialog = ({
     const [useGlobalProxy, setUseGlobalProxy] = useState(false);
     const [globalProxyUrl, setGlobalProxyUrl] = useState('');
     const [createFusionProvider, setCreateFusionProvider] = useState(false);
+    const [advancedOpen, setAdvancedOpen] = useState(false);
+    const [baseUrlError, setBaseUrlError] = useState(false);
 
     const {enableFusion} = useFeatureFlags();
 
@@ -162,6 +167,9 @@ const ProviderFormDialog = ({
         if (!open) return;
 
         setVerificationResult(null);
+        setBaseUrlError(false);
+        // Edit mode opens the advanced panel so users can see/change existing settings.
+        setAdvancedOpen(mode === 'edit');
         // Hide the optional name field on each add-mode open; edit-mode keeps
         // it visible so users can review the existing name.
         setShowNameField(mode === 'edit');
@@ -319,6 +327,7 @@ const ProviderFormDialog = ({
 
     const handleProviderSelect = (newValue: string | UniqueProvider | null) => {
         setVerificationResult(null);
+        setBaseUrlError(false);
         const cb = onChangeRef.current;
 
         if (typeof newValue === 'string') {
@@ -379,6 +388,7 @@ const ProviderFormDialog = ({
         newValue: string
     ) => {
         setProviderInputValue(newValue);
+        if (newValue.trim()) setBaseUrlError(false);
         // If the user is editing away from the selected provider's display name,
         // detach the selection so the protocol checkboxes become editable again.
         if (
@@ -467,6 +477,12 @@ const ProviderFormDialog = ({
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
+        const effectiveBase = data.apiBase || providerInputValue;
+        if (!effectiveBase.trim()) {
+            setBaseUrlError(true);
+            return;
+        }
+
         // Collect the values we finalise here so the parent can use them
         // directly. onChange writes to parent state asynchronously, so the
         // parent's submit closure would otherwise read stale values — that's
@@ -506,9 +522,17 @@ const ProviderFormDialog = ({
     const hasAnyProtocol = protocolOpenAI || protocolAnthropic;
     const showFusionToggle = enableFusion && mode === 'add' && protocolOpenAI && protocolAnthropic;
 
+    // When both protocols are checked on a template that exposes two base URLs,
+    // the outcome ("merge into one" vs "create two") is otherwise invisible.
+    // Surface it as a one-line hint that tracks the fusion toggle.
+    const hasBothBaseUrls = !!selectedProvider?.baseUrlOpenAI && !!selectedProvider?.baseUrlAnthropic;
+    const showTopologyHint = mode === 'add' && protocolOpenAI && protocolAnthropic && hasBothBaseUrls;
+    const willMergeBaseUrls = enableFusion && createFusionProvider;
+
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth PaperProps={{sx: {minHeight: 200}}}>
-            <DialogTitle>
+        <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
+            PaperProps={{sx: {maxHeight: '88vh', display: 'flex', flexDirection: 'column'}}}>
+            <DialogTitle sx={{flexShrink: 0}}>
                 <Box sx={{display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
                     {title || defaultTitle}
                     <IconButton aria-label="close" onClick={onClose} sx={{ml: 2}} size="small">
@@ -516,13 +540,8 @@ const ProviderFormDialog = ({
                     </IconButton>
                 </Box>
             </DialogTitle>
-            <form onSubmit={handleSubmit}>
-                <DialogContent sx={{pt: 1, pb: 1, minHeight: 280}}>
-                    {mode === 'add' && (
-                        <Typography variant="body2" color="text.secondary" sx={{mb: 2}}>
-                            {t('providerDialog.addDescription')}
-                        </Typography>
-                    )}
+            <form onSubmit={handleSubmit} style={{display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden'}}>
+                <DialogContent sx={{pt: 1, pb: 1, overflowY: 'auto', flex: 1}}>
                     <Stack spacing={2.5}>
                         {isFirstProvider && mode === 'add' && (
                             <Alert severity="info" sx={{mb: 1}}>
@@ -541,6 +560,27 @@ const ProviderFormDialog = ({
                             onChange={handleProviderSelect}
                             onInputChange={handleProviderInputChange}
                             onBlur={handleProviderInputBlur}
+                            required
+                            error={baseUrlError}
+                            helperText={baseUrlError ? t('providerDialog.provider.required', {defaultValue: 'Base URL is required'}) : undefined}
+                        />
+
+                        <ApiKeyField
+                            mode={mode}
+                            token={data.token}
+                            onTokenChange={(value) => {
+                                onChange('token', value);
+                                setVerificationResult(null);
+                            }}
+                            noApiKey={noApiKey}
+                            onNoApiKeyChange={(checked) => {
+                                setNoApiKey(checked);
+                                onChange('noKeyRequired', checked);
+                                setVerificationResult(null);
+                                if (checked) {
+                                    onChange('token', '');
+                                }
+                            }}
                         />
 
                         <ProtocolSelector
@@ -565,79 +605,26 @@ const ProviderFormDialog = ({
                             />
                         )}
 
-                        <ApiKeyField
-                            mode={mode}
-                            token={data.token}
-                            onTokenChange={(value) => {
-                                onChange('token', value);
-                                setVerificationResult(null);
-                            }}
-                            noApiKey={noApiKey}
-                            onNoApiKeyChange={(checked) => {
-                                setNoApiKey(checked);
-                                onChange('noKeyRequired', checked);
-                                setVerificationResult(null);
-                                if (checked) {
-                                    onChange('token', '');
-                                }
-                            }}
-                        />
-
-                        <KeyNameField
-                            showField={showNameField}
-                            onShowField={() => {
-                                if (!data.name) {
-                                    onChangeRef.current('name', computeAutoName());
-                                }
-                                setShowNameField(true);
-                            }}
-                            name={data.name}
-                            autoName={computeAutoName()}
-                            onNameChange={(value) => {
-                                onChange('name', value);
-                                setVerificationResult(null);
-                                setNameIsAutoFilled(false);
-                            }}
-                        />
-
-                        <ProxyUrlField
-                            mode={mode}
-                            proxyUrl={data.proxyUrl || ''}
-                            onProxyUrlChange={(value) => {
-                                onChange('proxyUrl', value);
-                                if (useGlobalProxy && value !== globalProxyUrl) {
-                                    setUseGlobalProxy(false);
-                                    localStorage.setItem('provider_use_global_proxy', 'false');
-                                }
-                            }}
-                            globalProxyUrl={globalProxyUrl}
-                            useGlobalProxy={useGlobalProxy}
-                            onUseGlobalProxyChange={handleUseGlobalProxyChange}
-                        />
-
-                        <TextField
-                            size="small"
-                            fullWidth
-                            label={t('providerDialog.advanced.userAgent.label', {defaultValue: 'User-Agent'})}
-                            placeholder={t('providerDialog.advanced.userAgent.placeholder', {defaultValue: 'Leave empty to use built-in default'})}
-                            value={data.userAgent || ''}
-                            onChange={(e) => onChange('userAgent', e.target.value)}
-                            helperText={t('providerDialog.advanced.userAgent.help', {
-                                defaultValue: 'Custom outbound HTTP User-Agent. Empty falls back to the provider\'s built-in UA.',
-                            })}
-                        />
-
-                        {mode === 'edit' && (
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        size="small"
-                                        checked={data.enabled || false}
-                                        onChange={(e) => onChange('enabled', e.target.checked)}
-                                    />
-                                }
-                                label={t('providerDialog.enabled')}
-                            />
+                        {showTopologyHint && (
+                            <Stack
+                                direction="row"
+                                spacing={1}
+                                alignItems="flex-start"
+                                sx={{
+                                    mt: -1,
+                                    px: 1.5,
+                                    py: 1,
+                                    borderRadius: 1,
+                                    bgcolor: 'action.hover',
+                                }}
+                            >
+                                <InfoOutlined sx={{fontSize: 16, mt: 0.2, color: 'text.secondary'}}/>
+                                <Typography variant="caption" color="text.secondary" sx={{lineHeight: 1.4}}>
+                                    {willMergeBaseUrls
+                                        ? t('providerDialog.fusion.outcomeMerged')
+                                        : t('providerDialog.fusion.outcomeSplit')}
+                                </Typography>
+                            </Stack>
                         )}
 
                         {verificationResult && (
@@ -646,6 +633,94 @@ const ProviderFormDialog = ({
                                 onClose={() => setVerificationResult(null)}
                             />
                         )}
+
+                        {/* Advanced accordion — name, proxy, user-agent, enabled */}
+                        <Accordion
+                            disableGutters
+                            elevation={0}
+                            expanded={advancedOpen}
+                            onChange={(_, expanded) => setAdvancedOpen(expanded)}
+                            sx={{
+                                border: 0,
+                                borderTop: 1,
+                                borderColor: 'divider',
+                                '&:before': {display: 'none'},
+                                bgcolor: 'transparent',
+                            }}
+                        >
+                            <AccordionSummary
+                                expandIcon={<ExpandMore fontSize="small"/>}
+                                sx={{
+                                    px: 0,
+                                    minHeight: 40,
+                                    '& .MuiAccordionSummary-content': {my: 0.5},
+                                }}
+                            >
+                                <Typography variant="body2" color="text.secondary" fontWeight={600}>
+                                    {t('providerDialog.advanced.label', {defaultValue: 'Advanced — proxy, user-agent, name'})}
+                                </Typography>
+                            </AccordionSummary>
+                            <AccordionDetails sx={{px: 0, pb: 1}}>
+                                <Stack spacing={2.5}>
+                                    <KeyNameField
+                                        showField={showNameField}
+                                        onShowField={() => {
+                                            if (!data.name) {
+                                                onChangeRef.current('name', computeAutoName());
+                                            }
+                                            setShowNameField(true);
+                                        }}
+                                        name={data.name}
+                                        autoName={computeAutoName()}
+                                        onNameChange={(value) => {
+                                            onChange('name', value);
+                                            setVerificationResult(null);
+                                            setNameIsAutoFilled(false);
+                                        }}
+                                    />
+
+                                    <ProxyUrlField
+                                        mode={mode}
+                                        proxyUrl={data.proxyUrl || ''}
+                                        onProxyUrlChange={(value) => {
+                                            onChange('proxyUrl', value);
+                                            if (useGlobalProxy && value !== globalProxyUrl) {
+                                                setUseGlobalProxy(false);
+                                                localStorage.setItem('provider_use_global_proxy', 'false');
+                                            }
+                                        }}
+                                        globalProxyUrl={globalProxyUrl}
+                                        useGlobalProxy={useGlobalProxy}
+                                        onUseGlobalProxyChange={handleUseGlobalProxyChange}
+                                    />
+
+                                    <TextField
+                                        size="small"
+                                        fullWidth
+                                        label={t('providerDialog.advanced.userAgent.label', {defaultValue: 'User-Agent'})}
+                                        placeholder={t('providerDialog.advanced.userAgent.placeholder', {defaultValue: 'Leave empty to use built-in default'})}
+                                        value={data.userAgent || ''}
+                                        onChange={(e) => onChange('userAgent', e.target.value)}
+                                        helperText={t('providerDialog.advanced.userAgent.help', {
+                                            defaultValue: 'Custom outbound HTTP User-Agent. Empty falls back to the provider\'s built-in UA.',
+                                        })}
+                                    />
+
+                                    {mode === 'edit' && (
+                                        <FormControlLabel
+                                            control={
+                                                <Switch
+                                                    size="small"
+                                                    checked={data.enabled || false}
+                                                    onChange={(e) => onChange('enabled', e.target.checked)}
+                                                />
+                                            }
+                                            label={t('providerDialog.enabled')}
+                                        />
+                                    )}
+                                </Stack>
+                            </AccordionDetails>
+                        </Accordion>
                     </Stack>
                 </DialogContent>
                 <DialogActions sx={{px: 3, pb: 2, gap: 1, justifyContent: 'flex-end'}}>

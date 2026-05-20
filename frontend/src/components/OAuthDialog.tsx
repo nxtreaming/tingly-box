@@ -17,14 +17,14 @@ import {
     Typography,
 } from '@mui/material';
 import {Claude, Gemini, Google, Kimi, OpenAI, Qwen} from './BrandIcons';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import api from "@/services/api.ts";
 import {getOAuthRedirectPath} from "@/utils/protocol";
 
 // Type for timer (browser vs Node.js)
 type TimerId = ReturnType<typeof setTimeout>;
 
-interface OAuthProvider {
+export interface OAuthProvider {
     id: string;
     name: string;
     displayName: string;
@@ -37,7 +37,7 @@ interface OAuthProvider {
 }
 
 // Fallback hardcoded providers for development or when API is unavailable
-const FALLBACK_OAUTH_PROVIDERS: OAuthProvider[] = [
+export const FALLBACK_OAUTH_PROVIDERS: OAuthProvider[] = [
     {
         id: 'claude_code',
         name: 'Claude Code',
@@ -123,6 +123,10 @@ interface OAuthDialogProps {
     open: boolean;
     onClose: () => void;
     onSuccess?: () => void;
+    // When set (and the dialog is open), immediately start the OAuth flow for
+    // this provider id, skipping the in-dialog grid. Used by the unified
+    // "Connect Provider" picker to route OAuth cards straight into the flow.
+    autoStartProviderId?: string | null;
 }
 
 // OAuth Authorization Dialog - unified UI for both standard and device code flow
@@ -534,7 +538,7 @@ const OAuthAuthorizationDialog = ({
     );
 };
 
-const OAuthDialog = ({open, onClose, onSuccess}: OAuthDialogProps) => {
+const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId}: OAuthDialogProps) => {
     const [authorizing, setAuthorizing] = useState<string | null>(null);
     const [authDialogOpen, setAuthDialogOpen] = useState(false);
     const [authData, setAuthData] = useState<OAuthAuthorizationData | null>(null);
@@ -716,6 +720,64 @@ const OAuthDialog = ({open, onClose, onSuccess}: OAuthDialogProps) => {
             setAuthorizing(null);
         }
     };
+
+    // When opened with an autoStartProviderId, kick off that provider's flow
+    // once instead of waiting for an in-grid click. Reset on close so the next
+    // open re-triggers cleanly.
+    const autoStartedRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!open) {
+            autoStartedRef.current = null;
+            return;
+        }
+        if (!autoStartProviderId || autoStartedRef.current === autoStartProviderId) return;
+        const provider = oauthProviders.find((p) => p.id === autoStartProviderId);
+        if (provider && provider.enabled !== false) {
+            autoStartedRef.current = autoStartProviderId;
+            handleProviderClick(provider);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, autoStartProviderId, oauthProviders]);
+
+    // Direct mode: launched from the unified picker for a single provider.
+    // Skip the in-dialog provider grid entirely — show a compact connecting/
+    // error panel until the authorization dialog takes over, and route every
+    // close straight to a full close (there is no grid to fall back to).
+    if (autoStartProviderId) {
+        const provider = oauthProviders.find((p) => p.id === autoStartProviderId);
+        const name = provider?.displayName || provider?.name || 'provider';
+        return (
+            <>
+                <Dialog open={open && !authDialogOpen} onClose={handleClose} maxWidth="xs" fullWidth>
+                    <DialogTitle>
+                        <Stack direction="row" alignItems="center" justifyContent="space-between">
+                            <Typography variant="h6">Connect {provider?.name || 'Provider'}</Typography>
+                            <IconButton onClick={handleClose} size="small"><Close/></IconButton>
+                        </Stack>
+                    </DialogTitle>
+                    <DialogContent>
+                        {initError ? (
+                            <Alert severity="error" sx={{my: 1}}>{initError}</Alert>
+                        ) : (
+                            <Stack alignItems="center" spacing={2} sx={{py: 3}}>
+                                <CircularProgress size={28}/>
+                                <Typography variant="body2" color="text.secondary">
+                                    Connecting to {name}…
+                                </Typography>
+                            </Stack>
+                        )}
+                    </DialogContent>
+                </Dialog>
+                <OAuthAuthorizationDialog
+                    open={authDialogOpen}
+                    onClose={handleClose}
+                    authData={authData}
+                    onSuccess={handleAuthorizationCompleted}
+                    onError={handleAuthorizationError}
+                />
+            </>
+        );
+    }
 
     return (
         <>
