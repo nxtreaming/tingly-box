@@ -4,6 +4,7 @@ import type { ProviderModelData, ProviderModelsDataByUuid } from '../types/provi
 import { useNewModels } from './useNewModels';
 import { useLocalStorage } from './useLocalStorage';
 import { createEventSystem } from '../utils/eventSystem';
+import { usePageVisibility } from './usePageVisibility';
 
 // Local storage key for refresh timestamps
 const REFRESH_TIMESTAMPS_KEY = 'tingly_provider_refresh_timestamps';
@@ -13,9 +14,10 @@ const DEFAULT_TIMESTAMPS = {};
 // Type for refresh timestamps
 type RefreshTimestamps = { [providerUuid: string]: string };
 
-// Event system for provider models updates
+// Event system for provider models updates — crossTab:true propagates to other browser tabs
 const providerModelsEvent = createEventSystem<{ providerUuid: string; models: ProviderModelData | null }>(
-    'tingly_provider_models_update'
+    'tingly_provider_models_update',
+    true
 );
 
 // Export event name for backward compatibility
@@ -241,7 +243,7 @@ export const useProviderModels = () => {
         return providerModels[providerUuid];
     }, [providerModels]);
 
-    // Listen for updates from other components
+    // Listen for updates from other components (and other tabs via BroadcastChannel)
     useEffect(() => {
         const cleanup = providerModelsEvent.listen(({ providerUuid, models }) => {
             if (models) {
@@ -259,6 +261,12 @@ export const useProviderModels = () => {
         });
         return cleanup;
     }, []);
+
+    // Bust in-memory cache when tab regains focus after ≥30s so the next
+    // fetchModels call re-fetches from the server instead of serving stale data.
+    usePageVisibility(useCallback(() => {
+        setProviderModels(prev => Object.keys(prev).length === 0 ? prev : {});
+    }, []));
 
     return {
         providerModels,
