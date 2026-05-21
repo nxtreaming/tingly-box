@@ -965,12 +965,12 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId}: OAuthDialo
                                             border: '1px solid',
                                             borderColor: 'divider',
                                             '&:hover': {
-                                                borderColor: provider.color,
-                                                bgcolor: `${provider.color}0A`,
+                                                borderColor: 'primary.main',
+                                                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
                                             },
                                             '&:hover .oauth-provider-action': {
-                                                borderColor: provider.color,
-                                                bgcolor: (theme) => alpha(provider.color || theme.palette.primary.main, 0.08),
+                                                borderColor: 'primary.main',
+                                                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
                                             },
                                         }}
                                         onClick={() => handleProviderClick(provider)}

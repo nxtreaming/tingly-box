@@ -24,8 +24,8 @@ Last updated: 2026-05-21
 
 | Phase | Status | Notes |
 | --- | --- | --- |
-| Phase 1: Establish The UI Baseline | Mostly complete | Typography scale, shared `PageHeader`, shared spacing direction, and default flat surface treatment are in place. Credentials now uses the shared header pattern. Provider List still needs to adopt the shared header pattern. |
-| Phase 2: Refactor Shared Components | In progress | `UnifiedCard` sizing and default hover elevation are refactored. `Surface` has been introduced as the non-card grouping primitive. Table density work has started with dashboard usage tables and credential tables. Agent overview and OAuth provider picker cards now follow the flat hover model. |
+| Phase 1: Establish The UI Baseline | Complete | Typography scale, shared `PageHeader`, shared spacing direction, and default flat surface treatment are in place. Dashboard, Overview, Credentials, and Provider List use the shared header pattern. |
+| Phase 2: Refactor Shared Components | In progress | `UnifiedCard` sizing and default hover elevation are refactored. `Surface` has been introduced as the non-card grouping primitive. Table density work has started with dashboard usage tables, credential tables, and Provider List. Agent overview, Connect AI, OAuth provider picker, Onboard, and model-select cards now follow the flat hover model. |
 | Phase 3: Improve Dashboard | Mostly complete | Dashboard header, StatCard side-stripe removal, StatCard hierarchy, skeleton loading, Quick Start flattening, chart wrapper flattening, and flatter dashboard surfaces are complete. Three-column layout can still be tuned with real usage data. |
 | Phase 4: Improve Overview And Heatmap | Mostly complete | Overview uses the shared page header. Heatmap container nesting, metric typography, and small-screen horizontal scrolling have been improved. |
 | Phase 5: Polish Navigation And Icon Consistency | In progress | Side-stripe/glow selected states have been removed from the main sidebar, zen sidebar, and activity bar. ActivityBar label width and icon consistency still need a full pass. |
@@ -49,8 +49,7 @@ The preferred product UI direction is flat, quiet, and operational:
 
 Known flattening backlog:
 
-- Provider List should adopt `PageHeader` and flat surfaces next so Credentials, Dashboard, Overview, and Provider List share the same page rhythm.
-- Card hover/selected states are not fully unified yet. Agent scenario cards currently use a neutral/primary flat hover, while Credential OAuth provider cards use provider-colored hover states. Review all clickable card grids together and choose one consistent card-state model.
+- Card hover/selected states are not fully unified yet. Agent, Connect AI, Credential OAuth, Onboard provider, and model-select cards now use the primary flat hover model; remote-control bot cards, skill cards, and graph nodes still need a focused pass.
 - Input border radius is not fully normalized yet. Onboard search has been reduced, but search/filter fields across provider lists, tool lists, dialogs, and system pages should be checked as a group.
 - Some graph/node components still use shadows to describe graph objects. Review separately because graph nodes may need a selected/active affordance.
 - Dialogs, menus, tooltips, and floating status indicators may keep elevation, but should be checked for excessive shadow strength.
@@ -60,7 +59,7 @@ Known flattening backlog:
 | Priority | Task | Goal | Main Files | Acceptance Criteria |
 | --- | --- | --- | --- | --- |
 | P0 | Adjust global typography scale | Improve readability and reduce overuse of 10px/12px text | `frontend/src/theme/base.ts` | `body1` is around `1rem`, `body2` is around `0.875rem`, `caption` is not below `0.75rem`, and key pages have no obvious text overflow |
-| P0 | Define a shared page header pattern | Make page titles, subtitles, filter controls, and action areas consistent | New or existing shared component under `frontend/src/components/` | Dashboard, Overview, and Provider List use the same title size, subtitle treatment, spacing, and action layout |
+| P0 | Define a shared page header pattern | Make page titles, subtitles, filter controls, and action areas consistent | New or existing shared component under `frontend/src/components/` | Dashboard, Overview, Credentials, and Provider List use the same title size, subtitle treatment, spacing, and action layout |
 | P1 | Normalize spacing tokens | Replace scattered local `gap`, `mb`, `p`, and `px` values with a predictable rhythm | `frontend/src/styles/common.ts` or theme helpers | Page padding, section gaps, card padding, and toolbar spacing follow a documented scale |
 | P1 | Standardize surface treatment | Lower the stacked-card feeling and reserve shadows for meaningful elevation | Theme, `UnifiedCard`, common styles | Default cards do not jump or intensify on hover; shadows are used mainly for floating UI, dialogs, menus, and emphasis |
 | P1 | Document flat surface rules | Make future modules follow the same flat visual model | `docs/frontend-ui-optimization-plan.md`, shared components | The plan states when to use borders, backgrounds, shadows, hover states, and selected states |

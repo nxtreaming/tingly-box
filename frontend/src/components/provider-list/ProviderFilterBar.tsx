@@ -10,10 +10,19 @@ interface FilterState {
 
 interface ProviderFilterBarProps {
   filter: FilterState;
+  resultCount: number;
+  totalCount: number;
   onFilterChange: (updates: Partial<FilterState>) => void;
 }
 
-const ProviderFilterBar: React.FC<ProviderFilterBarProps> = ({ filter, onFilterChange }) => {
+const ProviderFilterBar: React.FC<ProviderFilterBarProps> = ({
+  filter,
+  resultCount,
+  totalCount,
+  onFilterChange,
+}) => {
+  const isFiltering = filter.search || filter.protocol !== 'all' || filter.sort !== 'default';
+
   return (
     <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
       {/* Search */}
@@ -29,7 +38,14 @@ const ProviderFilterBar: React.FC<ProviderFilterBarProps> = ({ filter, onFilterC
             </InputAdornment>
           ),
         }}
-        sx={{ minWidth: 200, flexGrow: 1, maxWidth: 400 }}
+        sx={{
+          minWidth: 200,
+          flexGrow: 1,
+          maxWidth: 400,
+          '& .MuiInputBase-root': {
+            borderRadius: 1,
+          },
+        }}
       />
 
       {/* Protocol Filter */}
@@ -63,9 +79,7 @@ const ProviderFilterBar: React.FC<ProviderFilterBarProps> = ({ filter, onFilterC
 
       {/* Result count */}
       <Box sx={{ ml: 'auto', color: 'text.secondary', fontSize: '0.875rem' }}>
-        {filter.search || filter.protocol !== 'all' || filter.sort !== 'default'
-          ? 'Filtering results'
-          : 'All providers'}
+        {isFiltering ? `${resultCount} of ${totalCount} providers` : `${totalCount} providers`}
       </Box>
     </Box>
   );
