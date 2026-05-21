@@ -72,6 +72,7 @@ export default {
       "theme": "Theme",
       "light": "Light",
       "dark": "Dark",
+      "system": "System",
       "sunlit": "Sunlit",
       "claude": "Claude",
       "zenMode": "Zen Mode",
@@ -407,7 +408,8 @@ export default {
       "connected": "Connected",
       "uptime": "Uptime",
       "lastUpdated": "Last Updated: {{time}}",
-      "loading": "Loading..."
+      "loading": "Loading...",
+      "unavailable": "Unavailable"
     },
     "prompts": {
       "enterPort": "Enter port for server:",

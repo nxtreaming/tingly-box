@@ -73,6 +73,7 @@ export default {
       "theme": "主题",
       "light": "浅色",
       "dark": "深色",
+      "system": "跟随系统",
       "sunlit": "日光",
       "claude": "Claude",
       "zenMode": "禅模式",
@@ -408,7 +409,8 @@ export default {
       "connected": "已连接",
       "uptime": "运行时间",
       "lastUpdated": "最后更新：{{time}}",
-      "loading": "加载中..."
+      "loading": "加载中...",
+      "unavailable": "不可用"
     },
     "prompts": {
       "enterPort": "输入服务器端口：",

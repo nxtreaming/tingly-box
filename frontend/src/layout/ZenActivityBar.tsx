@@ -7,10 +7,11 @@ import {
     IconMessageReport,
 } from '@tabler/icons-react';
 import { Box, Divider, ListItemButton, ListItemIcon, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
-import React, { useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import React, { useMemo, useState } from 'react';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useVersion as useAppVersion } from '../contexts/VersionContext';
+import { useThemeMode } from '../contexts/ThemeContext';
 import {
     activityBarWidth,
     activityContainerPaddingY,
@@ -21,6 +22,8 @@ import {
     headerHeight,
 } from './constants';
 import type { ActivityItem } from './types';
+import type { ThemeMode } from '@/theme';
+import { getThemeOptions } from '@/theme/options';
 
 interface ActivityBarProps {
     activityItems: ActivityItem[];
@@ -30,6 +33,7 @@ interface ActivityBarProps {
     onZenToggle?: () => void;
     zenEnabled?: boolean;
     onMoreClick?: (event: React.MouseEvent<HTMLElement>) => void;
+    onStandaloneNavigate?: () => void;
 }
 
 export const ZenActivityBar: React.FC<ActivityBarProps> = ({
@@ -40,10 +44,19 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
     onZenToggle,
     zenEnabled = false,
     onMoreClick,
+    onStandaloneNavigate,
 }) => {
     const { t, i18n } = useTranslation();
+    const location = useLocation();
     const { currentVersion } = useAppVersion();
+    const { mode: themeMode, setTheme } = useThemeMode();
     const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<HTMLElement | null>(null);
+    const [themeMenuAnchorEl, setThemeMenuAnchorEl] = useState<HTMLElement | null>(null);
+
+    const themeOptions = useMemo(() => getThemeOptions(t), [t]);
+    const currentThemeOption = themeOptions.find((option) => option.value === themeMode);
+    const renderCurrentThemeIcon = currentThemeOption?.renderIcon ?? themeOptions[0].renderIcon;
+    const isOnboardingActive = location.pathname === '/onboarding';
 
     const handleLanguageMenuClick = (event: React.MouseEvent<HTMLElement>) => {
         setLanguageMenuAnchorEl(event.currentTarget);
@@ -57,6 +70,19 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
         i18n.changeLanguage(lng);
         localStorage.setItem('i18nextLng', lng);
         handleLanguageMenuClose();
+    };
+
+    const handleThemeMenuClick = (event: React.MouseEvent<HTMLElement>) => {
+        setThemeMenuAnchorEl(event.currentTarget);
+    };
+
+    const handleThemeMenuClose = () => {
+        setThemeMenuAnchorEl(null);
+    };
+
+    const handleThemeChange = (mode: ThemeMode) => {
+        setTheme(mode);
+        handleThemeMenuClose();
     };
 
     return (
@@ -204,20 +230,79 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
                     </Menu>
                 )}
 
+                {!zenEnabled && (
+                    <Menu
+                        anchorEl={themeMenuAnchorEl}
+                        open={Boolean(themeMenuAnchorEl)}
+                        onClose={handleThemeMenuClose}
+                        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+                        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                        slotProps={{
+                            paper: {
+                                sx: {
+                                    minWidth: 156,
+                                    mt: 1,
+                                },
+                            },
+                        }}
+                    >
+                        {themeOptions.map(({ value, label, renderIcon }) => (
+                            <MenuItem
+                                key={value}
+                                selected={themeMode === value}
+                                onClick={() => handleThemeChange(value)}
+                                sx={{ gap: 1.5 }}
+                            >
+                                {renderIcon({ size: 18 })}
+                                <Typography>{label}</Typography>
+                            </MenuItem>
+                        ))}
+                    </Menu>
+                )}
+
                 {/* Onboarding Quick Add Button - above Zen */}
                 {!zenEnabled && (
                     <Tooltip title={t('layout.onboarding', { defaultValue: 'Quick Add Provider' })} placement="right" arrow>
                         <ListItemButton
                             component={RouterLink}
                             to="/onboarding"
+                            onClick={onStandaloneNavigate}
                             sx={activityItemSx({
-                                '&:hover': { bgcolor: 'action.hover', color: 'primary.main' },
+                                '&:hover': {
+                                    bgcolor: isOnboardingActive ? 'primary.dark' : 'action.hover',
+                                    color: isOnboardingActive ? 'primary.contrastText' : 'primary.main',
+                                },
+                                ...(isOnboardingActive && {
+                                    bgcolor: 'primary.main',
+                                    color: 'primary.contrastText',
+                                    '&::before': {
+                                        content: '""',
+                                        position: 'absolute',
+                                        left: 0,
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        width: 3,
+                                        height: 28,
+                                        bgcolor: 'primary.light',
+                                        borderRadius: '0 2px 2px 0',
+                                        boxShadow: '0 0 8px rgba(37, 99, 235, 0.5)',
+                                    },
+                                }),
                             })}
                         >
                             <ListItemIcon sx={{ minWidth: 0, color: 'inherit', justifyContent: 'center' }}>
                                 <IconWand size={22} />
                             </ListItemIcon>
-                            <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'inherit', textAlign: 'center', lineHeight: 1.2 }}>
+                            <Typography
+                                variant="caption"
+                                sx={{
+                                    fontSize: '0.65rem',
+                                    fontWeight: isOnboardingActive ? 600 : 400,
+                                    color: 'inherit',
+                                    textAlign: 'center',
+                                    lineHeight: 1.2,
+                                }}
+                            >
                                 {t('layout.onboardingShort', { defaultValue: 'Onboard' })}
                             </Typography>
                         </ListItemButton>
@@ -342,6 +427,48 @@ export const ZenActivityBar: React.FC<ActivityBarProps> = ({
                             </ListItemIcon>
                             <Typography variant="caption" sx={{ fontSize: '0.5rem', color: 'inherit', textAlign: 'center', lineHeight: 1.1 }}>
                                 {i18n.language === 'zh' ? '中文' : 'EN'}
+                            </Typography>
+                        </ListItemButton>
+                    </Tooltip>
+                </Box>
+            )}
+
+            {/* Theme button - bottom-left, above language icon */}
+            {!zenEnabled && (
+                <Box
+                    sx={{
+                        py: 0.5,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                    }}
+                >
+                    <Tooltip title={t('layout.activityBar.theme')} placement="right" arrow>
+                        <ListItemButton
+                            onClick={handleThemeMenuClick}
+                            sx={{
+                                minHeight: 48,
+                                mx: 0.5,
+                                px: activityItemPaddingX,
+                                py: 0.75,
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 0.25,
+                                position: 'relative',
+                                color: 'text.secondary',
+                                borderRadius: activityItemRadius,
+                                cursor: 'pointer',
+                                '&:hover': { bgcolor: 'action.hover', color: 'primary.main' },
+                            }}
+                        >
+                            <ListItemIcon sx={{ minWidth: 0, color: 'inherit', justifyContent: 'center' }}>
+                                {renderCurrentThemeIcon({ size: 22 })}
+                            </ListItemIcon>
+                            <Typography variant="caption" sx={{ fontSize: '0.5rem', color: 'inherit', textAlign: 'center', lineHeight: 1.1 }}>
+                                {currentThemeOption?.label ?? 'Light'}
                             </Typography>
                         </ListItemButton>
                     </Tooltip>

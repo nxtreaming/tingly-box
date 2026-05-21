@@ -1,5 +1,5 @@
 import { createTheme } from '@mui/material/styles';
-import type { ThemeMode } from './types';
+import type { ResolvedThemeMode } from './types';
 import { baseTypography, baseShape, baseComponents } from './base';
 import { lightPalette } from './palettes/light';
 import { darkPalette } from './palettes/dark';
@@ -17,7 +17,7 @@ const THEME_REGISTRY = {
   claude: { palette: claudePalette, components: claudeComponents },
 } as const;
 
-const createAppTheme = (mode: ThemeMode) => {
+const createAppTheme = (mode: ResolvedThemeMode) => {
   const { palette, components } = THEME_REGISTRY[mode];
   const textColors = palette.text as { primary: string; secondary: string; disabled: string };
 
@@ -33,4 +33,4 @@ const createAppTheme = (mode: ThemeMode) => {
 };
 
 export default createAppTheme;
-export type { ThemeMode } from './types';
+export type { ResolvedThemeMode, ThemeMode } from './types';
