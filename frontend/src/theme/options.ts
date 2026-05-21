@@ -1,5 +1,5 @@
 import React from 'react';
-import { DarkMode, LightMode, Sync, WbSunny } from '@mui/icons-material';
+import { Computer, DarkMode, LightMode, WbTwilight } from '@mui/icons-material';
 import { SvgIcon } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material';
 import type { SvgIconComponent } from '@mui/icons-material';
@@ -36,7 +36,7 @@ export const isThemeMode = (value: string | null): value is ThemeMode => (
 export const getThemeOptions = (t: ThemeLabelResolver) => [
     { value: 'light', label: t('layout.activityBar.light'), renderIcon: createMuiThemeIcon(LightMode) },
     { value: 'dark', label: t('layout.activityBar.dark'), renderIcon: createMuiThemeIcon(DarkMode) },
-    { value: 'sunlit', label: t('layout.activityBar.sunlit'), renderIcon: createMuiThemeIcon(WbSunny) },
+    { value: 'sunlit', label: t('layout.activityBar.sunlit'), renderIcon: createMuiThemeIcon(WbTwilight) },
     { value: 'claude', label: t('layout.activityBar.claude'), renderIcon: ClaudeThemeIcon },
-    { value: 'system', label: t('layout.activityBar.system'), renderIcon: createMuiThemeIcon(Sync) },
+    { value: 'system', label: t('layout.activityBar.system'), renderIcon: createMuiThemeIcon(Computer) },
 ] as const;
