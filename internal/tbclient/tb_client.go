@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
+	tbagent "github.com/tingly-dev/tingly-box/internal/agent"
 	"github.com/tingly-dev/tingly-box/internal/data/db"
 	serverconfig "github.com/tingly-dev/tingly-box/internal/server/config"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -35,6 +37,12 @@ type TBClient interface {
 	// GetConnectionConfig returns base URL and API key
 	// Base URL defaults to ClaudeCode scenario URL if not configured
 	GetConnectionConfig(ctx context.Context) (*ConnectionConfig, error)
+
+	// GetClaudeCodeEnv returns the environment variables (KEY=VALUE) that point
+	// the Claude Code CLI at the tingly-box gateway's claude_code scenario, so
+	// remote-control @cc sessions route through the configured provider
+	// (including third-party model services) instead of the Anthropic API.
+	GetClaudeCodeEnv(ctx context.Context) ([]string, error)
 
 	// GetHTTPEndpointForScenario returns HTTP endpoint configuration for a scenario
 	GetHTTPEndpointForScenario(ctx context.Context, scenario typ.RuleScenario) (*HTTPEndpointConfig, error)
@@ -124,6 +132,92 @@ func (c *TBClientImpl) GetConnectionConfig(ctx context.Context) (*ConnectionConf
 		BaseURL: c.buildBaseURL(),
 		APIKey:  apiKey,
 	}, nil
+}
+
+// GetClaudeCodeEnv builds the env vars needed to route the Claude Code CLI
+// through the local tingly-box gateway. ANTHROPIC_BASE_URL points at the
+// claude_code scenario endpoint and the per-tier ANTHROPIC_*_MODEL vars carry
+// the request models the user's claude_code rules actually route. The model
+// names are resolved exactly like the frontend's Claude Code config apply
+// (derivePrefsFromRules): the `separate` scenario flag selects per-tier vs
+// unified, and each model name is read from the matching rule's request_model
+// (by stable UUID) so customized model identifiers route correctly.
+func (c *TBClientImpl) GetClaudeCodeEnv(ctx context.Context) ([]string, error) {
+	port := c.config.GetServerPort()
+	if port == 0 {
+		port = 12580
+	}
+	baseURL := fmt.Sprintf("http://localhost:%d", port)
+	apiKey := c.config.GetModelToken()
+
+	models := c.resolveClaudeCodeModels()
+	prefs := tbagent.DefaultClaudeCodePrefs(false)
+	prefs.AnthropicModel = models.def
+	prefs.AnthropicDefaultHaikuModel = models.haiku
+	prefs.AnthropicDefaultSonnetModel = models.sonnet
+	prefs.AnthropicDefaultOpusModel = models.opus
+	prefs.ClaudeCodeSubagentModel = models.subagent
+
+	envMap, err := prefs.ToEnv(baseURL, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("build claude code env: %w", err)
+	}
+
+	env := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	return env, nil
+}
+
+// claudeCodeModels holds the request-model name for each Claude Code model tier.
+type claudeCodeModels struct {
+	def, haiku, sonnet, opus, subagent string
+}
+
+// resolveClaudeCodeModels resolves the per-tier request models the same way the
+// frontend's derivePrefsFromRules does: the `separate` scenario flag selects
+// per-tier vs unified naming, and each model is taken from the corresponding
+// built-in rule's request_model (looked up by its stable UUID), falling back to
+// tb's canonical model names when a rule is absent.
+func (c *TBClientImpl) resolveClaudeCodeModels() claudeCodeModels {
+	byUUID := map[string]string{}
+	for _, rule := range c.config.GetRequestConfigs() {
+		if rule.GetScenario() != typ.ScenarioClaudeCode || !rule.Active {
+			continue
+		}
+		if m := strings.TrimSpace(rule.RequestModel); m != "" {
+			byUUID[rule.UUID] = m
+		}
+	}
+
+	ruleModel := func(uuid, fallback string) string {
+		if m, ok := byUUID[uuid]; ok {
+			return m
+		}
+		return fallback
+	}
+
+	// `separate` flag → per-tier models; anything else (unset/unified/smart)
+	// → a single unified model for every tier.
+	if c.config.GetScenarioFlag(typ.ScenarioClaudeCode, "separate") {
+		return claudeCodeModels{
+			def:      ruleModel("built-in-cc-default", "tingly/cc-default"),
+			haiku:    ruleModel("built-in-cc-haiku", "tingly/cc-haiku"),
+			sonnet:   ruleModel("built-in-cc-sonnet", "tingly/cc-sonnet"),
+			opus:     ruleModel("built-in-cc-opus", "tingly/cc-opus"),
+			subagent: ruleModel("built-in-cc-subagent", "tingly/cc-subagent"),
+		}
+	}
+
+	unified := ruleModel("built-in-cc", "tingly/cc")
+	return claudeCodeModels{
+		def:      unified,
+		haiku:    unified,
+		sonnet:   unified,
+		opus:     unified,
+		subagent: unified,
+	}
 }
 
 func (c *TBClientImpl) GetDefaultRule(ctx context.Context) (*typ.Rule, error) {
