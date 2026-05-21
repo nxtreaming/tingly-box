@@ -218,9 +218,21 @@ const SystemLogViewer = ({ getLogs, getRequestBody, pathPrefix }: SystemLogViewe
     return (
         <Stack spacing={1.5} sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {/* Toolbar */}
-            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ flexShrink: 0 }}>
+            <Stack
+                direction="row"
+                spacing={1.5}
+                alignItems="center"
+                flexWrap="wrap"
+                useFlexGap
+                sx={{
+                    flexShrink: 0,
+                    minHeight: 40,
+                    py: 0.75,
+                    alignContent: 'center',
+                }}
+            >
                 {/* Actions */}
-                <Stack direction="row" spacing={1} alignItems="center">
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 30 }}>
                     <Button
                         variant={autoRefresh ? 'contained' : 'outlined'}
                         size="small"
@@ -239,7 +251,7 @@ const SystemLogViewer = ({ getLogs, getRequestBody, pathPrefix }: SystemLogViewe
                     >
                         Refresh
                     </Button>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap', lineHeight: 1.4 }}>
                         {logs.length}{allLogs.length !== logs.length ? ` / ${allLogs.length}` : ''}
                     </Typography>
                 </Stack>
@@ -247,7 +259,7 @@ const SystemLogViewer = ({ getLogs, getRequestBody, pathPrefix }: SystemLogViewe
                 <Box sx={{ flex: 1 }} />
 
                 {/* Level filter tags */}
-                <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ minHeight: 30, alignContent: 'center' }}>
                     {LOG_LEVELS.map((level) => {
                         const active = selectedLevels.has(level);
                         return (
