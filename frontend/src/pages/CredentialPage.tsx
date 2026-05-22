@@ -10,7 +10,7 @@ import { PageLayout } from '@/components/PageLayout';
 import ProviderFormDialog, { type EnhancedProviderFormData } from '@/components/ProviderFormDialog.tsx';
 import Surface from '@/components/Surface';
 import { useProviderQuota } from '@/hooks/useProviderQuota';
-import { Add, ListAlt, Upload } from '@mui/icons-material';
+import { Add, ListAlt, Upload, VpnKey } from '@mui/icons-material';
 import {
     Button,
     Chip,
@@ -54,6 +54,9 @@ const CredentialPage = () => {
 
     // Unified "Connect Provider" picker state
     const [connectOpen, setConnectOpen] = useState(false);
+
+    const [isLocalProvider, setIsLocalProvider] = useState(false);
+    const [fromConnectPicker, setFromConnectPicker] = useState(false);
 
     // OAuth Dialog state
     const [oauthDialogOpen, setOAuthDialogOpen] = useState(false);
@@ -148,10 +151,29 @@ const CredentialPage = () => {
             return;
         }
         if (selection.kind === 'custom') {
+            setFromConnectPicker(true);
             handleAddApiKey();
             return;
         }
+        if (selection.kind === 'local') {
+            const lp = selection.provider;
+            setIsLocalProvider(true);
+            setFromConnectPicker(true);
+            setApiKeyDialogMode('add');
+            setProviderFormData({
+                uuid: undefined,
+                name: lp.name,
+                apiBase: lp.url,
+                apiStyle: 'openai' as any,
+                token: lp.defaultApiKey ?? '',
+                enabled: true,
+                noKeyRequired: !lp.defaultApiKey,
+            } as any);
+            setApiKeyDialogOpen(true);
+            return;
+        }
         const p = selection.provider;
+        setFromConnectPicker(true);
         setApiKeyDialogMode('add');
         setProviderFormData({
             uuid: undefined,
@@ -614,12 +636,14 @@ const CredentialPage = () => {
             {/* API Key Provider Dialog */}
             <ProviderFormDialog
                 open={apiKeyDialogOpen}
-                onClose={() => setApiKeyDialogOpen(false)}
+                onClose={() => { setApiKeyDialogOpen(false); setIsLocalProvider(false); setFromConnectPicker(false); }}
+                onBack={fromConnectPicker ? () => setConnectOpen(true) : undefined}
                 onSubmit={handleProviderSubmit}
                 onForceAdd={handleProviderForceAdd}
                 data={providerFormData}
                 onChange={handleProviderFormChange}
                 mode={apiKeyDialogMode}
+                optionalEditableToken={isLocalProvider}
             />
 
             {/* Unified provider picker */}

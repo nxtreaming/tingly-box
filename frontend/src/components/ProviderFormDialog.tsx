@@ -1,4 +1,4 @@
-import {Close, ExpandMore, InfoOutlined} from '@mui/icons-material';
+import {ArrowBack, Close, ExpandMore, InfoOutlined} from '@mui/icons-material';
 import {
     Accordion,
     AccordionDetails,
@@ -62,24 +62,29 @@ interface PresetProviderFormDialogProps {
     // not yet visible in state when this fires.
     onSubmit: (e: React.FormEvent, resolved?: Partial<EnhancedProviderFormData>) => void | Promise<void>;
     onForceAdd?: () => void;
+    onBack?: () => void;
     data: EnhancedProviderFormData;
     onChange: (field: keyof EnhancedProviderFormData, value: any) => void;
     mode: 'add' | 'edit';
     title?: string;
     submitText?: string;
     isFirstProvider?: boolean;
+    /** Pass true for local providers: token field stays editable but is not required. */
+    optionalEditableToken?: boolean;
 }
 
 const ProviderFormDialog = ({
                                 open,
                                 onClose,
                                 onSubmit,
+                                onBack,
                                 data,
                                 onChange,
                                 mode,
                                 title,
                                 submitText,
                                 isFirstProvider = false,
+                                optionalEditableToken = false,
                             }: PresetProviderFormDialogProps) => {
     const {t} = useTranslation();
     const defaultTitle = mode === 'add' ? t('providerDialog.addTitle') : t('providerDialog.editTitle');
@@ -573,11 +578,12 @@ const ProviderFormDialog = ({
                                 setVerificationResult(null);
                             }}
                             noApiKey={noApiKey}
+                            optionalEditable={optionalEditableToken}
                             onNoApiKeyChange={(checked) => {
                                 setNoApiKey(checked);
                                 onChange('noKeyRequired', checked);
                                 setVerificationResult(null);
-                                if (checked) {
+                                if (checked && !optionalEditableToken) {
                                     onChange('token', '');
                                 }
                             }}
@@ -723,36 +729,47 @@ const ProviderFormDialog = ({
                         </Accordion>
                     </Stack>
                 </DialogContent>
-                <DialogActions sx={{px: 3, pb: 2, gap: 1, justifyContent: 'flex-end'}}>
-                    <Button
-                        type="button"
-                        variant="outlined"
-                        size="small"
-                        disabled={!hasAnyProtocol || verifying || submitting}
-                        onClick={handleVerify}
-                        title="Test connection using available endpoints (optional check)"
-                    >
-                        {verifying ? (
-                            <CircularProgress size={16} thickness={4}/>
-                        ) : (
-                            'Test Connection'
-                        )}
-                    </Button>
-                    <Button
-                        type="submit"
-                        variant="contained"
-                        size="small"
-                        disabled={!hasAnyProtocol || verifying || submitting}
-                        sx={{
-                            minWidth: verifying || submitting ? '80px' : 'auto',
-                        }}
-                    >
-                        {submitting ? (
-                            <CircularProgress size={20} thickness={4}/>
-                        ) : (
-                            submitText || defaultSubmitText
-                        )}
-                    </Button>
+                <DialogActions sx={{px: 3, pb: 2}}>
+                    {onBack && (
+                        <Button
+                            type="button"
+                            variant="text"
+                            size="small"
+                            startIcon={<ArrowBack fontSize="small"/>}
+                            onClick={() => { onClose(); onBack(); }}
+                        >
+                            Back
+                        </Button>
+                    )}
+                    <Stack direction="row" spacing={1} sx={{ml: 'auto'}}>
+                        <Button
+                            type="button"
+                            variant="outlined"
+                            size="small"
+                            disabled={!hasAnyProtocol || verifying || submitting}
+                            onClick={handleVerify}
+                            title="Test connection using available endpoints (optional check)"
+                        >
+                            {verifying ? (
+                                <CircularProgress size={16} thickness={4}/>
+                            ) : (
+                                'Test Connection'
+                            )}
+                        </Button>
+                        <Button
+                            type="submit"
+                            variant="contained"
+                            size="small"
+                            disabled={!hasAnyProtocol || verifying || submitting}
+                            sx={{minWidth: verifying || submitting ? '80px' : 'auto'}}
+                        >
+                            {submitting ? (
+                                <CircularProgress size={20} thickness={4}/>
+                            ) : (
+                                submitText || defaultSubmitText
+                            )}
+                        </Button>
+                    </Stack>
                 </DialogActions>
             </form>
         </Dialog>

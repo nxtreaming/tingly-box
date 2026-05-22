@@ -764,6 +764,8 @@ export const api = {
         }
     },
 
+
+
     getVersion: async (): Promise<string> => {
         try {
             const client = await getClient();
