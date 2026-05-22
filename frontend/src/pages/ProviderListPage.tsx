@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '@/services/api';
-import { Box, CircularProgress } from '@mui/material';
+import { Box, Stack } from '@mui/material';
+import PageHeader from '@/components/PageHeader';
 import PageLayout from '@/components/PageLayout';
-import UnifiedCard from '@/components/UnifiedCard';
+import Surface from '@/components/Surface';
 import ProviderTable from '@/components/provider-list/ProviderTable';
 import ProviderFilterBar from '@/components/provider-list/ProviderFilterBar';
 import { useNotification } from '@/hooks/useNotification';
@@ -99,28 +100,25 @@ const ProviderListPage: React.FC = () => {
   return (
     <PageLayout loading={loading} notification={notification}>
       <Box sx={{ py: 3, px: { xs: 2, md: 3 } }}>
-        <UnifiedCard
-          size="full"
-          title="Provider List"
-          subtitle="Browse all available AI service providers and their API documentation."
-          rightAction={null}
-        >
-          <ProviderFilterBar
-            filter={filter}
-            onFilterChange={handleFilterChange}
+        <Stack spacing={2.5}>
+          <PageHeader
+            title="Provider List"
+            subtitle="Browse all available AI service providers and their API documentation."
           />
 
-          {loading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-              <CircularProgress />
-            </Box>
-          ) : (
+          <Surface padding={{ xs: 2, sm: 2.5 }}>
+            <ProviderFilterBar
+              filter={filter}
+              resultCount={sortedProviders.length}
+              totalCount={providers.length}
+              onFilterChange={handleFilterChange}
+            />
             <ProviderTable
               providers={sortedProviders}
               onCopySuccess={showSuccess}
             />
-          )}
-        </UnifiedCard>
+          </Surface>
+        </Stack>
       </Box>
     </PageLayout>
   );

@@ -8,14 +8,14 @@ import {
   TableHead,
   TableRow,
   IconButton,
+  Paper,
   Stack,
   Typography,
-  Link,
   Tooltip,
+  alpha,
 } from '@mui/material';
 import LanguageIcon from '@mui/icons-material/Language';
 import DescriptionIcon from '@mui/icons-material/Description';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import ProviderIcon from '@/components/ProviderIcon';
 import ProtocolBadge from './ProtocolBadge';
 
@@ -49,17 +49,27 @@ const ProviderTable: React.FC<ProviderTableProps> = ({ providers, onCopySuccess 
   }
 
   return (
-    <TableContainer>
-      <Table>
+    <TableContainer
+      component={Paper}
+      elevation={0}
+      sx={{
+        border: 1,
+        borderColor: 'divider',
+        borderRadius: 2,
+        boxShadow: 'none',
+        overflowX: 'auto',
+      }}
+    >
+      <Table sx={{ minWidth: 980 }}>
         <TableHead>
-          <TableRow>
-            <TableCell width={60} sx={{ pl: 2 }}>
+          <TableRow sx={{ bgcolor: 'action.hover' }}>
+            <TableCell width={60} sx={{ pl: 2, py: 1.25, fontWeight: 600 }}>
               Icon
             </TableCell>
-            <TableCell>Provider</TableCell>
-            <TableCell width={160}>Protocol</TableCell>
-            <TableCell>Description</TableCell>
-            <TableCell width={120} align="right" sx={{ pr: 2 }}>
+            <TableCell sx={{ py: 1.25, fontWeight: 600 }}>Provider</TableCell>
+            <TableCell width={160} sx={{ py: 1.25, fontWeight: 600 }}>Protocol</TableCell>
+            <TableCell sx={{ py: 1.25, fontWeight: 600 }}>Description</TableCell>
+            <TableCell width={120} align="right" sx={{ pr: 2, py: 1.25, fontWeight: 600 }}>
               Actions
             </TableCell>
           </TableRow>
@@ -68,8 +78,15 @@ const ProviderTable: React.FC<ProviderTableProps> = ({ providers, onCopySuccess 
           {providers.map((provider) => (
             <TableRow
               key={provider.id}
-              hover
-              sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
+              sx={{
+                '& > .MuiTableCell-root': {
+                  py: 1.25,
+                },
+                '&:last-child td, &:last-child th': { border: 0 },
+                '&:hover': {
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+                },
+              }}
             >
               <TableCell sx={{ pl: 2 }}>
                 <ProviderIcon identifier={provider.icon} size={32} />

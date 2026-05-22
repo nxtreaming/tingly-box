@@ -286,8 +286,20 @@ const SmartRoutingLogViewer = ({ getLogs, clearLogs }: SmartRoutingLogViewerProp
 
     return (
         <Stack spacing={1.5} sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ flexShrink: 0 }}>
-                <Stack direction="row" spacing={1} alignItems="center">
+            <Stack
+                direction="row"
+                spacing={1.5}
+                alignItems="center"
+                flexWrap="wrap"
+                useFlexGap
+                sx={{
+                    flexShrink: 0,
+                    minHeight: 40,
+                    py: 0.75,
+                    alignContent: 'center',
+                }}
+            >
+                <Stack direction="row" spacing={1} alignItems="center" sx={{ minHeight: 30 }}>
                     <Button
                         variant={autoRefresh ? 'contained' : 'outlined'}
                         size="small"
@@ -318,12 +330,12 @@ const SmartRoutingLogViewer = ({ getLogs, clearLogs }: SmartRoutingLogViewerProp
                             Clear
                         </Button>
                     )}
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap', lineHeight: 1.4 }}>
                         {logs.length} entries
                     </Typography>
                 </Stack>
                 <Box sx={{ flex: 1 }} />
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.4 }}>
                     Each row is one routing decision. Expand to see per-op evaluation and the request fields.
                 </Typography>
             </Stack>

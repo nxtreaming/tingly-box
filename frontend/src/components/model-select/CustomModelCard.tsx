@@ -1,7 +1,7 @@
 import { CheckCircle } from '@mui/icons-material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
-import { Box, Card, CircularProgress, IconButton, Tooltip, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button } from '@mui/material';
+import { Box, Card, CircularProgress, IconButton, Tooltip, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Button, alpha } from '@mui/material';
 import React, { useState } from 'react';
 import type { Provider } from '../../types/provider.ts';
 
@@ -66,19 +66,19 @@ export default function CustomModelCard({
                     height: 60,
                     border: 1,
                     borderColor: variant === 'selected' ? 'primary.main' : 'grey.300',
-                    borderRadius: 1.5,
-                    backgroundColor: 'background.paper',
+                    borderRadius: 1,
+                    backgroundColor: isSelected ? 'primary.50' : 'background.paper',
                     cursor: loading ? 'wait' : 'pointer',
-                    transition: 'all 0.2s ease-in-out',
+                    transition: 'border-color 0.16s ease, background-color 0.16s ease',
                     position: 'relative',
-                    boxShadow: isSelected ? 2 : 0,
+                    boxShadow: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     overflow: 'hidden',
                     '&:hover': loading ? {} : {
-                        backgroundColor: 'grey.50',
-                        boxShadow: 2,
+                        borderColor: 'primary.main',
+                        backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
                         '& .control-bar': {
                             opacity: 1,
                         },

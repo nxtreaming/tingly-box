@@ -79,10 +79,15 @@ const ProviderCard: React.FC<{
         onClick={onClick}
         sx={{
             position: 'relative',
-            border: 1, borderColor: 'divider', borderRadius: 2,
+            border: 1, borderColor: 'divider', borderRadius: 1,
             p: 1.25, display: 'flex', alignItems: 'center', gap: 1.25,
-            cursor: 'pointer', transition: 'border-color 0.15s, box-shadow 0.15s',
-            '&:hover': {borderColor: 'primary.main', boxShadow: 1},
+            cursor: 'pointer',
+            boxShadow: 'none',
+            transition: 'border-color 0.15s ease, background-color 0.15s ease',
+            '&:hover': {
+                borderColor: 'primary.main',
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
+            },
         }}
     >
         <Box sx={{width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0}}>
@@ -169,6 +174,9 @@ const ConnectProviderDialog: React.FC<ConnectProviderDialogProps> = ({open, onCl
                         startAdornment: (
                             <InputAdornment position="start"><Search fontSize="small"/></InputAdornment>
                         ),
+                        sx: {
+                            borderRadius: 1,
+                        },
                     }}
                 />
             </Box>

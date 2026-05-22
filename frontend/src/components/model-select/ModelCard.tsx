@@ -1,5 +1,5 @@
 import { CheckCircle } from '@mui/icons-material';
-import { Box, Card, CardContent, CircularProgress, IconButton, Typography } from '@mui/material';
+import { Box, Card, CardContent, CircularProgress, Typography, alpha } from '@mui/material';
 
 interface ModelCardProps {
     model: string;
@@ -25,13 +25,14 @@ export default function ModelCard({
             width: '100%',
             height: 60,
             border: 1,
-            borderRadius: 1.5,
+            borderRadius: 1,
             cursor: loading ? 'wait' : 'pointer',
-            transition: 'all 0.2s ease-in-out',
+            transition: 'border-color 0.16s ease, background-color 0.16s ease',
             position: 'relative' as const,
-            boxShadow: isSelected ? 2 : 0,
+            boxShadow: 'none',
             '&:hover': loading ? {} : {
-                boxShadow: 2,
+                borderColor: 'primary.main',
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
             },
         };
 
@@ -41,7 +42,8 @@ export default function ModelCard({
                 borderColor: isSelected ? 'primary.main' : 'warning.main',
                 backgroundColor: isSelected ? 'primary.50' : 'warning.50',
                 '&:hover': {
-                    backgroundColor: isSelected ? 'primary.100' : 'warning.100',
+                    borderColor: 'primary.main',
+                    backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
                 },
             };
         }
@@ -51,7 +53,8 @@ export default function ModelCard({
             borderColor: isSelected ? 'primary.main' : 'grey.300',
             backgroundColor: isSelected ? 'primary.50' : 'background.paper',
             '&:hover': {
-                backgroundColor: isSelected ? 'primary.100' : 'grey.50',
+                borderColor: 'primary.main',
+                backgroundColor: (theme) => alpha(theme.palette.primary.main, 0.04),
             },
         };
     };
