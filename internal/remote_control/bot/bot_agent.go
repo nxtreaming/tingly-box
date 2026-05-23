@@ -59,6 +59,10 @@ func (w *messageTrackingWrapper) OnError(err error) {
 
 // OnComplete forwards to the completion callback.
 func (w *messageTrackingWrapper) OnComplete(result *smart_guide.CompletionResult) {
+	// Drain any trailing tool renders the stream buffered. The smart-guide loop
+	// never emits a `result` frame to trigger handleMapMessage's flush, so
+	// without this the last tool activity would be dropped before the banner.
+	w.delegate.Flush()
 	w.completionCallback.OnComplete(result)
 }
 

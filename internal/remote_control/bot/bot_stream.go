@@ -284,6 +284,15 @@ func (h *streamingMessageHandler) flushToolBufferLocked() {
 	h.sendMessage(text)
 }
 
+// Flush emits any buffered tool renders. Unlike flushToolBufferLocked it takes
+// h.mu itself, so completion callbacks can drain trailing tool activity without
+// relying on a terminal stream frame.
+func (h *streamingMessageHandler) Flush() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.flushToolBufferLocked()
+}
+
 // renderToolBuffer turns the accumulated tool renders into the single message
 // that will be sent to the user. Verbose mode keeps every entry on its own
 // line; quiet mode collapses to a count + preview of the first few entries.
