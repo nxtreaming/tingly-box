@@ -170,7 +170,11 @@ func (e *ClaudeCodeExecutor) Execute(ctx context.Context, req PreparedRequest) (
 		if strings.Contains(errMsg, "Session ID") && strings.Contains(errMsg, "already in use") {
 			response = fmt.Sprintf("⚠️ Session ID conflict: This session is already active in another Claude Code process.\n\nSession ID: %s\n\nPossible solutions:\n• Wait for the other session to complete\n• Use /stop to end the current session and try again\n• If the other process is stuck, terminate it manually", sessionID)
 		}
-		// Runner already called Store.SetFailed inside Wait(); send the user-facing message.
+		// The runner marks the session failed once it actually starts; if Run
+		// failed earlier (e.g. agent resolution, before the runner ran) nothing
+		// did, so mark it here to avoid leaving the session in a non-terminal
+		// state. SetFailed is idempotent.
+		e.deps.SessionMgr.SetFailed(sessionID, errMsg)
 		e.deps.SendTextWithReply(req.HCtx, response, req.ReplyTo)
 		return &ExecutionResult{
 			SessionID:    sessionID,
