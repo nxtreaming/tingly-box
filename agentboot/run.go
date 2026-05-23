@@ -38,8 +38,10 @@ type Prompter interface {
 	OnAsk(ctx context.Context, req AskRequestEvent) (AskResponse, error)
 }
 
-// MessageSink receives the [MessageEvent.Raw] value of each message event,
-// in order. Pass nil to drop message events (e.g. when only completion
+// MessageSink receives, in order, the [MessageEvent.Raw] value of each
+// message event and any terminal [ErrorEvent] the agent emits (passed as the
+// ErrorEvent value itself, so consumers can surface non-fatal errors that do
+// not fail handle.Wait()). Pass nil to drop these (e.g. when only completion
 // matters).
 type MessageSink func(any)
 
@@ -49,7 +51,7 @@ type MessageSink func(any)
 //   - MessageEvent → sink (if non-nil)
 //   - ApprovalRequestEvent → prompter.OnApproval, then handle.Respond
 //   - AskRequestEvent → prompter.OnAsk, then handle.Respond
-//   - ErrorEvent → logged and ignored
+//   - ErrorEvent → logged and forwarded to sink (if non-nil)
 //
 // Approval/ask invocations are synchronous within the loop (matching the
 // existing IMPrompter blocking semantics — Claude waits for a response
@@ -91,6 +93,9 @@ func RunWithPrompter(ctx context.Context, h ExecutionHandle, prompter Prompter, 
 
 		case ErrorEvent:
 			logrus.WithError(e.Err).Warn("agentboot.RunWithPrompter: agent ErrorEvent")
+			if sink != nil {
+				sink(e)
+			}
 		}
 	}
 

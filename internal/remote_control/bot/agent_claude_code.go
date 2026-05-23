@@ -120,6 +120,14 @@ func (e *ClaudeCodeExecutor) Execute(ctx context.Context, req PreparedRequest) (
 		prompter = autoApprovePrompter{inner: e.deps.IMPrompter}
 	}
 	sink := func(raw any) {
+		// Terminal/non-fatal agent errors arrive as ErrorEvent; surface them to
+		// the chat instead of letting them die in the server log.
+		if ev, ok := raw.(agentboot.ErrorEvent); ok {
+			if ev.Err != nil {
+				streamWriter.OnError(ev.Err)
+			}
+			return
+		}
 		if mErr := streamWriter.OnMessage(raw); mErr != nil {
 			streamWriter.OnError(mErr)
 		}
