@@ -7,7 +7,7 @@ import {
     Stack,
     Typography,
 } from '@mui/material';
-import CloseIcon from '@mui/icons-material/Close';
+import { Close as CloseIcon } from '@/components/icons';
 import LogExplorer from '@/components/LogExplorer';
 
 interface ScenarioLogDialogProps {
