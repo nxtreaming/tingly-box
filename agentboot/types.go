@@ -53,77 +53,6 @@ func (m PermissionMode) String() string {
 	return string(m)
 }
 
-// MessageHandler is the primary interface for handling agent callbacks
-// This interface is defined here to avoid circular dependencies
-type MessageHandler interface {
-	OnMessage(msg interface{}) error
-	OnError(err error)
-	OnComplete(result *CompletionResult)
-	OnApproval(ctx context.Context, req PermissionRequest) (PermissionResult, error)
-	OnAsk(ctx context.Context, req AskRequest) (AskResult, error)
-}
-
-// MessageStreamer handles streaming messages (subset of MessageHandler)
-type MessageStreamer interface {
-	OnMessage(msg interface{}) error
-	OnError(err error)
-}
-
-// ApprovalHandler handles permission confirmations
-type ApprovalHandler interface {
-	OnApproval(ctx context.Context, req PermissionRequest) (PermissionResult, error)
-}
-
-// AskHandler handles user questions/selections
-type AskHandler interface {
-	OnAsk(ctx context.Context, req AskRequest) (AskResult, error)
-}
-
-// CompletionCallback handles completion notification
-type CompletionCallback interface {
-	OnComplete(result *CompletionResult)
-}
-
-// AskRequest represents a request to ask the user something
-// This is a simplified version of ask.Request to avoid circular imports
-type AskRequest struct {
-	ID   string `json:"id"`
-	Type string `json:"type"` // "permission", "question", "confirmation", "text_input"
-
-	Platform  string `json:"platform"`
-	ChatID    string `json:"chat_id"`
-	BotUUID   string `json:"bot_uuid"`
-	SessionID string `json:"session_id,omitempty"`
-
-	AgentType AgentType              `json:"agent_type"`
-	ToolName  string                 `json:"tool_name,omitempty"`
-	Input     map[string]interface{} `json:"input,omitempty"`
-	Message   string                 `json:"message,omitempty"`
-	CallID    string                 `json:"call_id,omitempty"`
-	Reason    string                 `json:"reason,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-}
-
-// AskResult represents the user's response to an ask request
-type AskResult struct {
-	ID           string                 `json:"id"`
-	Approved     bool                   `json:"approved,omitempty"`
-	Response     string                 `json:"response,omitempty"`
-	Selection    map[string]interface{} `json:"selection,omitempty"`
-	Remember     bool                   `json:"remember,omitempty"`
-	Reason       string                 `json:"reason,omitempty"`
-	UpdatedInput map[string]interface{} `json:"updated_input,omitempty"`
-}
-
-// CompletionResult contains the final result information
-type CompletionResult struct {
-	Success     bool
-	DurationMS  int64
-	SessionID   string
-	Error       string
-	ExtraFields map[string]any
-}
-
 // ExecutionOptions controls agent execution
 type ExecutionOptions struct {
 	ProjectPath  string
@@ -203,8 +132,22 @@ func (r *Result) TextOutput() string {
 		for _, event := range r.Events {
 			// Handle SDK stream types
 			if event.Type == "assistant" {
-				// Assistant events contain the message
-				if message, ok := event.Data["message"].(string); ok {
+				// Real CLI shape: message is an object whose content is an
+				// array of blocks; concatenate the text blocks.
+				if msg, ok := event.Data["message"].(map[string]any); ok {
+					if content, ok := msg["content"].([]any); ok {
+						for _, block := range content {
+							bm, ok := block.(map[string]any)
+							if !ok || bm["type"] != "text" {
+								continue
+							}
+							if txt, ok := bm["text"].(string); ok {
+								output.WriteString(txt)
+							}
+						}
+					}
+				} else if message, ok := event.Data["message"].(string); ok {
+					// Legacy/simple shape: message is already a string.
 					output.WriteString(message)
 				}
 			} else if event.Type == "text_delta" {
@@ -225,22 +168,6 @@ func (r *Result) TextOutput() string {
 	default:
 		return r.Output
 	}
-}
-
-// GetStatus extracts the final status from events
-func (r *Result) GetStatus() string {
-	if r == nil || r.Format != OutputFormatStreamJSON {
-		return "unknown"
-	}
-
-	for i := len(r.Events) - 1; i >= 0; i-- {
-		if r.Events[i].Type == "status" {
-			if status, ok := r.Events[i].Data["status"].(string); ok {
-				return status
-			}
-		}
-	}
-	return "unknown"
 }
 
 // IsSuccess returns true if the execution was successful
@@ -284,16 +211,6 @@ func (r *Result) GetAssistantMessages() []Event {
 	return r.GetMessagesByType("assistant")
 }
 
-// GetToolUseMessages returns all tool_use message events
-func (r *Result) GetToolUseMessages() []Event {
-	return r.GetMessagesByType("tool_use")
-}
-
-// GetToolResultMessages returns all tool_result message events
-func (r *Result) GetToolResultMessages() []Event {
-	return r.GetMessagesByType("tool_result")
-}
-
 // GetUserMessages returns all user message events
 func (r *Result) GetUserMessages() []Event {
 	return r.GetMessagesByType("user")
@@ -335,36 +252,6 @@ func (r *Result) GetCostUSD() float64 {
 	}
 
 	return 0
-}
-
-// PermissionRequest represents a permission request from an agent
-type PermissionRequest struct {
-	RequestID string                 `json:"request_id"`
-	AgentType AgentType              `json:"agent_type"`
-	ToolName  string                 `json:"tool_name"`
-	Input     map[string]interface{} `json:"input"`
-	Reason    string                 `json:"reason,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-	SessionID string                 `json:"session_id,omitempty"`
-	BotUUID   string                 `json:"bot_uuid,omitempty"` // Bot UUID for routing permission requests
-	ChatID    string                 `json:"chat_id,omitempty"`  // Chat ID for routing
-	Platform  string                 `json:"platform,omitempty"` // Platform for routing
-}
-
-// PermissionResponse represents the response to a permission request
-type PermissionResponse struct {
-	RequestID string    `json:"request_id"`
-	Approved  bool      `json:"approved"`
-	Reason    string    `json:"reason,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// PermissionResult represents the result of a permission check
-type PermissionResult struct {
-	Approved     bool                   `json:"approved"`
-	Reason       string                 `json:"reason,omitempty"`
-	UpdatedInput map[string]interface{} `json:"updated_input,omitempty"`
-	Remember     bool                   `json:"remember,omitempty"`
 }
 
 // PermissionConfig holds permission handler configuration
