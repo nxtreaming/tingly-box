@@ -498,10 +498,11 @@ func (h *KimiHook) BeforeAuth(params map[string]string) error {
 }
 
 func (h *KimiHook) BeforeToken(body map[string]string, header http.Header) error {
-	header.Set("X-Msh-Platform", "kimi cli")
-	header.Set("X-Msh-Version", "1.0.0")
+	header.Set("X-Msh-Platform", "kimi_cli")
+	header.Set("X-Msh-Version", "1.10.6")
 	header.Set("X-Msh-Device-Name", KimiDeviceName())
 	header.Set("X-Msh-Device-Model", KimiDeviceModel())
+	header.Set("X-Msh-Os-Version", KimiOsVersion())
 	return nil
 }
 
@@ -597,4 +598,20 @@ func KimiDeviceModel() string {
 		goos = "Windows"
 	}
 	return goos + " " + runtime.GOARCH
+}
+
+// KimiOsVersion returns a representative OS version string for the X-Msh-Os-Version header.
+// Values mirror typical platform.version() output from kimi-cli:
+//   - Linux   → Ubuntu 22.04 LTS default kernel
+//   - macOS   → macOS Sonoma 14.6.1
+//   - Windows → Windows 11 23H2
+func KimiOsVersion() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "14.6.1"
+	case "windows":
+		return "10.0.22631"
+	default: // linux and others
+		return "6.8.0"
+	}
 }
