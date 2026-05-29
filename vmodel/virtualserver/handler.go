@@ -102,6 +102,11 @@ func (h *Handler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	if e := vmodel.ExtractErrorInjection(vm); e != nil && e.Stage == vmodel.ErrorStagePreContent {
+		writePreContentErrorOpenAI(c, e)
+		return
+	}
+
 	if req.Stream {
 		h.handleOpenAIStreaming(c, &req, vm)
 	} else {
@@ -162,6 +167,11 @@ func (h *Handler) Messages(c *gin.Context) {
 		return
 	}
 
+	if e := vmodel.ExtractErrorInjection(vm); e != nil && e.Stage == vmodel.ErrorStagePreContent {
+		writePreContentErrorAnthropic(c, e)
+		return
+	}
+
 	if req.Stream {
 		h.handleAnthropicStreaming(c, &req, vm)
 	} else {
@@ -207,6 +217,8 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 	c.Header("Connection", "keep-alive")
 
 	msgID := fmt.Sprintf("msg_virtual_%d", time.Now().Unix())
+	midInj := midStreamInjection(vm)
+	gate := newMidStreamGate(midInj)
 
 	c.Stream(func(w io.Writer) bool {
 		if d := vm.SimulatedDelay(); d > 0 {
@@ -217,6 +229,16 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 		var stopReason string
 
 		err := vm.HandleAnthropicStream(req, func(ev any) {
+			if gate != nil {
+				switch ev.(type) {
+				case anthropicvm.DoneEvent, anthropicvm.UsageEvent:
+					return // suppress terminal events; handler applies break instead
+				default:
+					if !gate.Allow() {
+						return
+					}
+				}
+			}
 			switch e := ev.(type) {
 			case anthropicvm.StreamStartEvent:
 				id := e.MsgID
@@ -294,9 +316,26 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 			})
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", errData)
 			c.Writer.Flush()
+		} else if midInj != nil {
+			applyMidStreamBreakAnthropic(c, w, midInj)
 		}
 		return false
 	})
+}
+
+// newMidStreamGate constructs a counting gate for mid-stream injection, or
+// returns nil when no injection is configured. The gate is owned by the
+// handler (not the model): the model's stream loop emits freely; the handler's
+// emit wrapper intercepts after the configured event count.
+func newMidStreamGate(midInj *vmodel.ErrorInjection) *vmodel.EmitGate {
+	if midInj == nil {
+		return nil
+	}
+	cutoff := midInj.AfterEvents
+	if cutoff <= 0 {
+		cutoff = 1
+	}
+	return vmodel.NewEmitGate(cutoff)
 }
 
 // ── OpenAI handlers ───────────────────────────────────────────────────────────
@@ -342,6 +381,8 @@ func (h *Handler) handleOpenAIStreaming(c *gin.Context, req *ChatCompletionReque
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 	c.Header("Access-Control-Allow-Headers", "Cache-Control")
+	midInj := midStreamInjection(vm)
+	gate := newMidStreamGate(midInj)
 
 	if _, ok := c.Writer.(http.Flusher); !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
@@ -368,6 +409,16 @@ func (h *Handler) handleOpenAIStreaming(c *gin.Context, req *ChatCompletionReque
 				logrus.Debug("Client disconnected during streaming")
 				return
 			default:
+			}
+			if gate != nil {
+				switch ev.(type) {
+				case openaivm.DoneEvent, openaivm.UsageEvent:
+					return // suppress terminal events; handler applies break instead
+				default:
+					if !gate.Allow() {
+						return
+					}
+				}
 			}
 			switch e := ev.(type) {
 			case openaivm.DeltaEvent:
@@ -423,6 +474,11 @@ func (h *Handler) handleOpenAIStreaming(c *gin.Context, req *ChatCompletionReque
 				"message": err.Error(),
 				"type":    "api_error",
 			}})
+			return false
+		}
+
+		if midInj != nil {
+			applyMidStreamBreakOpenAI(c, w, midInj)
 			return false
 		}
 

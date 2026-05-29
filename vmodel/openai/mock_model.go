@@ -27,6 +27,10 @@ type MockModelConfig struct {
 	// DoneEvent so streaming consumers can be exercised against a
 	// deterministic, fully-populated usage shape.
 	Usage *vmodel.MockUsage
+
+	// Error, when non-nil, makes this mock simulate a failure. See
+	// vmodel.ErrorInjection for the two supported stages.
+	Error *vmodel.ErrorInjection
 }
 
 // MockModel is an OpenAI-Chat-only mock virtual model.
@@ -67,6 +71,9 @@ func NewMockModel(cfg *MockModelConfig) *MockModel {
 		cfg: cfg,
 	}
 }
+
+// ErrorInjection implements vmodel.ErrorInjectingModel.
+func (m *MockModel) ErrorInjection() *vmodel.ErrorInjection { return m.cfg.Error }
 
 func (m *MockModel) streamChunks() []string {
 	if len(m.cfg.StreamChunks) > 0 {

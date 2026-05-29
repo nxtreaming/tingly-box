@@ -28,6 +28,10 @@ type MockModelConfig struct {
 	// Usage, when set, is emitted as a UsageEvent immediately before
 	// DoneEvent (rendered by virtualserver inside message_delta.usage).
 	Usage *vmodel.MockUsage
+
+	// Error, when non-nil, makes this mock simulate a failure. See
+	// vmodel.ErrorInjection for the two supported stages.
+	Error *vmodel.ErrorInjection
 }
 
 // MockModel is an Anthropic-only mock virtual model. It returns a fixed
@@ -70,6 +74,9 @@ func NewMockModel(cfg *MockModelConfig) *MockModel {
 		cfg: cfg,
 	}
 }
+
+// ErrorInjection implements vmodel.ErrorInjectingModel.
+func (m *MockModel) ErrorInjection() *vmodel.ErrorInjection { return m.cfg.Error }
 
 func (m *MockModel) streamChunks() []string {
 	if len(m.cfg.StreamChunks) > 0 {

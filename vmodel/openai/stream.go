@@ -31,6 +31,7 @@ type DoneEvent struct {
 
 // DefaultStream is a stream adapter for batch-only OpenAI Chat models.
 // It calls HandleOpenAIChat, chunks text content, and emits typed stream events.
+// Batch-only models should delegate here.
 func DefaultStream(vm VirtualModel, req *protocol.OpenAIChatCompletionRequest, emit func(any)) error {
 	resp, err := vm.HandleOpenAIChat(req)
 	if err != nil {
