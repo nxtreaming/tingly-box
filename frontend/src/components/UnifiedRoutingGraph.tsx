@@ -11,7 +11,6 @@ import {
     IconButton,
     Stack,
     Tooltip,
-    Typography,
 } from '@mui/material';
 import { alpha, styled } from '@mui/material/styles';
 import React from 'react';
@@ -22,7 +21,7 @@ import {
     NodeContainer,
     ProviderNode,
     SmartOpNode,
-    SmartDefaultNode,
+    ServiceEntryNode,
 } from '@/components/nodes';
 import { EntryNode } from '@/components/nodes';
 import ModelRequestHeader from '@/components/ModelRequestHeader';
@@ -317,7 +316,7 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                                     />
                                 </NodeContainer>
 
-                                <ArrowNode direction="forward" flowing={false} flowSpeed={1.} />
+                                <ArrowNode direction="forward" />
 
                                 {rule.services && rule.services.length > 0 ? (
                                     <Box sx={{
@@ -366,21 +365,10 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                             </GraphRow>
                         </React.Fragment>
                     ))
-                ) : (
-                    <Box sx={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        justifyContent: 'flex-start',
-                        py: 4
-                    }}>
-                        <Typography variant="body2" color="text.secondary">
-                            No smart rules configured.
-                        </Typography>
-                    </Box>
-                )}
+                ) : null}
 
                 {/* Add Smart Rule Button */}
-                <Box sx={{ display: 'flex', justifyContent: 'flex-start', py: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'flex-start', py: 2 }}>
                     <Button
                         variant="outlined"
                         startIcon={<AddIcon />}
@@ -414,14 +402,13 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
         return (
             <GraphRow>
                 <NodeContainer>
-                    <SmartDefaultNode
+                    <ServiceEntryNode
                         providersCount={record.providers.length}
                         active={active}
-                        onAddProvider={onAddProvider ?? (() => {})}
                     />
                 </NodeContainer>
 
-                <ArrowNode direction="forward" flowing={false} flowSpeed={1.} />
+                <ArrowNode direction="forward" />
 
                 <Box sx={{
                     display: 'flex',
@@ -476,9 +463,9 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                                             />
                                         </Box>
 
-                                        {/* Arrow - visual flow indication */}
-                                        <Box sx={{ flex: 0, display: 'flex', alignItems: 'center', height: 48 }}>
-                                            <ArrowNode direction="forward" flowing={false} flowSpeed={1.} />
+                                        {/* Arrow - height matches EntryNode so it stays centered under flex-start */}
+                                        <Box sx={{ flex: 0, display: 'flex', alignItems: 'center', height: 72 }}>
+                                            <ArrowNode direction="forward" />
                                         </Box>
 
                                         {/* Smart Routing Section (conditional) */}
@@ -494,8 +481,8 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                                                 {renderDefaultProviders()}
                                             </Box>
                                         ) : (
-                                            /* Direct Mode: Providers only */
-                                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+                                            /* Direct Mode: providers inline */
+                                            <Box sx={{ display: 'flex', flexWrap: 'nowrap', gap: 1.5, alignItems: 'center' }}>
                                                 {renderProviderList()}
                                             </Box>
                                         )}
