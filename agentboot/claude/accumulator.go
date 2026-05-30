@@ -103,6 +103,20 @@ func (a *MessageAccumulator) AddEvent(event common.Event) ([]Message, bool, bool
 			a.messages = append(a.messages, msg)
 			newMessages = append(newMessages, msg)
 		}
+
+	case SDKRateLimitEvent,
+		SDKHookStartedMessage, SDKHookProgressMessage, SDKHookResponseMessage,
+		SDKPostTurnSummaryMessage,
+		SDKPartialAssistantMessage, SDKCompactBoundaryMessage,
+		SDKStatusMessage, SDKLocalCommandOutputMessage,
+		SDKToolProgressMessage, SDKAuthStatusMessage,
+		SDKFilesPersistedMessage, SDKToolUseSummaryMessage,
+		SDKPromptSuggestionMessage, SDKTaskProgressMessage,
+		SDKUserMessageReplayMessage:
+		// Infrastructure / housekeeping events emitted by the CLI that carry no
+		// user-facing content. Consume them here so they don't fall through to
+		// the default and produce spurious log noise. Their raw JSON is still
+		// logged at the runner level for diagnostics.
 	}
 
 	return newMessages, hasResult, resultSuccess
@@ -195,6 +209,13 @@ func (a *MessageAccumulator) parseSystemMessage(event common.Event) *SystemMessa
 	var msg SystemMessage
 	if err := unmarshalEvent(event, &msg); err != nil {
 		return nil
+	}
+	// Preserve the full payload so forward-compatible fields (notably the
+	// api_retry/rate_limit metadata, whose names vary by CLI version) survive
+	// for formatting and logging instead of being stripped to the typed fields.
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(event.Raw), &raw); err == nil {
+		msg.Raw = raw
 	}
 	if msg.SessionID != "" {
 		a.sessionID = msg.SessionID

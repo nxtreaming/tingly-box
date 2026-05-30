@@ -51,8 +51,12 @@ const (
 	SDKTaskProgressMessage       = "task_progress"
 	SDKFilesPersistedMessage     = "files_persisted"
 	SDKToolUseSummaryMessage     = "tool_use_summary"
-	SDKRateLimitMessage          = "rate_limit"
-	SDKPromptSuggestionMessage   = "prompt_suggestion"
+	// SDKRateLimitEvent is the top-level type emitted by CC v2.1+ when the
+	// upstream rate-limit state changes. The old name was "rate_limit" but the
+	// actual wire value observed in v2.1.157 is "rate_limit_event".
+	SDKRateLimitEvent          = "rate_limit_event"
+	SDKPromptSuggestionMessage = "prompt_suggestion"
+	SDKPostTurnSummaryMessage  = "post_turn_summary"
 )
 
 const SDKControlPrefix = "control_"
@@ -61,6 +65,13 @@ const SDKControlPrefix = "control_"
 const (
 	SystemSubtypeInit          = "init"
 	SystemSubtypeTaskCompleted = "task_completed"
+	// SystemSubtypeAPIRetry is emitted by the Claude Code CLI when an upstream
+	// API call fails with a retryable error (overload, rate limit, transient
+	// network) and the CLI automatically retries. Surfacing it tells the user
+	// why the agent appears to stall instead of leaving a silent gap.
+	SystemSubtypeAPIRetry = "api_retry"
+	// SystemSubtypeRateLimit is emitted when the CLI is rate limited upstream.
+	SystemSubtypeRateLimit = "rate_limit"
 )
 
 // assistant message error
