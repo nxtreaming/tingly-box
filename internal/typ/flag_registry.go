@@ -10,6 +10,11 @@ const (
 	// FlagTypeInt is a non-negative integer value. The UI renders a numeric
 	// text field. Zero is treated as inactive (equivalent to omitempty).
 	FlagTypeInt FlagValueType = "int"
+	// FlagTypeServiceRef is a {provider, model} pair selected via the model
+	// picker. The UI renders a service picker (provider + model); an empty
+	// pair is treated as inactive. Backed by a typed struct on RuleFlags, not
+	// a scalar.
+	FlagTypeServiceRef FlagValueType = "service_ref"
 )
 
 // FlagCategory groups flags for presentation in the UI.
@@ -33,6 +38,8 @@ const (
 	// FlagCategoryRouting — routing / load-balancing behavior (session
 	// affinity, etc) that decides which upstream service a request lands on.
 	FlagCategoryRouting FlagCategory = "routing"
+	// FlagCategoryVision — image/vision handling (vision proxy describer).
+	FlagCategoryVision FlagCategory = "vision"
 )
 
 // FlagOption is one selectable value for a FlagTypeEnum spec.
@@ -145,6 +152,13 @@ func RuleFlagRegistry() []FlagSpec {
 			Type:        FlagTypeInt,
 			Category:    FlagCategoryRouting,
 			Placeholder: "e.g. 3600",
+		},
+		{
+			Key:         "vision_proxy_service",
+			Label:       "Vision Proxy",
+			Description: "Describe images via a vision-capable model so text-only downstream models can read them. Applies only to requests matched by this rule. Same effect as the scenario-level Vision Proxy but scoped to this rule; when both are configured, this rule-level service takes precedence.",
+			Type:        FlagTypeServiceRef,
+			Category:    FlagCategoryVision,
 		},
 	}
 }
