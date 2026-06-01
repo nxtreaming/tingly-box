@@ -16,13 +16,11 @@ import {
     Typography,
 } from '@mui/material';
 import {
-    AutoAwesome as AutoAwesomeIcon,
-    Cable as CableIcon,
     Close as CloseIcon,
     Extension as ExtensionIcon,
     Input as InputIcon,
     Link as LinkIcon,
-    Outbound as OutboundIcon,
+    Output as OutputIcon,
     Psychology as PsychologyIcon,
     Terminal as TerminalIcon,
     Visibility as VisibilityIcon,
@@ -128,8 +126,6 @@ const setBool = (flags: RuleFlags, key: string, value: boolean): RuleFlags => {
             return { ...flags, useMaxCompletionTokens: value };
         case 'use_max_tokens':
             return { ...flags, useMaxTokens: value };
-        case 'session_affinity':
-            return { ...flags, sessionAffinity: value };
         default:
             return flags;
     }
@@ -180,19 +176,19 @@ interface CategoryMeta {
     icon: React.ReactElement;
 }
 
-// Defaults for known categories; unknown ones fall through to a generic style.
+// Display order for the category sidebar. Unknown categories are appended.
+const CATEGORY_ORDER = ['request', 'response', 'reasoning', 'vision', 'routing', 'app'];
+
 const CATEGORY_META: Record<string, CategoryMeta> = {
-    ide: { label: 'IDE', icon: <TerminalIcon fontSize="small" /> },
-    openai: { label: 'OpenAI', icon: <AutoAwesomeIcon fontSize="small" /> },
-    http: { label: 'HTTP', icon: <CableIcon fontSize="small" /> },
-    response: { label: 'Response', icon: <OutboundIcon fontSize="small" /> },
-    request: { label: 'Request', icon: <InputIcon fontSize="small" /> },
-    reasoning: { label: 'Reasoning', icon: <PsychologyIcon fontSize="small" /> },
-    routing: { label: 'Routing', icon: <LinkIcon fontSize="small" /> },
-    vision: { label: 'Vision', icon: <VisibilityIcon fontSize="small" /> },
+    request:  { label: 'Request',   icon: <InputIcon      fontSize="small" /> },
+    response: { label: 'Response',  icon: <OutputIcon     fontSize="small" /> },
+    reasoning:{ label: 'Reasoning', icon: <PsychologyIcon fontSize="small" /> },
+    vision:   { label: 'Vision',    icon: <VisibilityIcon fontSize="small" /> },
+    routing:  { label: 'Routing',   icon: <LinkIcon       fontSize="small" /> },
+    app:      { label: 'App',       icon: <TerminalIcon   fontSize="small" /> },
 };
 
-const categoryMeta = (category: string): CategoryMeta => CATEGORY_META[category] || {
+const categoryMeta = (category: string): CategoryMeta => CATEGORY_META[category] ?? {
     label: category.charAt(0).toUpperCase() + category.slice(1),
     icon: <ExtensionIcon fontSize="small" />,
 };
@@ -221,19 +217,18 @@ export const FlagCatalogDialog: React.FC<FlagCatalogDialogProps> = ({
         }
     }, [open, flags]);
 
-    // Group registry entries by category, preserving the order they first
-    // appear in the registry — backend dictates display order.
+    // Group registry entries by category, preserving backend order within each
+    // group, then sort groups by CATEGORY_ORDER (unknown categories appended).
     const grouped = useMemo(() => {
-        const order: string[] = [];
         const groups = new Map<string, FlagSpec[]>();
         (registry || []).forEach((spec) => {
-            if (!groups.has(spec.category)) {
-                order.push(spec.category);
-                groups.set(spec.category, []);
-            }
+            if (!groups.has(spec.category)) groups.set(spec.category, []);
             groups.get(spec.category)!.push(spec);
         });
-        return order.map((cat) => ({ category: cat, specs: groups.get(cat) || [] }));
+        const ordered = CATEGORY_ORDER.filter((cat) => groups.has(cat));
+        const orderedSet = new Set(ordered);
+        groups.forEach((_, cat) => { if (!orderedSet.has(cat)) ordered.push(cat); });
+        return ordered.map((cat) => ({ category: cat, specs: groups.get(cat) || [] }));
     }, [registry]);
 
     // Default the selected category to the first one with content.
