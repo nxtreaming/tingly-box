@@ -5,23 +5,26 @@ import {
     ListItemIcon,
     ListItemText,
 } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import {
     Delete as DeleteIcon,
 } from '@/components/icons';
 
-interface ProviderNodeContentProps {
+interface ServiceNodeContentProps {
     menuAnchorEl: HTMLElement | null;
     menuOpen: boolean;
     onMenuClose: () => void;
     onDelete: () => void;
 }
 
-const ProviderNodeContent: React.FC<ProviderNodeContentProps> = ({
+const ServiceNodeContent: React.FC<ServiceNodeContentProps> = ({
     menuAnchorEl,
     menuOpen,
     onMenuClose,
     onDelete,
 }) => {
+    const { t } = useTranslation();
+
     return (
         <Menu
             anchorEl={menuAnchorEl}
@@ -35,13 +38,13 @@ const ProviderNodeContent: React.FC<ProviderNodeContentProps> = ({
                 <ListItemIcon>
                     <DeleteIcon />
                 </ListItemIcon>
-                <ListItemText>Delete Provider</ListItemText>
+                <ListItemText>{t('rule.service.deleteService')}</ListItemText>
             </MenuItem>
             <MenuItem onClick={onMenuClose} sx={{ color: 'text.secondary' }}>
-                <ListItemText>Cancel</ListItemText>
+                <ListItemText>{t('common.cancel')}</ListItemText>
             </MenuItem>
         </Menu>
     );
 };
 
-export default ProviderNodeContent;
+export default ServiceNodeContent;

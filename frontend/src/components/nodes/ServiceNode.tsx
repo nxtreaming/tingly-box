@@ -15,12 +15,13 @@ import {
 } from '@mui/material';
 import { alpha, styled } from '@mui/material/styles';
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { Provider } from '@/types/provider.ts';
 import { ApiStyleBadge } from '../ApiStyleBadge.tsx';
 import { ProbeV2Menu } from '../probe';
 import type { ConfigProvider } from '../RoutingGraphTypes.ts';
-import { ProviderNodeContainer, NODE_LAYER_STYLES } from './styles.tsx';
-import ProviderNodeContent from './ProviderNodeContent.tsx';
+import { ServiceNodeContainer, NODE_LAYER_STYLES } from './styles.tsx';
+import ServiceNodeContent from './ServiceNodeContent.tsx';
 import NodeTooltip from './NodeTooltip.tsx';
 
 const ActionButtonsBox = styled(Box)(() => ({
@@ -33,41 +34,32 @@ const ActionButtonsBox = styled(Box)(() => ({
     transition: 'opacity 0.2s',
 }));
 
-const ProviderNodeWrapper = styled(Box)(() => ({
+const ServiceNodeWrapper = styled(Box)(() => ({
     position: 'relative',
     '&:hover .action-buttons': { opacity: 1 },
 }));
 
 // Inline priority disk — lives inside the left column of the node, no overflow.
 const PriorityDisk = styled(Box, {
-    shouldForwardProp: (p) => p !== 'hasPriority' && p !== 'active',
-})<{ hasPriority: boolean; active: boolean }>(({ theme, hasPriority, active }) => ({
-    width: 22,
-    height: 22,
+    shouldForwardProp: (p) => p !== 'active',
+})<{ active: boolean }>(({ theme, active }) => ({
+    width: 24,
+    height: 24,
     borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    fontSize: '0.72rem',
+    fontSize: '0.75rem',
     fontWeight: 700,
     lineHeight: 1,
     userSelect: 'none',
     cursor: active ? 'pointer' : 'not-allowed',
     transition: 'background-color 0.15s, border-color 0.15s, color 0.15s',
-    // Always hollow/outline style — differentiates from smart-routing's solid disks
     border: '1.5px solid',
     backgroundColor: 'transparent',
-    ...(hasPriority
-        ? {
-              color: theme.palette.primary.main,
-              borderColor: theme.palette.primary.main,
-              '&:hover': active ? { borderColor: theme.palette.primary.dark, color: theme.palette.primary.dark } : {},
-          }
-        : {
-              color: theme.palette.text.disabled,
-              borderColor: theme.palette.text.disabled,
-              '&:hover': active ? { borderColor: theme.palette.primary.main, color: theme.palette.primary.main } : {},
-          }),
+    color: theme.palette.primary.main,
+    borderColor: theme.palette.primary.main,
+    '&:hover': active ? { borderColor: theme.palette.primary.dark, color: theme.palette.primary.dark } : {},
 }));
 
 const getProviderInfo = (providerUuid: string, providersData: Provider[]) => {
@@ -75,7 +67,7 @@ const getProviderInfo = (providerUuid: string, providersData: Provider[]) => {
     return { name: provider?.name || 'Unknown Provider', exists: !!provider, provider };
 };
 
-export interface ProviderNodeComponentProps {
+export interface ServiceNodeProps {
     provider: ConfigProvider;
     apiStyle: string;
     providersData: Provider[];
@@ -85,6 +77,9 @@ export interface ProviderNodeComponentProps {
     onPriorityChange?: (priority: number) => void;
 }
 
+/** @deprecated Use ServiceNodeProps */
+export type ProviderNodeComponentProps = ServiceNodeProps;
+
 interface PriorityBadgeProps {
     priority: number;
     onChange: (priority: number) => void;
@@ -92,13 +87,14 @@ interface PriorityBadgeProps {
 }
 
 const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, active }) => {
+    const { t } = useTranslation();
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-    const [draft, setDraft] = useState(String(priority || ''));
+    const [draft, setDraft] = useState(String(priority ?? 0));
     const [error, setError] = useState<string | null>(null);
 
     const open = (e: React.MouseEvent<HTMLElement>) => {
         e.stopPropagation();
-        setDraft(String(priority || ''));
+        setDraft(String(priority ?? 0));
         setError(null);
         setAnchor(e.currentTarget);
     };
@@ -107,34 +103,30 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
         setError(null);
     };
     const commit = () => {
-        try {
-            const parsed = parseInt(draft, 10);
-            const next = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-            if (next !== priority) {
-                onChange(next);
-            }
-            close();
-        } catch (err) {
-            setError('Invalid priority value. Please enter a number.');
+        const parsed = parseInt(draft, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            setError(t('rule.priority.invalidInput'));
+            return;
         }
+        if (parsed !== priority) onChange(parsed);
+        close();
     };
 
     const tooltip = priority > 0
-        ? `Priority ${priority} (higher = tried first). Click to change.`
-        : 'No priority set. Click to assign a priority.';
+        ? t('rule.priority.tooltipSet', { priority })
+        : t('rule.priority.tooltipUnset');
 
     return (
         <>
             <NodeTooltip title={tooltip} placement="left">
                 <PriorityDisk
-                    hasPriority={priority > 0}
                     active={active}
                     onClick={active ? open : undefined}
-                    aria-label={priority > 0 ? `Priority ${priority}` : 'No priority set'}
+                    aria-label={priority > 0 ? t('rule.priority.ariaLabel', { priority }) : t('rule.priority.ariaUnset')}
                     role="button"
                     tabIndex={active ? 0 : undefined}
                 >
-                    {priority > 0 ? String(priority) : null}
+                    {String(priority ?? 0)}
                 </PriorityDisk>
             </NodeTooltip>
             <Popover
@@ -144,9 +136,11 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
                 anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
                 onClick={(e) => e.stopPropagation()}
             >
-                <Box sx={{ p: 1.5, width: 220 }}>
-                    <Typography variant="caption" color="text.secondary">Priority</Typography>
-                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                <Box sx={{ p: 2, width: 240 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700 }}>
+                        {t('rule.priority.editTitle')}
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="flex-start">
                         <TextField
                             type="number"
                             size="small"
@@ -159,22 +153,29 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
                             inputProps={{ min: 0, step: 1 }}
                             autoFocus
                             fullWidth
-                            placeholder="0 = unset"
+                            placeholder="0"
                             error={!!error}
                             helperText={error}
                         />
-                        <Button size="small" variant="contained" onClick={commit}>Set</Button>
+                        <Button size="small" variant="contained" onClick={commit} sx={{ mt: 0, flexShrink: 0 }}>
+                            {t('common.confirm')}
+                        </Button>
                     </Stack>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                        Higher number runs first. Same number = parallel tier.
-                    </Typography>
+                    <Box sx={{ mt: 1.25, p: 1.25, borderRadius: 1, bgcolor: 'action.hover' }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                            {t('rule.priority.helpHigher')}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.6 }}>
+                            {t('rule.priority.helpZero')}
+                        </Typography>
+                    </Box>
                 </Box>
             </Popover>
         </>
     );
 };
 
-export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
+export const ServiceNode: React.FC<ServiceNodeProps> = ({
     provider,
     apiStyle,
     providersData,
@@ -183,6 +184,7 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
     onNodeClick,
     onPriorityChange,
 }) => {
+    const { t } = useTranslation();
     const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
     const [probeAnchorEl, setProbeAnchorEl] = useState<null | HTMLElement>(null);
     const menuOpen = Boolean(menuAnchorEl);
@@ -194,9 +196,11 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
     const apiStyleLabel = hasDualApiStyle ? 'openai / anthropic' : apiStyle;
 
     const identityTooltip = (() => {
-        if (isProviderMissing) return 'Provider not found. Please refresh or re-import.';
-        if (!provider.provider) return 'Select Provider';
-        const modelLine = provider.model ? `Model: ${provider.model}` : 'Model: (select model)';
+        if (isProviderMissing) return t('rule.service.providerNotFound');
+        if (!provider.provider) return t('rule.service.selectProvider');
+        const modelLine = provider.model
+            ? `Model: ${provider.model}`
+            : `Model: (${t('rule.service.selectModel')})`;
         const styleLine = apiStyleLabel ? `API Style: ${apiStyleLabel}` : '';
         return [`Provider: ${providerInfo.name}`, modelLine, styleLine].filter(Boolean).join('\n');
     })();
@@ -210,8 +214,8 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
     const hasPriority = !!onPriorityChange;
 
     return (
-        <ProviderNodeWrapper>
-            <ProviderNodeContent
+        <ServiceNodeWrapper>
+            <ServiceNodeContent
                 menuAnchorEl={menuAnchorEl}
                 menuOpen={menuOpen}
                 onMenuClose={handleMenuClose}
@@ -230,7 +234,7 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                 />
             )}
 
-            <ProviderNodeContainer
+            <ServiceNodeContainer
                 onClick={onNodeClick}
                 sx={{ cursor: active ? 'pointer' : 'default' }}
             >
@@ -238,51 +242,39 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                     <Box sx={{ ...NODE_LAYER_STYLES.topLayer }}>
                         <Typography variant="body2" color="text.secondary"
                             sx={{ ...NODE_LAYER_STYLES.typography, fontStyle: 'italic' }}>
-                            Select Provider
+                            {t('rule.service.selectProvider')}
                         </Typography>
                     </Box>
                 ) : (
                     <>
-                        {/* Row 1: model name — px leaves room for overlaid priority/tags */}
+                        {/* Row 1: priority disk (left) + model name (center) */}
                         <NodeTooltip title={<Box sx={{ whiteSpace: 'pre-line' }}>{identityTooltip}</Box>} placement="top">
-                            <Box sx={{ ...NODE_LAYER_STYLES.topLayer, px: '28px' }}>
+                            <Box sx={{ ...NODE_LAYER_STYLES.topLayer, position: 'relative', px: '28px' }}>
+                                {hasPriority && (
+                                    <Box sx={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', lineHeight: 0 }}>
+                                        <PriorityBadge
+                                            priority={provider.priority ?? 0}
+                                            onChange={onPriorityChange!}
+                                            active={active}
+                                        />
+                                    </Box>
+                                )}
                                 <Typography variant="body2" noWrap sx={{
                                     ...NODE_LAYER_STYLES.typography,
                                     maxWidth: '100%', textAlign: 'center',
                                     fontStyle: !provider.model ? 'italic' : 'normal',
                                     color: provider.model ? 'text.primary' : 'text.disabled',
                                 }}>
-                                    {provider.model || 'select model'}
+                                    {provider.model || t('rule.service.selectModel')}
                                 </Typography>
                             </Box>
                         </NodeTooltip>
 
-                        {/* Divider — priority floats left, tags float right, both centered on the line */}
-                        <Box sx={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-                            <Divider sx={NODE_LAYER_STYLES.divider} />
-                            {hasPriority && (
-                                <Box sx={{ position: 'absolute', left: '0px', top: '50%', transform: 'translateY(-50%)', lineHeight: 0, backgroundColor: 'background.paper', px: '2px' }}>
-                                    <PriorityBadge
-                                        priority={provider.priority ?? 0}
-                                        onChange={onPriorityChange!}
-                                        active={active}
-                                    />
-                                </Box>
-                            )}
-                            <Box sx={{ position: 'absolute', right: '0px', top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '2px', backgroundColor: 'background.paper', px: '2px', lineHeight: 0 }}>
-                                {hasDualApiStyle ? (
-                                    <>
-                                        <ApiStyleBadge apiStyle="openai" minimal sx={{ fontSize: '0.72rem', width: 22, height: 22 }} />
-                                        <ApiStyleBadge apiStyle="anthropic" minimal sx={{ fontSize: '0.72rem', width: 22, height: 22 }} />
-                                    </>
-                                ) : (
-                                    <ApiStyleBadge apiStyle={apiStyle} minimal sx={{ fontSize: '0.72rem', width: 22, height: 22 }} />
-                                )}
-                            </Box>
-                        </Box>
+                        {/* Divider */}
+                        <Divider sx={NODE_LAYER_STYLES.divider} />
 
-                        {/* Row 2: provider name — same px inset */}
-                        <Box sx={{ ...NODE_LAYER_STYLES.bottomLayer, px: '28px' }}>
+                        {/* Row 2: provider name (center) + api style tag (right) */}
+                        <Box sx={{ ...NODE_LAYER_STYLES.bottomLayer, position: 'relative', px: '28px' }}>
                             {isProviderMissing && (
                                 <WarningIcon sx={{ fontSize: '1rem', color: 'warning.main', flexShrink: 0, mr: 0.5 }} />
                             )}
@@ -291,6 +283,16 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                                 sx={{ ...NODE_LAYER_STYLES.typography, fontWeight: 400, maxWidth: '100%', textAlign: 'center' }}>
                                 {providerInfo.name}
                             </Typography>
+                            <Box sx={{ position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)', display: 'flex', gap: '2px', lineHeight: 0 }}>
+                                {hasDualApiStyle ? (
+                                    <>
+                                        <ApiStyleBadge apiStyle="openai" minimal sx={{ fontSize: '0.72rem', width: 20, height: 20 }} />
+                                        <ApiStyleBadge apiStyle="anthropic" minimal sx={{ fontSize: '0.72rem', width: 20, height: 20 }} />
+                                    </>
+                                ) : (
+                                    <ApiStyleBadge apiStyle={apiStyle} minimal sx={{ fontSize: '0.72rem', width: 20, height: 20 }} />
+                                )}
+                            </Box>
                         </Box>
                     </>
                 )}
@@ -298,7 +300,7 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                 {/* Action buttons (hover) */}
                 <ActionButtonsBox className="action-buttons">
                     {provider.provider && providerInfo.exists && (
-                        <NodeTooltip title="Test Provider" placement="bottom">
+                        <NodeTooltip title={t('rule.service.testService')} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={handleProbeClick}
@@ -308,7 +310,7 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                             </IconButton>
                         </NodeTooltip>
                     )}
-                    <NodeTooltip title="Delete Provider" placement="bottom">
+                    <NodeTooltip title={t('rule.service.deleteService')} placement="bottom">
                         <IconButton
                             size="small"
                             onClick={handleMenuClick}
@@ -318,7 +320,12 @@ export const ProviderNode: React.FC<ProviderNodeComponentProps> = ({
                         </IconButton>
                     </NodeTooltip>
                 </ActionButtonsBox>
-            </ProviderNodeContainer>
-        </ProviderNodeWrapper>
+            </ServiceNodeContainer>
+        </ServiceNodeWrapper>
     );
 };
+
+/** @deprecated Use ServiceNode */
+export const ProviderNode = ServiceNode;
+
+export default ServiceNode;
