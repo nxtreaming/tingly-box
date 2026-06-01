@@ -2,6 +2,8 @@ import {
     Delete as DeleteIcon,
     Warning as WarningIcon,
     PlayArrow as PlayIcon,
+    KeyboardArrowUp,
+    KeyboardArrowDown,
 } from '@/components/icons';
 import {
     Box,
@@ -20,27 +22,17 @@ import type { Provider } from '@/types/provider.ts';
 import { ApiStyleBadge } from '../ApiStyleBadge.tsx';
 import { ProbeV2Menu } from '../probe';
 import type { ConfigProvider } from '../RoutingGraphTypes.ts';
-import { ServiceNodeContainer, NODE_LAYER_STYLES } from './styles.tsx';
+import { ServiceNodeContainer, NODE_LAYER_STYLES, ActionButtonsBox } from './styles.tsx';
 import ServiceNodeContent from './ServiceNodeContent.tsx';
 import NodeTooltip from './NodeTooltip.tsx';
-
-const ActionButtonsBox = styled(Box)(() => ({
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    display: 'flex',
-    gap: 2,
-    opacity: 0,
-    transition: 'opacity 0.2s',
-}));
 
 const ServiceNodeWrapper = styled(Box)(() => ({
     position: 'relative',
     '&:hover .action-buttons': { opacity: 1 },
 }));
 
-// Inline priority disk — lives inside the left column of the node, no overflow.
-const PriorityDisk = styled(Box, {
+// Inline tier disk — lives inside the left column of the node, no overflow.
+const TierDisk = styled(Box, {
     shouldForwardProp: (p) => p !== 'active',
 })<{ active: boolean }>(({ theme, active }) => ({
     width: 24,
@@ -74,19 +66,22 @@ export interface ServiceNodeProps {
     active: boolean;
     onDelete: () => void;
     onNodeClick: () => void;
-    onPriorityChange?: (priority: number) => void;
+    onTierChange?: (priority: number) => void;
+    showTier?: boolean;
+    onMoveTierUp?: () => void;
+    onMoveTierDown?: () => void;
 }
 
 /** @deprecated Use ServiceNodeProps */
 export type ProviderNodeComponentProps = ServiceNodeProps;
 
-interface PriorityBadgeProps {
+interface TierBadgeProps {
     priority: number;
     onChange: (priority: number) => void;
     active: boolean;
 }
 
-const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, active }) => {
+const TierBadge: React.FC<TierBadgeProps> = ({ priority, onChange, active }) => {
     const { t } = useTranslation();
     const [anchor, setAnchor] = useState<HTMLElement | null>(null);
     const [draft, setDraft] = useState(String(priority ?? 0));
@@ -105,7 +100,7 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
     const commit = () => {
         const parsed = parseInt(draft, 10);
         if (!Number.isFinite(parsed) || parsed < 0) {
-            setError(t('rule.priority.invalidInput'));
+            setError(t('rule.tier.invalidInput'));
             return;
         }
         if (parsed !== priority) onChange(parsed);
@@ -113,21 +108,21 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
     };
 
     const tooltip = priority > 0
-        ? t('rule.priority.tooltipSet', { priority })
-        : t('rule.priority.tooltipUnset');
+        ? t('rule.tier.tooltipSet', { tier: priority })
+        : t('rule.tier.tooltipUnset');
 
     return (
         <>
             <NodeTooltip title={tooltip} placement="left">
-                <PriorityDisk
+                <TierDisk
                     active={active}
                     onClick={active ? open : undefined}
-                    aria-label={priority > 0 ? t('rule.priority.ariaLabel', { priority }) : t('rule.priority.ariaUnset')}
+                    aria-label={priority > 0 ? t('rule.tier.ariaLabel', { tier: priority }) : t('rule.tier.ariaUnset')}
                     role="button"
                     tabIndex={active ? 0 : undefined}
                 >
                     {String(priority ?? 0)}
-                </PriorityDisk>
+                </TierDisk>
             </NodeTooltip>
             <Popover
                 open={Boolean(anchor)}
@@ -138,7 +133,7 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
             >
                 <Box sx={{ p: 2, width: 240 }}>
                     <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700 }}>
-                        {t('rule.priority.editTitle')}
+                        {t('rule.tier.editTitle')}
                     </Typography>
                     <Stack direction="row" spacing={1} alignItems="flex-start">
                         <TextField
@@ -163,10 +158,10 @@ const PriorityBadge: React.FC<PriorityBadgeProps> = ({ priority, onChange, activ
                     </Stack>
                     <Box sx={{ mt: 1.25, p: 1.25, borderRadius: 1, bgcolor: 'action.hover' }}>
                         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                            {t('rule.priority.helpHigher')}
+                            {t('rule.tier.helpHigher')}
                         </Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.6 }}>
-                            {t('rule.priority.helpZero')}
+                            {t('rule.tier.helpZero')}
                         </Typography>
                     </Box>
                 </Box>
@@ -182,7 +177,10 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
     active,
     onDelete,
     onNodeClick,
-    onPriorityChange,
+    onTierChange,
+    showTier = true,
+    onMoveTierUp,
+    onMoveTierDown,
 }) => {
     const { t } = useTranslation();
     const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
@@ -211,7 +209,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
     const handleProbeClick = (e: React.MouseEvent<HTMLElement>) => { e.stopPropagation(); setProbeAnchorEl(e.currentTarget); };
     const handleProbeClose = () => setProbeAnchorEl(null);
 
-    const hasPriority = !!onPriorityChange;
+    const hasTier = showTier && !!onTierChange;
 
     return (
         <ServiceNodeWrapper>
@@ -247,14 +245,14 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                     </Box>
                 ) : (
                     <>
-                        {/* Row 1: priority disk (left) + model name (center) */}
+                        {/* Row 1: tier disk (left) + model name (center) */}
                         <NodeTooltip title={<Box sx={{ whiteSpace: 'pre-line' }}>{identityTooltip}</Box>} placement="top">
                             <Box sx={{ ...NODE_LAYER_STYLES.topLayer, position: 'relative', px: '28px' }}>
-                                {hasPriority && (
+                                {hasTier && (
                                     <Box sx={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', lineHeight: 0 }}>
-                                        <PriorityBadge
-                                            priority={provider.priority ?? 0}
-                                            onChange={onPriorityChange!}
+                                        <TierBadge
+                                            priority={provider.tier ?? 0}
+                                            onChange={onTierChange!}
                                             active={active}
                                         />
                                     </Box>
@@ -299,14 +297,36 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
 
                 {/* Action buttons (hover) */}
                 <ActionButtonsBox className="action-buttons">
+                    {onMoveTierUp && (
+                        <NodeTooltip title={t('common.moveUp', { defaultValue: 'Move up' })} placement="bottom">
+                            <IconButton
+                                size="small"
+                                onClick={(e) => { e.stopPropagation(); onMoveTierUp(); }}
+                                sx={{ p: 0.5 }}
+                            >
+                                <KeyboardArrowUp sx={{ fontSize: '1rem' }} />
+                            </IconButton>
+                        </NodeTooltip>
+                    )}
+                    {onMoveTierDown && (
+                        <NodeTooltip title={t('common.moveDown', { defaultValue: 'Move down' })} placement="bottom">
+                            <IconButton
+                                size="small"
+                                onClick={(e) => { e.stopPropagation(); onMoveTierDown(); }}
+                                sx={{ p: 0.5 }}
+                            >
+                                <KeyboardArrowDown sx={{ fontSize: '1rem' }} />
+                            </IconButton>
+                        </NodeTooltip>
+                    )}
                     {provider.provider && providerInfo.exists && (
                         <NodeTooltip title={t('rule.service.testService')} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={handleProbeClick}
-                                sx={{ p: 0.5, backgroundColor: 'background.paper' }}
+                                sx={{ p: 0.5 }}
                             >
-                                <PlayIcon sx={{ fontSize: '1rem', color: 'success.main' }} />
+                                <PlayIcon sx={{ fontSize: '1rem' }} />
                             </IconButton>
                         </NodeTooltip>
                     )}
@@ -314,9 +334,9 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                         <IconButton
                             size="small"
                             onClick={handleMenuClick}
-                            sx={{ p: 0.5, backgroundColor: 'background.paper' }}
+                            sx={{ p: 0.5 }}
                         >
-                            <DeleteIcon sx={{ fontSize: '1rem', color: 'error.main' }} />
+                            <DeleteIcon sx={{ fontSize: '1rem' }} />
                         </IconButton>
                     </NodeTooltip>
                 </ActionButtonsBox>

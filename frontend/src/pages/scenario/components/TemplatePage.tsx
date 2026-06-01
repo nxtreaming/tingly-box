@@ -151,9 +151,10 @@ const TemplatePage: React.FC<TabTemplatePageProps> = (props) => {
         ruleUuid: string,
         configRecord: any,
         mode: 'edit' | 'add',
-        providerUuid?: string
+        providerUuid?: string,
+        addTier?: number
     ) => {
-        openModelSelect({ruleUuid, configRecord, providerUuid, mode});
+        openModelSelect({ruleUuid, configRecord, providerUuid, mode, addTier});
     }, [openModelSelect]);
 
     // Add-provider dialog opened in place (rather than navigating away).

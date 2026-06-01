@@ -48,7 +48,7 @@ export interface RuleCardProps {
     onRuleChange?: (updatedRule: Rule) => void;
     onProviderModelsChange?: (providerUuid: string, models: ProviderModelData) => void;
     onRefreshProvider?: (providerUuid: string) => void;
-    onModelSelectOpen: (ruleUuid: string, configRecord: ConfigRecord, mode: 'edit' | 'add', providerUuid?: string) => void;
+    onModelSelectOpen: (ruleUuid: string, configRecord: ConfigRecord, mode: 'edit' | 'add', providerUuid?: string, addTier?: number) => void;
     collapsible?: boolean;
     initiallyExpanded?: boolean;
     allowDeleteRule?: boolean;
@@ -163,23 +163,20 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         [configRecord, rule.uuid, onModelSelectOpen]
     );
 
-    // Handler: Add provider button click
-    const handleAddProviderButtonClick = useCallback(() => {
+    // Handler: Add provider button click — optional tier assigns the new service to a tier
+    const handleAddServiceButtonClick = useCallback((tier?: number) => {
         if (configRecord) {
-            onModelSelectOpen(rule.uuid, configRecord, 'add');
+            onModelSelectOpen(rule.uuid, configRecord, 'add', undefined, tier);
         }
     }, [configRecord, rule.uuid, onModelSelectOpen]);
 
-    // Handler: Update a service's priority. Setting any service's
-    // priority to > 0 flips the rule into "priority" tactic on save
-    // (handled in pickLbTactic), so users get direct/fallback routing
-    // just by clicking a number badge — no separate tactic selector to
-    // learn. Higher number = higher priority = tried first.
-    const handleProviderPriorityChange = useCallback(
-        async (providerUuid: string, priority: number) => {
+    // Handler: Update a service's tier. Setting any service's tier to > 0
+    // flips the rule into "tier" tactic on save (handled in pickLbTactic).
+    const handleProviderTierChange = useCallback(
+        async (providerUuid: string, tier: number) => {
             if (!configRecord) return;
             const updated = configRecord.providers.map((p) =>
-                p.uuid === providerUuid ? { ...p, priority } : p,
+                p.uuid === providerUuid ? { ...p, tier } : p,
             );
             await updateField(configRecord, setConfigRecord, 'providers', updated);
         },
@@ -324,9 +321,9 @@ export const RuleCard: React.FC<RuleCardProps> = ({
                 extensionsCard={extensionsCard}
                 onUpdateRecord={(field, value) => updateField(configRecord, setConfigRecord, field, value)}
                 onProviderNodeClick={handleProviderNodeClick}
-                onProviderPriorityChange={handleProviderPriorityChange}
+                onTierChange={handleProviderTierChange}
                 onDeleteProvider={(providerUuid) => handleDeleteProvider(configRecord.uuid, providerUuid)}
-                onAddProvider={handleAddProviderButtonClick}
+                onAddService={handleAddServiceButtonClick}
                 onAddSmartRule={smartHandlers.handleAddSmartRule}
                 onEditSmartRule={smartHandlers.handleEditSmartRule}
                 onDeleteSmartRule={smartHandlers.handleDeleteSmartRule}

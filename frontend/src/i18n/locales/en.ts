@@ -368,18 +368,25 @@ export default {
       "testService": "Test Service",
       "deleteService": "Delete Service"
     },
-    "priority": {
+    "tier": {
       "invalidInput": "Please enter a valid number.",
-      "tooltipSet": "Priority {{priority}} (higher = tried first). Click to change.",
-      "tooltipUnset": "No priority set (load balanced with other tier-0 services). Click to assign.",
-      "ariaLabel": "Priority {{priority}}",
-      "ariaUnset": "No priority",
-      "editTitle": "Set Priority",
-      "helpHigher": "Higher number = higher priority. Services in the same tier are load balanced.",
-      "helpZero": "Set to 0 for no priority — shares load with other tier-0 services.",
-      "tierLabel": "P{{priority}}",
+      "tooltipSet": "Tier {{tier}} (lower = tried first). Click to change.",
+      "tooltipUnset": "No tier set (load balanced with other T0 services). Click to assign.",
+      "ariaLabel": "Tier {{tier}}",
+      "ariaUnset": "No tier",
+      "editTitle": "Set Tier",
+      "helpHigher": "Lower number = higher priority (T0 is tried first). Services in the same tier are load balanced.",
+      "helpZero": "Set to 0 for T0 — the first tier.",
+      "tierLabel": "T{{index}}",
       "tierBalanced": "Balanced",
-      "dividerHelp": "Higher-priority services are always tried first. Only when all services in a tier fail (circuit open) does traffic fall through to the next tier. Services within the same tier are load-balanced."
+      "dividerHelp": "Lower-numbered tiers are always tried first. Only when all services in a tier fail (circuit open) does traffic fall through to the next tier. Services within the same tier are load-balanced.",
+      "tooltip": "T0 is tried first, T1 is the fallback, and so on. Services within the same tier are load-balanced.",
+      "addTierTooltip": "Add a new fallback tier",
+      "nodeTooltipPrimaryTitle": "T0 — Highest priority",
+      "nodeTooltipPrimaryBody": "Tried first on every request. Services here are load-balanced.",
+      "nodeTooltipFallbackTitle": "T{{tier}} — Fallback tier",
+      "nodeTooltipFallbackBody": "Tried only when all higher-priority tiers are unavailable (lower number = higher priority). Services here are load-balanced.",
+      "nodeMoveHint": "↑ / ↓  on a service card to move it to a different tier"
     },
     "menu": {
       "refreshModels": "Refresh Models",
