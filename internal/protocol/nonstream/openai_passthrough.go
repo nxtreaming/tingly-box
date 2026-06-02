@@ -7,16 +7,12 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
+	"github.com/tingly-dev/tingly-box/internal/protocol/usage"
 )
 
 // HandleOpenAIChatNonStream handles OpenAI chat non-streaming response.
 // Returns (UsageStat, error)
 func HandleOpenAIChatNonStream(hc *protocol.HandleContext, resp *openai.ChatCompletion) (*protocol.TokenUsage, error) {
-	inputTokens := int(resp.Usage.PromptTokens)
-	outputTokens := int(resp.Usage.CompletionTokens)
-	cacheTokens := int(resp.Usage.PromptTokensDetails.CachedTokens)
-	reasoningTokens := int(resp.Usage.CompletionTokensDetails.ReasoningTokens)
-
 	// Convert response to JSON map for modification
 	responseJSON, err := json.Marshal(resp)
 	if err != nil {
@@ -34,17 +30,12 @@ func HandleOpenAIChatNonStream(hc *protocol.HandleContext, resp *openai.ChatComp
 	responseMap["model"] = hc.ResponseModel
 
 	hc.GinContext.JSON(http.StatusOK, responseMap)
-	return protocol.NewTokenUsageFull(inputTokens, outputTokens, cacheTokens, reasoningTokens), nil
+	return usage.FromOpenAIChatCompletion(resp.Usage), nil
 }
 
 // HandleOpenAIResponsesNonStream handles OpenAI Responses API non-streaming response.
 // Returns (UsageStat, error)
 func HandleOpenAIResponsesNonStream(hc *protocol.HandleContext, resp *responses.Response) (*protocol.TokenUsage, error) {
-	inputTokens := int(resp.Usage.InputTokens)
-	outputTokens := int(resp.Usage.OutputTokens)
-	cacheTokens := int(resp.Usage.InputTokensDetails.CachedTokens)
-	reasoningTokens := int(resp.Usage.OutputTokensDetails.ReasoningTokens)
-
 	hc.GinContext.JSON(http.StatusOK, resp)
-	return protocol.NewTokenUsageFull(inputTokens, outputTokens, cacheTokens, reasoningTokens), nil
+	return usage.FromOpenAIResponses(resp.Usage), nil
 }

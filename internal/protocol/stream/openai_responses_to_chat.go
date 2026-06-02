@@ -191,9 +191,9 @@ func HandleResponsesToOpenAIChatStream(
 			}
 
 		case "response.completed":
-			state.inputTokens = evt.Response.Usage.InputTokens
-			state.outputTokens = evt.Response.Usage.OutputTokens
 			state.cacheTokens = evt.Response.Usage.InputTokensDetails.CachedTokens
+			state.inputTokens = evt.Response.Usage.InputTokens - state.cacheTokens
+			state.outputTokens = evt.Response.Usage.OutputTokens
 			state.reasoningTokens = evt.Response.Usage.OutputTokensDetails.ReasoningTokens
 			if evt.Response.Usage.TotalTokens != 0 {
 				state.totalTokens = evt.Response.Usage.TotalTokens
@@ -339,12 +339,13 @@ func flushResponsesToChatCompletedOutput(c *gin.Context, flusher http.Flusher, s
 func writeResponsesToChatFinalChunk(c *gin.Context, flusher http.Flusher, state *responsesToChatState, responseModel, finishReason string, includeUsage bool) {
 	finalChunk := newResponsesToChatChunk(state, responseModel, chatCompletionStreamDelta{}, &finishReason)
 	if includeUsage {
+		totalInput := state.inputTokens + state.cacheTokens
 		total := state.totalTokens
 		if total == 0 {
-			total = state.inputTokens + state.outputTokens
+			total = totalInput + state.outputTokens
 		}
 		usage := &chatCompletionStreamUsage{
-			PromptTokens:     state.inputTokens,
+			PromptTokens:     totalInput,
 			CompletionTokens: state.outputTokens,
 			TotalTokens:      total,
 		}

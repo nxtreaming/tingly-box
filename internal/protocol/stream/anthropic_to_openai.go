@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/openai/openai-go/v3"
 	"github.com/sirupsen/logrus"
+
+	usagepkg "github.com/tingly-dev/tingly-box/internal/protocol/usage"
 )
 
 type AnthropicToOpenAIToolCall struct {
@@ -63,14 +65,12 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 
 	// Track streaming state
 	var (
-		chatID       = fmt.Sprintf("chatcmpl-%d", time.Now().Unix())
-		created      = time.Now().Unix()
-		contentText  = strings.Builder{}
-		usage        *anthropic.BetaMessageDeltaUsage
-		inputTokens  int
-		outputTokens int
-		finished     bool
-		hookErr      error
+		chatID      = fmt.Sprintf("chatcmpl-%d", time.Now().Unix())
+		created     = time.Now().Unix()
+		contentText = strings.Builder{}
+		acc         = usagepkg.NewAnthropicAccumulator()
+		finished    bool
+		hookErr     error
 		// Track tool call state for proper streaming
 		toolCallID       string
 		toolCallName     string
@@ -117,6 +117,7 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 				},
 			}
 			sendOpenAIStreamChunk(c, chunk, disableStreamUsage)
+			acc.ConsumeBeta(&event)
 
 		case "content_block_start":
 			// Content block starting
@@ -245,12 +246,7 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 			// Content block finished - no specific action needed
 
 		case "message_delta":
-			// Message delta (includes usage info)
-			if event.Usage.InputTokens != 0 || event.Usage.OutputTokens != 0 {
-				usage = &event.Usage
-				inputTokens = int(event.Usage.InputTokens)
-				outputTokens = int(event.Usage.OutputTokens)
-			}
+			acc.ConsumeBeta(&event)
 
 		case "message_stop":
 			if hooks != nil && hooks.OnToolCallsFinal != nil && len(pendingToolCalls) > 0 {
@@ -291,20 +287,8 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 			}
 
 			// Add usage if available and not disabled.
-			// Anthropic's message_delta usage carries cache_read / cache_creation
-			// counts; forward cached prompt tokens into OpenAI's
-			// prompt_tokens_details.cached_tokens so downstream consumers see
-			// the full shape. (Anthropic has no reasoning_tokens analogue —
-			// extended-thinking tokens are billed inside output_tokens.)
-			if !disableStreamUsage && usage != nil {
-				chunk.Usage = openai.CompletionUsage{
-					PromptTokens:     usage.InputTokens,
-					CompletionTokens: usage.OutputTokens,
-					TotalTokens:      usage.InputTokens + usage.OutputTokens,
-				}
-				if usage.CacheReadInputTokens > 0 {
-					chunk.Usage.PromptTokensDetails.CachedTokens = usage.CacheReadInputTokens
-				}
+			if !disableStreamUsage && acc.HasUsage() {
+				chunk.Usage = usagepkg.ChatUsage(acc.Result())
 			}
 
 			sendOpenAIStreamChunk(c, chunk, disableStreamUsage)
@@ -318,11 +302,13 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 		return true
 	})
 
+	result := acc.Result()
+	in, out := result.InputTokens, result.OutputTokens
 	if errors.Is(hookErr, ErrMCPStreamContinue) {
-		return inputTokens, outputTokens, hookErr
+		return in, out, hookErr
 	}
 	if finished {
-		return inputTokens, outputTokens, nil
+		return in, out, nil
 	}
 
 	// Check for stream errors
@@ -330,12 +316,12 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 		// Check if it was a client cancellation
 		if errors.Is(err, context.Canceled) {
 			logrus.WithContext(c.Request.Context()).Debug("Anthropic to OpenAI stream canceled by client")
-			return inputTokens, outputTokens, nil
+			return in, out, nil
 		}
 		// EOF is expected when stream ends normally
 		if errors.Is(err, io.EOF) {
 			logrus.WithContext(c.Request.Context()).Info("Anthropic stream ended normally (EOF)")
-			return inputTokens, outputTokens, nil
+			return in, out, nil
 		}
 		logrus.WithContext(c.Request.Context()).Errorf("Anthropic stream error: %v", err)
 		// Stream failed before any content reached the client: surface a
@@ -343,14 +329,14 @@ func AnthropicToOpenAIStreamWithMCPHooks(c *gin.Context, req *anthropic.BetaMess
 		// instead of a 200 SSE error event.
 		if !c.Writer.Written() {
 			SendStreamingError(c, err)
-			return inputTokens, outputTokens, fmt.Errorf("anthropic stream error: %w", err)
+			return in, out, fmt.Errorf("anthropic stream error: %w", err)
 		}
 		sendOpenAIStreamError(c, err.Error(), "stream_error")
 		// Return the error so TB's usage tracking can detect and report health status
-		return inputTokens, outputTokens, fmt.Errorf("anthropic stream error: %w", err)
+		return in, out, fmt.Errorf("anthropic stream error: %w", err)
 	}
 
-	return inputTokens, outputTokens, nil
+	return in, out, nil
 }
 
 // sendOpenAIStreamChunk sends a ChatCompletionChunk as SSE

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
+	usagepkg "github.com/tingly-dev/tingly-box/internal/protocol/usage"
 )
 
 // HandleAnthropicBetaToOpenAIResponsesStream converts Anthropic streaming events
@@ -64,8 +65,7 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 
 	// Initialize converter state
 	state := newResponsesConverterState(time.Now().Unix())
-	var inputTokens, outputTokens, cacheTokens int
-	var hasUsage bool
+	acc := usagepkg.NewAnthropicAccumulator()
 	completedSent := false
 
 	// Process the stream
@@ -77,7 +77,7 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 			// Send completion event before returning since client is disconnecting
 			if !completedSent && !state.finished {
 				logrus.WithContext(c.Request.Context()).Info("Client disconnected, sending completion event before close")
-				sendFinalCompletionEvent(c, state, flusher, inputTokens, outputTokens, cacheTokens)
+				sendCompletionEvent(c, state, flusher, acc.Result())
 				completedSent = true
 			}
 			return false
@@ -96,6 +96,7 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 		case "message_start":
 			handleMessageStart(c, state, responseModel, flusher)
 			state.hasSentCreated = true
+			acc.ConsumeBeta(&event)
 
 		case "content_block_start":
 			handleContentBlockStart(c, state, event, flusher)
@@ -107,12 +108,10 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 			handleContentBlockStop(c, state, event, flusher)
 
 		case "message_delta":
-			inputTokens, outputTokens, cacheTokens, hasUsage = handleMessageDelta(
-				state, event, inputTokens, outputTokens,
-			)
+			acc.ConsumeBeta(&event)
 
 		case "message_stop":
-			handleMessageStop(c, state, flusher)
+			sendCompletionEvent(c, state, flusher, acc.Result())
 			completedSent = true
 			return false
 		}
@@ -136,32 +135,23 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 			// Send completion event for all errors including context.Canceled
 			// The Stream loop's context check may not have run if stream.Next() was blocking
 			logrus.WithContext(c.Request.Context()).WithError(err).Warn("Stream error occurred, sending completion event")
-			sendFinalCompletionEvent(c, state, flusher, inputTokens, outputTokens, cacheTokens)
+			sendCompletionEvent(c, state, flusher, acc.Result())
 			completedSent = true
 		}
 
 		if errors.Is(err, context.Canceled) {
 			logrus.WithContext(c.Request.Context()).Debug("Anthropic to Responses stream canceled by client")
-			if hasUsage {
-				return protocol.NewTokenUsageWithCache(inputTokens, outputTokens, cacheTokens), nil
-			}
-			return protocol.ZeroTokenUsage(), nil
+			return acc.Result(), nil
 		}
 
 		if errors.Is(err, io.EOF) {
 			logrus.WithContext(c.Request.Context()).Info("Anthropic stream ended normally (EOF)")
-			if hasUsage {
-				return protocol.NewTokenUsageWithCache(inputTokens, outputTokens, cacheTokens), nil
-			}
-			return protocol.ZeroTokenUsage(), nil
+			return acc.Result(), nil
 		}
 
 		logrus.WithContext(c.Request.Context()).Errorf("Anthropic stream error: %v", err)
 		sendResponsesErrorEvent(c, err.Error(), "stream_error", flusher)
-		if hasUsage {
-			return protocol.NewTokenUsageWithCache(inputTokens, outputTokens, cacheTokens), err
-		}
-		return protocol.ZeroTokenUsage(), err
+		return acc.Result(), err
 	}
 
 	// Some providers end the stream without emitting message_stop
@@ -171,14 +161,11 @@ func HandleAnthropicBetaToOpenAIResponsesStream(
 			handleMessageStart(c, state, responseModel, flusher)
 			state.hasSentCreated = true
 		}
-		sendFinalCompletionEvent(c, state, flusher, inputTokens, outputTokens, cacheTokens)
+		sendCompletionEvent(c, state, flusher, acc.Result())
 		completedSent = true
 	}
 
-	if hasUsage {
-		return protocol.NewTokenUsageWithCache(inputTokens, outputTokens, cacheTokens), nil
-	}
-	return protocol.ZeroTokenUsage(), nil
+	return acc.Result(), nil
 }
 
 // responsesConverterState maintains the state during stream conversion
@@ -187,9 +174,6 @@ type responsesConverterState struct {
 	itemID           string
 	outputIndex      int
 	accumulatedText  string
-	inputTokens      int64
-	outputTokens     int64
-	cacheTokens      int64 // Cache read tokens from Anthropic
 	finished         bool
 	pendingToolCalls map[int]*pendingResponseToolCall
 	hasSentCreated   bool
@@ -453,95 +437,6 @@ func handleContentBlockStop(
 	}
 }
 
-// handleMessageDelta updates usage information
-func handleMessageDelta(
-	state *responsesConverterState,
-	event anthropic.BetaRawMessageStreamEventUnion,
-	inputTokens, outputTokens int,
-) (int, int, int, bool) {
-	if event.Usage.InputTokens != 0 || event.Usage.OutputTokens != 0 || event.Usage.CacheReadInputTokens != 0 {
-		state.inputTokens = event.Usage.InputTokens
-		state.outputTokens = event.Usage.OutputTokens
-		state.cacheTokens = event.Usage.CacheReadInputTokens
-		inputTokens = int(event.Usage.InputTokens)
-		outputTokens = int(event.Usage.OutputTokens)
-		cacheTokens := int(event.Usage.CacheReadInputTokens)
-		return inputTokens, outputTokens, cacheTokens, true
-	}
-	return inputTokens, outputTokens, int(state.cacheTokens), false
-}
-
-// handleMessageStop sends the response.completed event
-func handleMessageStop(
-	c *gin.Context,
-	state *responsesConverterState,
-	flusher http.Flusher,
-) {
-	state.finished = true
-
-	// Build the final output array with proper message structure
-	var output []responsesOutputItemWire
-
-	// Add text content as a message item if present
-	if state.accumulatedText != "" {
-		output = append(output, responsesOutputItemWire{
-			ID:     state.itemID,
-			Type:   "message",
-			Status: "completed",
-			Role:   "assistant",
-			Content: []responsesContentPartWire{
-				{
-					Type: "output_text",
-					Text: state.accumulatedText,
-				},
-			},
-		})
-	}
-
-	// Add tool calls with proper structure including call_id
-	for _, pending := range state.pendingToolCalls {
-		argumentsStr := pending.arguments.String()
-		output = append(output, responsesOutputItemWire{
-			Type:      "function_call",
-			ID:        pending.itemID,
-			CallID:    pending.itemID,
-			Name:      pending.name,
-			Arguments: &argumentsStr,
-			Status:    "completed",
-		})
-	}
-
-	// Build usage info from state
-	inputTokens := state.inputTokens
-	outputTokens := state.outputTokens
-	cacheTokens := state.cacheTokens
-
-	doneEvent := responsesCompletedEvent{
-		Type:           "response.completed",
-		SequenceNumber: int64(state.nextSequenceNumber()),
-		Response: responsesWireResponse{
-			ID:          state.responseID,
-			Object:      "response",
-			CreatedAt:   state.createdAt,
-			Status:      "completed",
-			CompletedAt: state.createdAt,
-			Model:       "",
-			Output:      output,
-			Usage: &responsesUsageWire{
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-				TotalTokens:  inputTokens + outputTokens,
-				InputTokensDetails: responsesInputTokensDetailsWire{
-					CachedTokens: cacheTokens,
-				},
-			},
-		},
-	}
-	sendResponsesEvent(c, doneEvent, flusher)
-
-	// Send final [DONE] message
-	OpenAISSEDone(c)
-}
 
 // sendResponsesEvent sends a single Responses API event as SSE
 func sendResponsesEvent(c *gin.Context, event any, flusher http.Flusher) {
@@ -581,10 +476,25 @@ func sendResponsesErrorEvent(c *gin.Context, message string, errorType string, f
 	sendResponsesEvent(c, errorEvent, f)
 }
 
-// sendFinalCompletionEvent sends the response.completed event with the current state
-// This is used when the stream ends unexpectedly to ensure clients receive a completion event
-func sendFinalCompletionEvent(c *gin.Context, state *responsesConverterState, flusher http.Flusher, inputTokens, outputTokens, cacheTokens int) {
-	// Check if connection is still valid before writing
+// toResponsesUsageWire converts normalized TokenUsage to the Responses API wire
+// usage struct. OpenAI Responses wire: InputTokens = TOTAL (uncached + cached);
+// CachedTokens is a subset. Uses a local struct rather than the SDK type so we
+// can emit cached_tokens without omitempty (required by Codex CLI).
+func toResponsesUsageWire(u *protocol.TokenUsage) *responsesUsageWire {
+	totalInput := int64(u.InputTokens + u.CacheInputTokens)
+	return &responsesUsageWire{
+		InputTokens:  totalInput,
+		OutputTokens: int64(u.OutputTokens),
+		TotalTokens:  totalInput + int64(u.OutputTokens),
+		InputTokensDetails: responsesInputTokensDetailsWire{
+			CachedTokens: int64(u.CacheInputTokens),
+		},
+	}
+}
+
+// sendCompletionEvent sends the response.completed event and the final [DONE] marker.
+// u carries the normalized token counts from the accumulator.
+func sendCompletionEvent(c *gin.Context, state *responsesConverterState, flusher http.Flusher, u *protocol.TokenUsage) {
 	if c == nil || c.Writer == nil || flusher == nil {
 		logrus.Warn("Cannot send completion event: connection is nil")
 		return
@@ -592,10 +502,7 @@ func sendFinalCompletionEvent(c *gin.Context, state *responsesConverterState, fl
 
 	state.finished = true
 
-	// Build the final output array with proper message structure
 	var output []responsesOutputItemWire
-
-	// Add text content as a message item if present
 	if state.accumulatedText != "" {
 		output = append(output, responsesOutputItemWire{
 			ID:     state.itemID,
@@ -603,15 +510,10 @@ func sendFinalCompletionEvent(c *gin.Context, state *responsesConverterState, fl
 			Status: "completed",
 			Role:   "assistant",
 			Content: []responsesContentPartWire{
-				{
-					Type: "output_text",
-					Text: state.accumulatedText,
-				},
+				{Type: "output_text", Text: state.accumulatedText},
 			},
 		})
 	}
-
-	// Add tool calls with proper structure including call_id
 	for _, pending := range state.pendingToolCalls {
 		argumentsStr := pending.arguments.String()
 		output = append(output, responsesOutputItemWire{
@@ -622,20 +524,6 @@ func sendFinalCompletionEvent(c *gin.Context, state *responsesConverterState, fl
 			Arguments: &argumentsStr,
 			Status:    "completed",
 		})
-	}
-
-	// Build usage info from state - use provided values if state values are zero
-	inputTokensFinal := int(state.inputTokens)
-	outputTokensFinal := int(state.outputTokens)
-	cacheTokensFinal := int(state.cacheTokens)
-	if inputTokensFinal == 0 && inputTokens > 0 {
-		inputTokensFinal = inputTokens
-	}
-	if outputTokensFinal == 0 && outputTokens > 0 {
-		outputTokensFinal = outputTokens
-	}
-	if cacheTokensFinal == 0 && cacheTokens > 0 {
-		cacheTokensFinal = cacheTokens
 	}
 
 	doneEvent := responsesCompletedEvent{
@@ -649,19 +537,10 @@ func sendFinalCompletionEvent(c *gin.Context, state *responsesConverterState, fl
 			CompletedAt: state.createdAt,
 			Model:       "",
 			Output:      output,
-			Usage: &responsesUsageWire{
-				InputTokens:  int64(inputTokensFinal),
-				OutputTokens: int64(outputTokensFinal),
-				TotalTokens:  int64(inputTokensFinal + outputTokensFinal),
-				InputTokensDetails: responsesInputTokensDetailsWire{
-					CachedTokens: int64(cacheTokensFinal),
-				},
-			},
+			Usage: toResponsesUsageWire(u),
 		},
 	}
 	sendResponsesEvent(c, doneEvent, flusher)
-
-	// Send final [DONE] message
 	OpenAISSEDone(c)
 }
 
