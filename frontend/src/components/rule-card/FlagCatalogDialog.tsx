@@ -74,8 +74,8 @@ const flagToBool = (flags: RuleFlags | undefined, key: string): boolean => {
             return !!flags.useMaxCompletionTokens;
         case 'use_max_tokens':
             return !!flags.useMaxTokens;
-        case 'anthropic_compat':
-            return !!flags.anthropicCompat;
+        case 'claude_code_compat':
+            return !!flags.claudeCodeCompat;
         default:
             return false;
     }
@@ -128,8 +128,8 @@ const setBool = (flags: RuleFlags, key: string, value: boolean): RuleFlags => {
             return { ...flags, useMaxCompletionTokens: value };
         case 'use_max_tokens':
             return { ...flags, useMaxTokens: value };
-        case 'anthropic_compat':
-            return { ...flags, anthropicCompat: value };
+        case 'claude_code_compat':
+            return { ...flags, claudeCodeCompat: value };
         default:
             return flags;
     }
@@ -181,15 +181,16 @@ interface CategoryMeta {
 }
 
 // Display order for the category sidebar. Unknown categories are appended.
-const CATEGORY_ORDER = ['request', 'response', 'reasoning', 'vision', 'routing', 'app'];
+const CATEGORY_ORDER = ['app', 'request_openai', 'request_anthropic', 'response', 'reasoning', 'vision', 'routing'];
 
 const CATEGORY_META: Record<string, CategoryMeta> = {
-    request:  { label: 'Request',   icon: <InputIcon      fontSize="small" /> },
-    response: { label: 'Response',  icon: <OutputIcon     fontSize="small" /> },
-    reasoning:{ label: 'Reasoning', icon: <PsychologyIcon fontSize="small" /> },
-    vision:   { label: 'Vision',    icon: <VisibilityIcon fontSize="small" /> },
-    routing:  { label: 'Routing',   icon: <LinkIcon       fontSize="small" /> },
-    app:      { label: 'App',       icon: <TerminalIcon   fontSize="small" /> },
+    app:               { label: 'App',         icon: <TerminalIcon   fontSize="small" /> },
+    request_openai:    { label: 'Request (O)', icon: <InputIcon      fontSize="small" /> },
+    request_anthropic: { label: 'Request (A)', icon: <InputIcon      fontSize="small" /> },
+    response:          { label: 'Response',    icon: <OutputIcon     fontSize="small" /> },
+    reasoning:         { label: 'Reasoning',   icon: <PsychologyIcon fontSize="small" /> },
+    vision:            { label: 'Vision',      icon: <VisibilityIcon fontSize="small" /> },
+    routing:           { label: 'Routing',     icon: <LinkIcon       fontSize="small" /> },
 };
 
 const categoryMeta = (category: string): CategoryMeta => CATEGORY_META[category] ?? {
