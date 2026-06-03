@@ -14,12 +14,12 @@ export const TOKEN_COLORS = {
         gradientEnd: 'rgba(59, 130, 246, 0.6)',
     },
     cache: {
-        main: '#cbd5e1',   // Slate 300 - blue-gray, subtle
-        light: '#e2e8f0',  // Slate 200
-        dark: '#94a3b8',   // Slate 400
-        gradient: 'rgba(203, 213, 225, 0.7)',
-        gradientStart: 'rgba(203, 213, 225, 0.8)',
-        gradientEnd: 'rgba(203, 213, 225, 0.6)',
+        main: '#94a3b8',   // Slate 400 - visible gray
+        light: '#cbd5e1',  // Slate 300
+        dark: '#64748b',   // Slate 500
+        gradient: 'rgba(148, 163, 184, 0.7)',
+        gradientStart: 'rgba(148, 163, 184, 0.8)',
+        gradientEnd: 'rgba(148, 163, 184, 0.6)',
     },
     output: {
         main: '#10B981',  // Emerald 500

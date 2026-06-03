@@ -21,7 +21,7 @@ interface TokenHistoryChartProps {
  */
 export function TokenHistoryChart({ data, interval = 'day' }: TokenHistoryChartProps) {
     // Determine chart type based on interval or data characteristics
-    const isHourlyMode = interval === 'hour' || (interval === 'day' && data.length <= 24);
+    const isHourlyMode = interval === 'hour' || interval === 'minute' || (interval === 'day' && data.length <= 24);
 
     if (isHourlyMode) {
         return <HourlyTokenHistoryChart data={data} />;

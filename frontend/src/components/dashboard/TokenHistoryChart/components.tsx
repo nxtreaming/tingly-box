@@ -49,6 +49,8 @@ export function LegendItem({ label, color, visible, onToggle }: LegendItemProps)
     );
 }
 
+const SERIES_ORDER = ['Cache Tokens', 'Input Tokens', 'Output Tokens'];
+
 export function CustomTooltip({ active, payload }: any) {
     const theme = useTheme();
     const chartStyles = getThemeChartStyles(theme);
@@ -56,6 +58,12 @@ export function CustomTooltip({ active, payload }: any) {
     if (!active || !payload || !payload.length) return null;
 
     const data = payload[0].payload as ChartDataPoint;
+
+    // Sort payload to ensure consistent order: cache → input → output
+    const sortedPayload = [...payload].sort(
+        (a: any, b: any) => SERIES_ORDER.indexOf(a.name) - SERIES_ORDER.indexOf(b.name)
+    );
+
     return (
         <Box
             sx={{
@@ -73,7 +81,7 @@ export function CustomTooltip({ active, payload }: any) {
             >
                 {data.timeFull}
             </Typography>
-            {payload.map((entry: any, index: number) => (
+            {sortedPayload.map((entry: any, index: number) => (
                 <Box
                     key={index}
                     sx={{
@@ -102,6 +110,25 @@ export function CustomTooltip({ active, payload }: any) {
                     </Typography>
                 </Box>
             ))}
+            <Box
+                sx={{
+                    mt: 1,
+                    pt: 1,
+                    borderTop: '1px dashed',
+                    borderColor: 'divider',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 2,
+                }}
+            >
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                    Cache Ratio:
+                </Typography>
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                    {(data.cacheRatio * 100).toFixed(1)}%
+                </Typography>
+            </Box>
         </Box>
     );
 }

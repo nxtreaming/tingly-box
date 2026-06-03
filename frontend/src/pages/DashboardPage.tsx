@@ -44,8 +44,8 @@ interface Provider {
 type TimeRange = 'today' | 'yesterday' | '3d' | '7d' | '30d' | '90d';
 
 const TIME_RANGE_CONFIG: Record<TimeRange, { label: string; days: number; interval: string }> = {
-    today: { label: 'Today', days: 1, interval: 'hour' },
-    yesterday: { label: 'Yesterday', days: 1, interval: 'hour' },
+    today: { label: 'Today', days: 1, interval: 'minute' },
+    yesterday: { label: 'Yesterday', days: 1, interval: 'minute' },
     '3d': { label: '3 Days', days: 3, interval: 'day' },
     '7d': { label: '7 Days', days: 7, interval: 'day' },
     '30d': { label: '30 Days', days: 30, interval: 'day' },
@@ -456,7 +456,7 @@ export default function DashboardPage() {
                             <StatCard
                                 title="Total Tokens"
                                 value={formatNumber(totalTokens)}
-                                subtitle={`Input: ${formatNumber(totalInputTokens)}\nOutput: ${formatNumber(totalOutputTokens)}`}
+                                subtitle={`Input: ${formatNumber(totalInputTokens)} + Cache: ${formatNumber(totalCacheTokens)}\nOutput: ${formatNumber(totalOutputTokens)}`}
                                 icon={<PaidIcon />}
                                 color="success"
                             />

@@ -1,11 +1,11 @@
 import { Box, Stack, Tab, Tabs } from '@mui/material';
 import { useCallback, useState } from 'react';
 import SystemLogViewer from '@/components/SystemLogViewer';
-import RequestsViewer, {
+import AILogViewer, {
     type ModelRequestDetail,
     type ModelRequestSummary,
     type RequestFilters,
-} from '@/components/RequestsViewer';
+} from '@/components/AILogViewer.tsx';
 
 interface LogExplorerProps {
     // When set, the scenario filter is initialized to this value but can be changed/cleared by the user.
@@ -74,7 +74,7 @@ const LogExplorer = ({ initialScenario }: LogExplorerProps) => {
             </Tabs>
 
             <Box sx={{ flex: 1, minHeight: 0, display: tab === 0 ? 'flex' : 'none', flexDirection: 'column' }}>
-                <RequestsViewer
+                <AILogViewer
                     getRequests={getRequests}
                     getRequestDetail={getRequestDetail}
                     initialScenario={initialScenario}

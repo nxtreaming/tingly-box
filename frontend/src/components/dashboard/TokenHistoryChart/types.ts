@@ -18,6 +18,7 @@ export interface ChartDataPoint {
     inputTokens: number;
     outputTokens: number;
     cacheTokens: number;
+    cacheRatio: number;
 }
 
 type SeriesKey = 'cache' | 'input' | 'output';

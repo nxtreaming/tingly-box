@@ -14,6 +14,7 @@ import {
     TableRow,
     TextField,
     Typography,
+    TableSortLabel,
 } from '@mui/material';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -56,6 +57,9 @@ export interface RequestFilters {
     provider?: string;
     status?: string;
 }
+
+type SortField = 'time' | 'scenario' | 'model' | 'provider' | 'status' | 'latency';
+type SortOrder = 'asc' | 'desc';
 
 interface RequestsViewerProps {
     getRequests: (params?: RequestFilters) => Promise<{ total: number; requests: ModelRequestSummary[] }>;
@@ -128,7 +132,7 @@ const SUPPRESSED_FIELDS = new Set([
     'request',
 ]);
 
-const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: RequestsViewerProps) => {
+const AILogViewer = ({ getRequests, getRequestDetail, initialScenario }: RequestsViewerProps) => {
     const [requests, setRequests] = useState<ModelRequestSummary[]>([]);
     const [loading, setLoading] = useState(false);
     const [autoRefresh, setAutoRefresh] = useState(false);
@@ -140,8 +144,9 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
     const [provider, setProvider] = useState('');
     const [status, setStatus] = useState('');
     const tableContainerRef = useRef<HTMLDivElement>(null);
-    // Whether the user is pinned to the bottom; controls live-tail auto-scroll.
-    const atBottomRef = useRef(true);
+    // Sorting state
+    const [sortField, setSortField] = useState<SortField>('time');
+    const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
     // Initialize scenario from initialScenario when prop changes
     useEffect(() => {
@@ -161,9 +166,30 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
                 status: status || undefined,
             });
             if (response && response.requests) {
-                const sorted = [...response.requests].sort(
-                    (a, b) => new Date(a.time).getTime() - new Date(b.time).getTime(),
-                );
+                const sorted = [...response.requests].sort((a, b) => {
+                    let comparison = 0;
+                    switch (sortField) {
+                        case 'time':
+                            comparison = new Date(a.time).getTime() - new Date(b.time).getTime();
+                            break;
+                        case 'scenario':
+                            comparison = (a.scenario || '').localeCompare(b.scenario || '');
+                            break;
+                        case 'model':
+                            comparison = (a.request_model || '').localeCompare(b.request_model || '');
+                            break;
+                        case 'provider':
+                            comparison = (a.provider || '').localeCompare(b.provider || '');
+                            break;
+                        case 'status':
+                            comparison = (a.status || 0) - (b.status || 0);
+                            break;
+                        case 'latency':
+                            comparison = (a.latency_ms || 0) - (b.latency_ms || 0);
+                            break;
+                    }
+                    return sortOrder === 'asc' ? comparison : -comparison;
+                });
                 setRequests(sorted);
             }
         } catch (e: any) {
@@ -177,7 +203,7 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
     useEffect(() => {
         loadRequests();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [scenario, provider, status]);
+    }, [scenario, provider, status, sortField, sortOrder]);
 
     useEffect(() => {
         if (autoRefresh) {
@@ -187,23 +213,15 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [autoRefresh, scenario, provider, status]);
 
-    // Live-tail: only auto-scroll to the newest row when the user is already
-    // pinned at the bottom, so polling doesn't yank them away from a row
-    // they're inspecting higher up.
-    useEffect(() => {
-        if (!tableContainerRef.current || requests.length === 0) return;
-        if (!atBottomRef.current) return;
-        const el = tableContainerRef.current;
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                el.scrollTop = el.scrollHeight;
-            });
-        });
-    }, [requests]);
-
-    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-        const el = e.currentTarget;
-        atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    const handleSort = (field: SortField) => {
+        if (sortField === field) {
+            // Toggle between asc/desc
+            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            // New field, default to desc for time, asc for others
+            setSortField(field);
+            setSortOrder(field === 'time' ? 'desc' : 'asc');
+        }
     };
 
     const toggleRow = async (id: string) => {
@@ -409,7 +427,6 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
 
             <Box
                 ref={tableContainerRef}
-                onScroll={handleScroll}
                 sx={{ flex: 1, overflow: 'auto', minHeight: 0, backgroundColor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider' }}
             >
                 <TableContainer sx={{ maxHeight: 'none' }}>
@@ -417,12 +434,60 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
                         <TableHead>
                             <TableRow>
                                 <TableCell padding="checkbox" />
-                                <TableCell sx={{ width: 180 }}>Time</TableCell>
-                                <TableCell sx={{ width: 100 }}>Scenario</TableCell>
-                                <TableCell>Model</TableCell>
-                                <TableCell sx={{ width: 140 }}>Provider</TableCell>
-                                <TableCell sx={{ width: 80 }}>Status</TableCell>
-                                <TableCell sx={{ width: 90 }}>Latency</TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'time'}
+                                        direction={sortField === 'time' ? sortOrder : 'desc'}
+                                        onClick={() => handleSort('time')}
+                                    >
+                                        Time
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'scenario'}
+                                        direction={sortField === 'scenario' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('scenario')}
+                                    >
+                                        Scenario
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'model'}
+                                        direction={sortField === 'model' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('model')}
+                                    >
+                                        Model
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'provider'}
+                                        direction={sortField === 'provider' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('provider')}
+                                    >
+                                        Provider
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'status'}
+                                        direction={sortField === 'status' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('status')}
+                                    >
+                                        Status
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'latency'}
+                                        direction={sortField === 'latency' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('latency')}
+                                    >
+                                        Latency
+                                    </TableSortLabel>
+                                </TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -528,4 +593,4 @@ const RequestsViewer = ({ getRequests, getRequestDetail, initialScenario }: Requ
     );
 };
 
-export default RequestsViewer;
+export default AILogViewer;
