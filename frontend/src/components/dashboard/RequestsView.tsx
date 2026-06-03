@@ -315,9 +315,9 @@ function RequestTable({ records, total, page, rowsPerPage, statusFilter, loading
                             <TableCell>Time</TableCell>
                             <TableCell>Provider / Model</TableCell>
                             <TableCell>Scenario</TableCell>
+                            <TableCell align="right">Cache</TableCell>
                             <TableCell align="right">Input</TableCell>
                             <TableCell align="right">Output</TableCell>
-                            <TableCell align="right">Cache</TableCell>
                             <TableCell align="right">Latency</TableCell>
                             <TableCell align="right">TTFT</TableCell>
                             <TableCell align="center">Status</TableCell>
@@ -364,6 +364,11 @@ function RequestTable({ records, total, page, rowsPerPage, statusFilter, loading
 
                                 {/* Tokens */}
                                 <TableCell align="right">
+                                    <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: TOKEN_COLORS.cache.main }}>
+                                        {r.cache_input_tokens > 0 ? fmtTokens(r.cache_input_tokens) : '-'}
+                                    </Typography>
+                                </TableCell>
+                                <TableCell align="right">
                                     <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: TOKEN_COLORS.input.main }}>
                                         {fmtTokens(r.input_tokens)}
                                     </Typography>
@@ -371,11 +376,6 @@ function RequestTable({ records, total, page, rowsPerPage, statusFilter, loading
                                 <TableCell align="right">
                                     <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: TOKEN_COLORS.output.main }}>
                                         {fmtTokens(r.output_tokens)}
-                                    </Typography>
-                                </TableCell>
-                                <TableCell align="right">
-                                    <Typography sx={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'text.secondary' }}>
-                                        {r.cache_input_tokens > 0 ? fmtTokens(r.cache_input_tokens) : '-'}
                                     </Typography>
                                 </TableCell>
 

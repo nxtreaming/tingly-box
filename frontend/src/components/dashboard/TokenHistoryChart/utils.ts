@@ -59,14 +59,20 @@ export const formatTooltipTime = (timestamp: string, isDayMode: boolean): string
 };
 
 export const formatChartData = (data: TimeSeriesData[], isDayMode: boolean): ChartDataPoint[] => {
-    return data.map((item) => ({
-        timestamp: item.timestamp,
-        time: formatTimeLabel(item.timestamp, isDayMode),
-        timeFull: formatTooltipTime(item.timestamp, isDayMode),
-        inputTokens: item.input_tokens,
-        outputTokens: item.output_tokens,
-        cacheTokens: item.cache_input_tokens || 0,
-    }));
+    return data.map((item) => {
+        const cache = item.cache_input_tokens || 0;
+        const input = item.input_tokens || 0;
+        const cacheRatio = cache + input > 0 ? cache / (cache + input) : 0;
+        return {
+            timestamp: item.timestamp,
+            time: formatTimeLabel(item.timestamp, isDayMode),
+            timeFull: formatTooltipTime(item.timestamp, isDayMode),
+            inputTokens: item.input_tokens,
+            outputTokens: item.output_tokens,
+            cacheTokens: cache,
+            cacheRatio,
+        };
+    });
 };
 
 export const calculateLabelInterval = (dataLength: number): number => {

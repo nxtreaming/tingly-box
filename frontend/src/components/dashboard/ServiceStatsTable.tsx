@@ -122,13 +122,13 @@ export default function ServiceStatsTable({ stats }: ServiceStatsTableProps) {
                                 Requests
                             </TableCell>
                             <TableCell align="right" sx={{ fontWeight: 600 }}>
+                                Cache Tokens
+                            </TableCell>
+                            <TableCell align="right" sx={{ fontWeight: 600 }}>
                                 Input Tokens
                             </TableCell>
                             <TableCell align="right" sx={{ fontWeight: 600 }}>
                                 Output Tokens
-                            </TableCell>
-                            <TableCell align="right" sx={{ fontWeight: 600 }}>
-                                Cache Tokens
                             </TableCell>
                             {/* <TableCell align="right" sx={{ fontWeight: 600 }}>Avg Latency</TableCell> */}
                             <TableCell align="right" sx={{ fontWeight: 600 }}>
@@ -207,9 +207,9 @@ export default function ServiceStatsTable({ stats }: ServiceStatsTableProps) {
                                             </Typography>
                                         </TableCell>
                                         <TableCell align="right">{formatRequests(stat.request_count)}</TableCell>
+                                        <TableCell align="right">{formatTokens(stat.cache_input_tokens || 0)}</TableCell>
                                         <TableCell align="right">{formatTokens(stat.total_input_tokens)}</TableCell>
                                         <TableCell align="right">{formatTokens(stat.total_output_tokens)}</TableCell>
-                                        <TableCell align="right">{formatTokens(stat.cache_input_tokens || 0)}</TableCell>
                                         {/* <TableCell align="right">
                                             {stat.avg_latency_ms > 0 ? `${stat.avg_latency_ms.toFixed(0)}ms` : '-'}
                                         </TableCell> */}
