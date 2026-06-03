@@ -11,6 +11,7 @@ export {
     calculateLabelInterval,
     formatYAxis,
     formatTooltipValue,
+    aggregateTo5MinBuckets,
 } from './utils';
 export type {
     TimeSeriesData,

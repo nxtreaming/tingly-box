@@ -6,7 +6,7 @@ import {Area, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis,
 import {useTheme} from '@mui/material/styles';
 import {getThemeChartStyles} from '../chartStyles';
 import {ChartWrapper, CustomTooltip, LegendItem} from './components';
-import {calculateLabelInterval, formatChartData, formatYAxis,} from './utils';
+import {calculateLabelInterval, formatChartData, formatYAxis, aggregateTo5MinBuckets} from './utils';
 import type {SeriesKey, SeriesVisibility, TimeSeriesData} from './types';
 
 interface HourlyTokenHistoryChartProps {
@@ -17,7 +17,8 @@ export function HourlyTokenHistoryChart({data}: HourlyTokenHistoryChartProps) {
     const theme = useTheme();
     const chartStyles = getThemeChartStyles(theme);
 
-    const chartData = formatChartData(data, false);
+    const aggregatedData = aggregateTo5MinBuckets(data);
+    const chartData = formatChartData(aggregatedData, false);
     const labelInterval = calculateLabelInterval(chartData.length);
 
     const [visibleSeries, setVisibleSeries] = useState<SeriesVisibility>({
@@ -33,7 +34,7 @@ export function HourlyTokenHistoryChart({data}: HourlyTokenHistoryChartProps) {
     const hasData = chartData.length > 0;
 
     return (
-        <ChartWrapper title="Token Usage Over Time (Hourly)" hasData={hasData}>
+        <ChartWrapper title="Token Usage Over Time (5-Min)" hasData={hasData}>
             {hasData ? (
                 <>
                     <Box sx={{display: 'flex', justifyContent: 'center', gap: 3, mb: 2}}>
