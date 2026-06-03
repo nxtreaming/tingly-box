@@ -18,6 +18,7 @@ import {
     DialogActions,
     TextField,
     Alert,
+    TableSortLabel,
 } from '@mui/material';
 import { useState, useEffect, useRef } from 'react';
 import { KeyboardArrowDown as KeyboardArrowDownIcon } from '@/components/icons';
@@ -42,6 +43,9 @@ interface SystemLogViewerProps {
     getRequestBody?: (bodyRef: string) => Promise<{ id: string; method: string; path: string; body: string; truncated: boolean } | null>;
 }
 
+type SortField = 'time' | 'level' | 'status' | 'message';
+type SortOrder = 'asc' | 'desc';
+
 const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'fatal', 'panic'];
 
 const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
@@ -53,6 +57,9 @@ const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
     const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
     const [autoRefresh, setAutoRefresh] = useState(false);
     const tableContainerRef = useRef<HTMLDivElement>(null);
+    // Sorting state
+    const [sortField, setSortField] = useState<SortField>('time');
+    const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
     // Request body dialog state
     const [bodyDialogOpen, setBodyDialogOpen] = useState(false);
@@ -66,9 +73,26 @@ const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
         try {
             const response = await getLogs({ limit: 200 });
             if (response && response.logs) {
-                const sortedLogs = [...response.logs].sort((a, b) =>
-                    new Date(a.time).getTime() - new Date(b.time).getTime()
-                );
+                const sortedLogs = [...response.logs].sort((a, b) => {
+                    let comparison = 0;
+                    switch (sortField) {
+                        case 'time':
+                            comparison = new Date(a.time).getTime() - new Date(b.time).getTime();
+                            break;
+                        case 'level':
+                            comparison = a.level.localeCompare(b.level);
+                            break;
+                        case 'message':
+                            comparison = a.message.localeCompare(b.message);
+                            break;
+                        case 'status':
+                            const statusA = (a.fields?.status as number) ?? 0;
+                            const statusB = (b.fields?.status as number) ?? 0;
+                            comparison = statusA - statusB;
+                            break;
+                    }
+                    return sortOrder === 'asc' ? comparison : -comparison;
+                });
                 setAllLogs(sortedLogs);
             }
         } catch (error) {
@@ -179,7 +203,8 @@ const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
 
     useEffect(() => {
         loadLogs();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sortField, sortOrder]);
 
     useEffect(() => {
         if (autoRefresh) {
@@ -188,16 +213,16 @@ const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
         }
     }, [autoRefresh]);
 
-    // Scroll to bottom after logs render — double-RAF ensures layout is complete
-    useEffect(() => {
-        if (!tableContainerRef.current || logs.length === 0) return;
-        const el = tableContainerRef.current;
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                el.scrollTop = el.scrollHeight;
-            });
-        });
-    }, [logs]);
+    const handleSort = (field: SortField) => {
+        if (sortField === field) {
+            // Toggle between asc/desc
+            setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            // New field, default to desc for time, asc for others
+            setSortField(field);
+            setSortOrder(field === 'time' ? 'desc' : 'asc');
+        }
+    };
 
     const formatRequestBody = (body: string): string => {
         try {
@@ -311,10 +336,42 @@ const SystemLogViewer = ({ getLogs, getRequestBody }: SystemLogViewerProps) => {
                         <TableHead>
                             <TableRow>
                                 <TableCell padding="checkbox" />
-                                <TableCell sx={{ width: 180 }}>Time</TableCell>
-                                <TableCell sx={{ width: 90 }}>Level</TableCell>
-                                <TableCell sx={{ width: 80 }}>Status</TableCell>
-                                <TableCell>Message</TableCell>
+                                <TableCell sx={{ width: 180 }}>
+                                    <TableSortLabel
+                                        active={sortField === 'time'}
+                                        direction={sortField === 'time' ? sortOrder : 'desc'}
+                                        onClick={() => handleSort('time')}
+                                    >
+                                        Time
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell sx={{ width: 90 }}>
+                                    <TableSortLabel
+                                        active={sortField === 'level'}
+                                        direction={sortField === 'level' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('level')}
+                                    >
+                                        Level
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell sx={{ width: 80 }}>
+                                    <TableSortLabel
+                                        active={sortField === 'status'}
+                                        direction={sortField === 'status' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('status')}
+                                    >
+                                        Status
+                                    </TableSortLabel>
+                                </TableCell>
+                                <TableCell>
+                                    <TableSortLabel
+                                        active={sortField === 'message'}
+                                        direction={sortField === 'message' ? sortOrder : 'asc'}
+                                        onClick={() => handleSort('message')}
+                                    >
+                                        Message
+                                    </TableSortLabel>
+                                </TableCell>
                             </TableRow>
                         </TableHead>
                     <TableBody>
