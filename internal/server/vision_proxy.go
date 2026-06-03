@@ -63,13 +63,13 @@ func buildVisionService(provider, model string) *loadbalance.Service {
 
 // parseScenarioVisionService reads the scenario-level vision service from a
 // scenario's Extensions map (stored as a nested object under
-// VisionProxyServiceKey; a map[string]interface{} after JSON/YAML unmarshal).
+// config.ExtensionVisionProxyService; a map[string]interface{} after JSON/YAML unmarshal).
 // Returns nil when absent or malformed.
 func parseScenarioVisionService(extensions map[string]interface{}) *loadbalance.Service {
 	if extensions == nil {
 		return nil
 	}
-	raw, ok := extensions[config.VisionProxyServiceKey]
+	raw, ok := extensions[config.ExtensionVisionProxyService]
 	if !ok {
 		return nil
 	}
