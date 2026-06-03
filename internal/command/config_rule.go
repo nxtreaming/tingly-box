@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tingly-dev/tingly-box/internal/command/tui"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
@@ -19,7 +20,7 @@ import (
 type ConfigRuleCmdKong struct {
 	Interactive ConfigRuleInteractiveCmdKong `kong:"cmd,name='interactive',default='1',hidden,help='Interactive rule management'"`
 
-	Add    ConfigRuleAddCmdKong    `kong:"cmd,help='Add a new rule (interactive)'"`
+	Add    ConfigRuleAddCmdKong    `kong:"cmd,help='Add a rule (CI: pass all four flags for non-interactive mode)'"`
 	List   ConfigRuleListCmdKong   `kong:"cmd,help='List all rules'"`
 	Update ConfigRuleUpdateCmdKong `kong:"cmd,help='Update the service on an existing rule'"`
 	Delete ConfigRuleDeleteCmdKong `kong:"cmd,help='Delete a rule'"`
@@ -31,14 +32,96 @@ type ConfigRuleCmdKong struct {
 type ConfigRuleInteractiveCmdKong struct{}
 
 func (c *ConfigRuleInteractiveCmdKong) Run(appManager *AppManager) error {
-	return runRuleSubMenu(appManager, bufio.NewReader(os.Stdin))
+	return tui.RunRuleMode(appManager)
 }
 
-// ConfigRuleAddCmdKong adds a rule via interactive prompts.
-type ConfigRuleAddCmdKong struct{}
+// ConfigRuleAddCmdKong adds a rule. The flag form is the CI path: provide
+// all four flags and it runs non-interactively. With no flags it drops into
+// the bufio prompts (kept as a thin shim — for richer interactive use,
+// prefer `tingly-box tui rule`).
+type ConfigRuleAddCmdKong struct {
+	Scenario     string `kong:"flag,name='scenario',help='Rule scenario (e.g. openai, anthropic, claude_code)'"`
+	RequestModel string `kong:"flag,name='request-model',help='Request model (e.g. gpt-4o, tingly/cc)'"`
+	Provider     string `kong:"flag,name='provider',help='Provider UUID or name'"`
+	Model        string `kong:"flag,name='model',help='Model name on the provider'"`
+}
 
 func (c *ConfigRuleAddCmdKong) Run(appManager *AppManager) error {
+	// CI mode: every flag set → run non-interactively.
+	if c.Scenario != "" && c.RequestModel != "" && c.Provider != "" && c.Model != "" {
+		return runRuleAddCI(appManager, c.Scenario, c.RequestModel, c.Provider, c.Model)
+	}
+	// Partial flags: refuse rather than silently dropping into prompts —
+	// CI users would rather see a clear error than hang on a TTY read.
+	if c.Scenario != "" || c.RequestModel != "" || c.Provider != "" || c.Model != "" {
+		return fmt.Errorf("partial flags supplied; for CI mode pass all of --scenario, --request-model, --provider, --model. For interactive use, run with no flags or use `tingly-box tui rule`")
+	}
 	return runRuleAddInteractive(appManager, bufio.NewReader(os.Stdin))
+}
+
+// runRuleAddCI creates a rule from fully-specified flags. Provider may be
+// passed as UUID or name; name resolution is case-insensitive and ambiguous
+// names (multiple providers with the same name) are rejected.
+func runRuleAddCI(appManager *AppManager, scenario, requestModel, providerRef, model string) error {
+	scn := typ.RuleScenario(scenario)
+	providerUUID, err := resolveProviderRef(appManager, providerRef)
+	if err != nil {
+		return err
+	}
+
+	if existing := appManager.AppConfig().GetGlobalConfig().GetRuleByRequestModelAndScenario(requestModel, scn); existing != nil {
+		return fmt.Errorf("rule for %q + %q already exists (uuid %s); use `config rule update` instead",
+			requestModel, scn, existing.UUID)
+	}
+
+	rule := typ.Rule{
+		UUID:         uuid.New().String(),
+		Scenario:     scn,
+		RequestModel: requestModel,
+		Services: []*loadbalance.Service{{
+			Provider: providerUUID,
+			Model:    model,
+			Weight:   1,
+			Active:   true,
+		}},
+		LBTactic: typ.Tactic{
+			Type:   loadbalance.TacticRandom,
+			Params: typ.DefaultRandomParams(),
+		},
+		Active: true,
+	}
+	if err := appManager.AddRule(rule); err != nil {
+		return err
+	}
+	fmt.Printf("✓ Rule added (uuid: %s)\n", rule.UUID)
+	return nil
+}
+
+// resolveProviderRef accepts a UUID or a name and returns the provider's UUID.
+// Name lookup is case-insensitive; ambiguous names (more than one match) error.
+func resolveProviderRef(appManager *AppManager, ref string) (string, error) {
+	if p, err := appManager.GetProvider(ref); err == nil && p != nil {
+		return p.UUID, nil
+	}
+	var matches []*typ.Provider
+	for _, p := range appManager.ListProviders() {
+		if strings.EqualFold(p.Name, ref) {
+			matches = append(matches, p)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("provider not found: %q (try UUID or exact name)", ref)
+	case 1:
+		return matches[0].UUID, nil
+	default:
+		uuids := make([]string, 0, len(matches))
+		for _, p := range matches {
+			uuids = append(uuids, p.UUID)
+		}
+		return "", fmt.Errorf("provider name %q is ambiguous, matches %d providers: %s — pass the UUID instead",
+			ref, len(matches), strings.Join(uuids, ", "))
+	}
 }
 
 // ConfigRuleListCmdKong lists all rules.
@@ -132,83 +215,6 @@ func (c *ConfigRuleImportCmdKong) Run(appManager *AppManager) error {
 		args = []string{c.File}
 	}
 	return runImport(appManager, c.Format, args)
-}
-
-// ============== Rule sub-menu ==============
-
-// runRuleSubMenu shows the rule sub-menu (reached from `config` or
-// `config rule` with no further args).
-func runRuleSubMenu(appManager *AppManager, reader *bufio.Reader) error {
-	for {
-		showRuleSubMenu()
-		fmt.Print("Select an option (1-6, 0 to go back): ")
-
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			if err.Error() == "EOF" {
-				return nil
-			}
-			fmt.Printf("Error reading input: %v\n", err)
-			continue
-		}
-
-		choice := strings.TrimSpace(strings.TrimSuffix(input, "\n"))
-
-		switch choice {
-		case "1":
-			if err := runRuleAddInteractive(appManager, reader); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-		case "2":
-			if err := runRuleList(appManager); err != nil {
-				fmt.Printf("Error: %v\n", err)
-			}
-		case "3":
-			uid, err := selectRuleInteractive(appManager, reader, "update")
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-			} else if uid != "" {
-				if err := runRuleUpdateService(appManager, reader, uid); err != nil {
-					fmt.Printf("Error: %v\n", err)
-				}
-			}
-		case "4":
-			uid, err := selectRuleInteractive(appManager, reader, "delete")
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-			} else if uid != "" {
-				if err := runRuleDelete(appManager, reader, uid); err != nil {
-					fmt.Printf("Error: %v\n", err)
-				}
-			}
-		case "5":
-			runRuleExportInteractive(appManager, reader)
-		case "6":
-			runRuleImportInteractive(appManager, reader)
-		case "0":
-			return nil
-		default:
-			fmt.Println("Invalid choice. Please select 1-6 or 0 to go back.")
-		}
-
-		fmt.Println("\nPress Enter to continue...")
-		_, _ = reader.ReadString('\n')
-	}
-}
-
-func showRuleSubMenu() {
-	fmt.Println("\n" + strings.Repeat("-", 60))
-	fmt.Println("Rule Management")
-	fmt.Println(strings.Repeat("-", 60))
-	fmt.Println("1. Add a new rule")
-	fmt.Println("2. List all rules")
-	fmt.Println("3. Update a rule (re-pick service)")
-	fmt.Println("4. Delete a rule")
-	fmt.Println("5. Export a rule")
-	fmt.Println("6. Import a rule")
-	fmt.Println()
-	fmt.Println("0. Back")
-	fmt.Println(strings.Repeat("-", 60))
 }
 
 // ============== Rule operations ==============
@@ -499,45 +505,4 @@ func promptForScenario(reader *bufio.Reader) (typ.RuleScenario, error) {
 	return typ.RuleScenario(choice), nil
 }
 
-// runRuleExportInteractive prompts for a rule + format/output and forwards
-// to runExport. Used by the menu; the CLI subcommand calls runExport
-// directly after resolving UUID.
-func runRuleExportInteractive(appManager *AppManager, reader *bufio.Reader) {
-	uid, err := selectRuleInteractive(appManager, reader, "export")
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		return
-	}
-	if uid == "" {
-		return
-	}
-	rule := appManager.GetRuleByUUID(uid)
-	if rule == nil {
-		fmt.Printf("Error: rule not found: %s\n", uid)
-		return
-	}
-
-	fmt.Print("Output file (press Enter for stdout): ")
-	outputFile, _ := reader.ReadString('\n')
-	outputFile = strings.TrimSpace(outputFile)
-
-	if err := runExport(appManager, rule.RequestModel, string(rule.Scenario), "jsonl", outputFile); err != nil {
-		fmt.Printf("Error: %v\n", err)
-	}
-}
-
-// runRuleImportInteractive prompts for a file path and forwards to runImport.
-func runRuleImportInteractive(appManager *AppManager, reader *bufio.Reader) {
-	fmt.Print("Input file (press Enter for stdin): ")
-	inputFile, _ := reader.ReadString('\n')
-	inputFile = strings.TrimSpace(inputFile)
-
-	var args []string
-	if inputFile != "" {
-		args = []string{inputFile}
-	}
-	if err := runImport(appManager, "auto", args); err != nil {
-		fmt.Printf("Error: %v\n", err)
-	}
-}
 
