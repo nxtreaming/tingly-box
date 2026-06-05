@@ -32,6 +32,7 @@ const ServiceNodeWrapper = styled(Box, {
     forceShowActions = false,
 }) => ({
     position: 'relative',
+    overflow: 'visible', // Allow action buttons to extend beyond boundaries
     '&:hover .action-buttons': { opacity: 1 },
     ...(forceShowActions && {
         '& .action-buttons': { opacity: 1 },
