@@ -7,6 +7,8 @@ import { getRouteGraphBorderColor, PROVIDER_NODE_STYLES } from './styles.tsx';
 export interface TierNodeProps {
     priority: number;
     active: boolean;
+    onHover?: (hovering: boolean) => void;
+    onShowGuide?: () => void;
 }
 
 export const TIER_NODE_WIDTH = 52;
@@ -17,6 +19,8 @@ export const PRIORITY_TIER_NODE_WIDTH = TIER_NODE_WIDTH;
 export const TierNode: React.FC<TierNodeProps> = ({
     priority,
     active,
+    onHover,
+    onShowGuide,
 }) => {
     const { t } = useTranslation();
 
@@ -29,12 +33,29 @@ export const TierNode: React.FC<TierNodeProps> = ({
         ? t('rule.tier.nodeTooltipPrimaryBody', { defaultValue: 'Tried first on every request. Services here are load-balanced.' })
         : t('rule.tier.nodeTooltipFallbackBody', { tier: priority, prev: priority - 1, defaultValue: 'Tried only when all higher-priority tiers are unavailable (lower number = higher priority). Services here are load-balanced.' });
     const hint = t('rule.tier.nodeMoveHint', { defaultValue: '↑ / ↓  on a service card to move it to a different tier' });
+    const learnMoreLink = onShowGuide ? t('rule.tier.nodeTooltipLearnMore', { defaultValue: 'Learn more about tiers' }) : null;
 
     const tooltipContent = (
         <Box sx={{ whiteSpace: 'pre-line', maxWidth: 240 }}>
             <strong>{title}</strong>
             {`\n${body}\n\n`}
             <Box component="span" sx={{ opacity: 0.7 }}>{hint}</Box>
+            {learnMoreLink && (
+                <Box
+                    component="span"
+                    onClick={(e) => { e.stopPropagation(); onShowGuide(); }}
+                    sx={{
+                        display: 'block',
+                        mt: 1,
+                        color: 'primary.main',
+                        cursor: 'pointer',
+                        fontWeight: 500,
+                        '&:hover': { textDecoration: 'underline' }
+                    }}
+                >
+                    {learnMoreLink}
+                </Box>
+            )}
         </Box>
     );
 
@@ -46,8 +67,10 @@ export const TierNode: React.FC<TierNodeProps> = ({
                     height: PROVIDER_NODE_STYLES.height,
                     flexShrink: 0,
                     display: 'flex',
+                    flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    gap: 0.5,
                     borderRadius: `${theme.shape.borderRadius}px`,
                     border: '1px solid',
                     borderColor: getRouteGraphBorderColor(theme),
@@ -57,6 +80,8 @@ export const TierNode: React.FC<TierNodeProps> = ({
                     userSelect: 'none',
                     cursor: 'default',
                 })}
+                onMouseEnter={() => onHover?.(true)}
+                onMouseLeave={() => onHover?.(false)}
             >
                 <Typography
                     sx={{

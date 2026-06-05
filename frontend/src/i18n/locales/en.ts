@@ -383,6 +383,7 @@ export default {
       "ariaLabel": "Tier {{tier}}",
       "ariaUnset": "No tier",
       "editTitle": "Set Tier",
+      "adjustTier": "Adjust tier",
       "helpHigher": "Lower number = higher priority (T0 is tried first). Services in the same tier are load balanced.",
       "helpZero": "Set to 0 for T0 — the first tier.",
       "tierLabel": "T{{index}}",
@@ -394,7 +395,137 @@ export default {
       "nodeTooltipPrimaryBody": "Tried first on every request. Services here are load-balanced.",
       "nodeTooltipFallbackTitle": "T{{tier}} — Fallback tier",
       "nodeTooltipFallbackBody": "Tried only when all higher-priority tiers are unavailable (lower number = higher priority). Services here are load-balanced.",
-      "nodeMoveHint": "↑ / ↓  on a service card to move it to a different tier"
+      "nodeMoveHint": "↑ / ↓  on a service card to move it to a different tier",
+      "nodeTooltipLearnMore": "View tier guide →",
+      "guideButtonAriaLabel": "View tier guide",
+      "guide": {
+        "title": "Understanding Tiers",
+        "subtitle": "Step {{current}} of {{total}}",
+        "previous": "Previous",
+        "next": "Next",
+        "gotIt": "Got it!",
+        "close": "Close",
+        "firstRunHint": "💡 You just added your second provider. Configure tiers to set up primary and fallback routing!",
+        "dontShowAgain": "Don't show this again",
+        "hoverHint": "Action buttons shown - try hovering over nodes!",
+        "steps": {
+          "1": {
+            "title": "What is a Tier?",
+            "content": "Tiers organize your services by priority. T0 (tier zero) is the highest priority tier — services here are tried first on every request. Lower tier numbers mean higher priority.",
+            "annotation": {
+              "tier": "T0 — Highest priority tier",
+              "service": "Your service card with model and provider info"
+            }
+          },
+          "2": {
+            "title": "Multiple Services in One Tier",
+            "content": "When you have multiple services in the same tier (like T0), they share the incoming traffic. This is called load balancing — requests are distributed across all services in the tier.",
+            "annotation": {
+              "loadBalance": "Same tier = load balanced",
+              "multiple": "Multiple services share traffic"
+            }
+          },
+          "3": {
+            "title": "Setting Up Primary and Fallback",
+            "content": "Use the ↑/↓ buttons on service cards to move them between tiers. Services in T0 are your primary choice. Services in T1, T2, etc. act as fallbacks — they only run when all higher-priority tiers fail.",
+            "annotation": {
+              "primary": "T0 — Primary services (tried first)",
+              "fallback": "T1 — Fallback services (used when T0 fails)",
+              "actionButtons": "↑/↓ buttons move services between tiers"
+            }
+          },
+          "4": {
+            "title": "Automatic Failover",
+            "content": "When all services in a tier fail (circuit breaker opens), traffic automatically falls back to the next tier. Once the tier recovers (circuit breaker closes), traffic returns to it automatically. You don't need to do anything — it just works.",
+            "annotation": {
+              "circuitBreaker": "Circuit breaker monitors service health",
+              "automaticFailover": "Automatic failover to next tier"
+            }
+          },
+          "5": {
+            "title": "Multi-Tier Fallback Chain",
+            "content": "You can create as many tiers as you need. T0 → T1 → T2 → ... Traffic cascades down until it finds a working tier. Use this for cost optimization (cheap first, expensive as backup) or regional failover (local first, remote as backup).",
+            "annotation": {
+              "priority": "Lower number = higher priority",
+              "cascade": "Traffic cascades down through tiers"
+            }
+          }
+        }
+      }
+    },
+    "routing": {
+      "directTooltipTitle": "Direct Routing",
+      "directTooltipBody": "Load balance across all services in tier order. Simple and predictable.",
+      "smartTooltipTitle": "Smart Routing",
+      "smartTooltipBody": "Route based on custom conditions like model name, token count, or user groups.",
+      "tooltipHint": "Click a button to switch modes",
+      "viewDirectGuide": "View direct routing guide →",
+      "viewSmartGuide": "View smart routing guide →",
+      "guide": {
+        "directTitle": "Direct Routing Guide",
+        "smartTitle": "Smart Routing Guide",
+        "subtitle": "Step {{current}} of {{total}}",
+        "previous": "Previous",
+        "next": "Next",
+        "gotIt": "Got it!",
+        "close": "Close",
+        "hoverHint": "Action buttons shown - try hovering over nodes!",
+        "steps": {
+          "1": {
+            "title": "What is Direct Routing?",
+            "content": "Direct routing is the simplest way to forward requests. Traffic flows through your tiers in order — T0 first, then T1, T2, and so on. Within each tier, services are load-balanced evenly. This works great when all your services are equivalent and you just need primary/fallback layers.",
+            "annotation": {
+              "entryNode": "Entry node - routing mode selector",
+              "directButton": "Direct mode selected"
+            }
+          },
+          "2": {
+            "title": "Load Balancing Within Tiers",
+            "content": "When multiple services are in the same tier, they share the incoming traffic evenly. This load balancing distributes requests across all services in the tier, preventing any single service from becoming overwhelmed.",
+            "annotation": {
+              "loadBalance": "Same tier = load balanced",
+              "services": "Multiple services share traffic"
+            }
+          },
+          "3": {
+            "title": "Tier-Based Fallback Chain",
+            "content": "Services in T0 are your primary choice. If all T0 services fail, traffic automatically falls back to T1, then T2, and so on. This creates a cascading failover chain that ensures high availability for your applications.",
+            "annotation": {
+              "primary": "T0 — Primary services (tried first)",
+              "fallback": "T1 — Fallback services (used when T0 fails)",
+              "tierBased": "Tier-based automatic failover"
+            }
+          },
+          "4": {
+            "title": "What is Smart Routing?",
+            "content": "Smart routing lets you define custom conditions to control which service handles each request. Route based on model name, token count, user groups, or any request parameter. This gives you fine-grained control without managing complex tier configurations.",
+            "annotation": {
+              "smartMode": "Smart mode selected",
+              "smartButton": "Smart routing button",
+              "conditional": "Conditional routing based on rules"
+            }
+          },
+          "5": {
+            "title": "Smart Routing Conditions",
+            "content": "Each smart rule has a condition that determines when it applies. Common conditions include: model name matching (e.g., 'contains claude'), token count (e.g., 'gt 4000' for large contexts), or custom fields. Rules are evaluated in order — the first matching rule wins.",
+            "annotation": {
+              "conditions": "Multiple smart rules with conditions",
+              "modelBased": "Route by model name",
+              "tokenBased": "Route by token count"
+            }
+          },
+          "6": {
+            "title": "Advanced Smart Routing",
+            "content": "Combine multiple smart rules to create sophisticated routing strategies. For example: route Claude requests to one service, large contexts to another, and premium users to a third. The default service handles everything that doesn't match any rule.",
+            "annotation": {
+              "complex": "Complex routing with multiple conditions",
+              "defaultRoute": "Default route for unmatched requests",
+              "claudeRoute": "Route for Claude models",
+              "largeContext": "Route for large context windows"
+            }
+          }
+        }
+      }
     },
     "menu": {
       "refreshModels": "Refresh Models",

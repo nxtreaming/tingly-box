@@ -26,9 +26,17 @@ import { ServiceNodeContainer, NODE_LAYER_STYLES, ActionButtonsBox } from './sty
 import ServiceNodeContent from './ServiceNodeContent.tsx';
 import NodeTooltip from './NodeTooltip.tsx';
 
-const ServiceNodeWrapper = styled(Box)(() => ({
+const ServiceNodeWrapper = styled(Box, {
+    shouldForwardProp: (prop) => prop !== 'forceShowActions',
+})<{ forceShowActions?: boolean }>(({
+    forceShowActions = false,
+}) => ({
     position: 'relative',
+    overflow: 'visible', // Allow action buttons to extend beyond boundaries
     '&:hover .action-buttons': { opacity: 1 },
+    ...(forceShowActions && {
+        '& .action-buttons': { opacity: 1 },
+    }),
 }));
 
 // Inline tier disk — lives inside the left column of the node, no overflow.
@@ -70,6 +78,7 @@ export interface ServiceNodeProps {
     showTier?: boolean;
     onMoveTierUp?: () => void;
     onMoveTierDown?: () => void;
+    forceShowActions?: boolean;
 }
 
 /** @deprecated Use ServiceNodeProps */
@@ -181,6 +190,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
     showTier = true,
     onMoveTierUp,
     onMoveTierDown,
+    forceShowActions = false,
 }) => {
     const { t } = useTranslation();
     const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
@@ -212,7 +222,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
     const hasTier = showTier && !!onTierChange;
 
     return (
-        <ServiceNodeWrapper>
+        <ServiceNodeWrapper forceShowActions={forceShowActions}>
             <ServiceNodeContent
                 menuAnchorEl={menuAnchorEl}
                 menuOpen={menuOpen}
@@ -298,7 +308,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                 {/* Action buttons (hover) */}
                 <ActionButtonsBox className="action-buttons">
                     {onMoveTierUp && (
-                        <NodeTooltip title={t('common.moveUp', { defaultValue: 'Move up' })} placement="bottom">
+                        <NodeTooltip title={t('rule.tier.adjustTier', { defaultValue: 'Adjust tier' })} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={(e) => { e.stopPropagation(); onMoveTierUp(); }}
@@ -309,7 +319,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                         </NodeTooltip>
                     )}
                     {onMoveTierDown && (
-                        <NodeTooltip title={t('common.moveDown', { defaultValue: 'Move down' })} placement="bottom">
+                        <NodeTooltip title={t('rule.tier.adjustTier', { defaultValue: 'Adjust tier' })} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={(e) => { e.stopPropagation(); onMoveTierDown(); }}

@@ -159,16 +159,22 @@ export const StyledModelNode = styled(Box, { shouldForwardProp: (prop) => prop !
 // are always readable regardless of node opacity or background content.
 export const ActionButtonsBox = styled(Box)(({ theme }: { theme: Theme }) => ({
     position: 'absolute',
-    top: 4,
-    right: 4,
+    top: 0,
+    right: 0,
     display: 'flex',
     gap: 2,
     opacity: 0,
-    transition: 'opacity 0.2s',
+    transition: 'opacity 0.2s, transform 0.2s',
     backgroundColor: theme.palette.background.paper,
     borderRadius: theme.shape.borderRadius,
-    padding: '2px',
-    boxShadow: theme.shadows[1],
+    padding: '4px',
+    boxShadow: theme.shadows[2],
+    border: '1px solid',
+    borderColor: alpha(getRouteGraphBorderColor(theme), 0.6),
+    zIndex: 10,
+    '&:hover': {
+        transform: 'translateY(-2px)',
+    },
 }));
 
 // Smart node wrapper
