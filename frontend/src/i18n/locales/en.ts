@@ -383,6 +383,7 @@ export default {
       "ariaLabel": "Tier {{tier}}",
       "ariaUnset": "No tier",
       "editTitle": "Set Tier",
+      "adjustTier": "Adjust tier",
       "helpHigher": "Lower number = higher priority (T0 is tried first). Services in the same tier are load balanced.",
       "helpZero": "Set to 0 for T0 — the first tier.",
       "tierLabel": "T{{index}}",

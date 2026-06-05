@@ -384,6 +384,7 @@ export default {
       "ariaLabel": "层级 {{tier}}",
       "ariaUnset": "未设置层级",
       "editTitle": "设置层级",
+      "adjustTier": "调整层级",
       "helpHigher": "数值越小越优先（T0 最先尝试），同一层级内的服务将负载均衡。",
       "helpZero": "设为 0 即 T0——第一层级。",
       "tierLabel": "T{{index}}",

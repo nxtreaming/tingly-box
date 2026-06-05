@@ -308,7 +308,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                 {/* Action buttons (hover) */}
                 <ActionButtonsBox className="action-buttons">
                     {onMoveTierUp && (
-                        <NodeTooltip title={t('common.moveUp', { defaultValue: 'Move up' })} placement="bottom">
+                        <NodeTooltip title={t('rule.tier.adjustTier', { defaultValue: 'Adjust tier' })} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={(e) => { e.stopPropagation(); onMoveTierUp(); }}
@@ -319,7 +319,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                         </NodeTooltip>
                     )}
                     {onMoveTierDown && (
-                        <NodeTooltip title={t('common.moveDown', { defaultValue: 'Move down' })} placement="bottom">
+                        <NodeTooltip title={t('rule.tier.adjustTier', { defaultValue: 'Adjust tier' })} placement="bottom">
                             <IconButton
                                 size="small"
                                 onClick={(e) => { e.stopPropagation(); onMoveTierDown(); }}
