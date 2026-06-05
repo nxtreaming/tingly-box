@@ -11,6 +11,13 @@ export enum TierDiagramType {
     TWO_PROVIDERS_DIFFERENT_TIERS = 'two-providers-different-tiers',
     THREE_TIERS = 'three-tiers',
     RUNTIME_FAILOVER = 'runtime-failover',
+    // Direct routing diagrams
+    DIRECT_SINGLE = 'direct-single',
+    DIRECT_MULTIPLE_TIERS = 'direct-multiple-tiers',
+    // Smart routing diagrams
+    SMART_BASIC = 'smart-basic',
+    SMART_CONDITIONS = 'smart-conditions',
+    SMART_COMPLEX = 'smart-complex',
 }
 
 /**
@@ -231,6 +238,218 @@ export const TIER_DIAGRAM_DATA: Record<string, {
         providers: MOCK_PROVIDERS,
         active: true,
     },
+
+    // Direct routing diagrams
+    [TierDiagramType.DIRECT_SINGLE]: {
+        record: {
+            uuid: 'rule-direct-single',
+            requestModel: 'claude-3-5-sonnet-20241022',
+            description: 'Direct routing with single provider',
+            providers: [
+                {
+                    uuid: 'svc-1',
+                    provider: 'provider-1',
+                    model: 'gpt-4',
+                    tier: 0,
+                    active: true,
+                },
+            ],
+            lbTactic: { type: 'random', params: {} },
+            smartEnabled: false,
+            smartRouting: [],
+        },
+        providers: MOCK_PROVIDERS,
+        active: true,
+    },
+
+    [TierDiagramType.DIRECT_MULTIPLE_TIERS]: {
+        record: {
+            uuid: 'rule-direct-multi',
+            requestModel: 'claude-3-5-sonnet-20241022',
+            description: 'Direct routing with multiple tiers',
+            providers: [
+                {
+                    uuid: 'svc-1',
+                    provider: 'provider-1',
+                    model: 'gpt-4',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-2',
+                    provider: 'provider-2',
+                    model: 'claude-3-5-sonnet-20241022',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-3',
+                    provider: 'provider-3',
+                    model: 'gpt-4',
+                    tier: 1,
+                    active: true,
+                },
+            ],
+            lbTactic: { type: 'tier', params: { within_tier_tactic: 'random' } },
+            smartEnabled: false,
+            smartRouting: [],
+        },
+        providers: MOCK_PROVIDERS,
+        active: true,
+    },
+
+    // Smart routing diagrams
+    [TierDiagramType.SMART_BASIC]: {
+        record: {
+            uuid: 'rule-smart-basic',
+            requestModel: 'claude-3-5-sonnet-20241022',
+            description: 'Smart routing with basic conditions',
+            providers: [
+                {
+                    uuid: 'svc-1',
+                    provider: 'provider-1',
+                    model: 'gpt-4',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-2',
+                    provider: 'provider-2',
+                    model: 'claude-3-5-sonnet-20241022',
+                    tier: 0,
+                    active: true,
+                },
+            ],
+            lbTactic: { type: 'smart', params: {} },
+            smartEnabled: true,
+            smartRouting: [
+                {
+                    service: 'svc-2',
+                    condition: {
+                        field: 'request_model',
+                        op: 'contains',
+                        value: 'claude',
+                    },
+                },
+            ],
+        },
+        providers: MOCK_PROVIDERS,
+        active: true,
+    },
+
+    [TierDiagramType.SMART_CONDITIONS]: {
+        record: {
+            uuid: 'rule-smart-conditions',
+            requestModel: 'claude-3-5-sonnet-20241022',
+            description: 'Smart routing with multiple conditions',
+            providers: [
+                {
+                    uuid: 'svc-1',
+                    provider: 'provider-1',
+                    model: 'gpt-4',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-2',
+                    provider: 'provider-2',
+                    model: 'claude-3-5-sonnet-20241022',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-3',
+                    provider: 'provider-3',
+                    model: 'gpt-4',
+                    tier: 1,
+                    active: true,
+                },
+            ],
+            lbTactic: { type: 'smart', params: {} },
+            smartEnabled: true,
+            smartRouting: [
+                {
+                    service: 'svc-2',
+                    condition: {
+                        field: 'request_model',
+                        op: 'contains',
+                        value: 'claude',
+                    },
+                },
+                {
+                    service: 'svc-3',
+                    condition: {
+                        field: 'max_tokens',
+                        op: 'gt',
+                        value: '4000',
+                    },
+                },
+            ],
+        },
+        providers: MOCK_PROVIDERS,
+        active: true,
+    },
+
+    [TierDiagramType.SMART_COMPLEX]: {
+        record: {
+            uuid: 'rule-smart-complex',
+            requestModel: 'claude-3-5-sonnet-20241022',
+            description: 'Smart routing with complex conditions',
+            providers: [
+                {
+                    uuid: 'svc-1',
+                    provider: 'provider-1',
+                    model: 'gpt-4',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-2',
+                    provider: 'provider-2',
+                    model: 'claude-3-5-sonnet-20241022',
+                    tier: 0,
+                    active: true,
+                },
+                {
+                    uuid: 'svc-3',
+                    provider: 'provider-3',
+                    model: 'gpt-4',
+                    tier: 1,
+                    active: true,
+                },
+            ],
+            lbTactic: { type: 'smart', params: {} },
+            smartEnabled: true,
+            smartRouting: [
+                {
+                    service: 'svc-2',
+                    condition: {
+                        field: 'request_model',
+                        op: 'contains',
+                        value: 'claude',
+                    },
+                },
+                {
+                    service: 'svc-3',
+                    condition: {
+                        field: 'max_tokens',
+                        op: 'gt',
+                        value: '4000',
+                    },
+                },
+                {
+                    service: 'svc-1',
+                    condition: {
+                        field: 'user_group',
+                        op: 'eq',
+                        value: 'premium',
+                    },
+                },
+            ],
+        },
+        providers: MOCK_PROVIDERS,
+        active: true,
+    },
 };
 
 /**
@@ -287,6 +506,77 @@ export const TIER_GUIDE_STEPS: GuideStep[] = [
         annotations: [
             { target: '.tier-node-0', text: 'rule.tier.guide.steps.5.annotation.priority' },
             { target: '.tier-node-1', text: 'rule.tier.guide.steps.5.annotation.cascade' },
+        ],
+    },
+];
+
+/**
+ * Routing guide steps configuration for Direct vs Smart routing
+ *
+ * Each step includes:
+ * - diagram: Which scenario to display
+ * - title: i18n key for step title (format: `rule.routing.guide.steps.{stepNumber}.title`)
+ * - content: i18n key for explanation text
+ * - annotations: Optional callout annotations for key elements
+ */
+export const ROUTING_GUIDE_STEPS: GuideStep[] = [
+    {
+        diagram: TierDiagramType.DIRECT_SINGLE,
+        title: 'rule.routing.guide.steps.1.title',
+        content: 'rule.routing.guide.steps.1.content',
+        annotations: [
+            { target: '.entry-node', text: 'rule.routing.guide.steps.1.annotation.entryNode' },
+            { target: '.direct-button', text: 'rule.routing.guide.steps.1.annotation.directButton' },
+        ],
+    },
+    {
+        diagram: TierDiagramType.TWO_PROVIDERS_SAME_TIER,
+        title: 'rule.routing.guide.steps.2.title',
+        content: 'rule.routing.guide.steps.2.content',
+        annotations: [
+            { target: '.entry-node', text: 'rule.routing.guide.steps.2.annotation.loadBalance' },
+            { target: '.service-node-0', text: 'rule.routing.guide.steps.2.annotation.services' },
+        ],
+    },
+    {
+        diagram: TierDiagramType.DIRECT_MULTIPLE_TIERS,
+        title: 'rule.routing.guide.steps.3.title',
+        content: 'rule.routing.guide.steps.3.content',
+        annotations: [
+            { target: '.tier-node-0', text: 'rule.routing.guide.steps.3.annotation.primary' },
+            { target: '.tier-node-1', text: 'rule.routing.guide.steps.3.annotation.fallback' },
+            { target: '.entry-node', text: 'rule.routing.guide.steps.3.annotation.tierBased' },
+        ],
+    },
+    {
+        diagram: TierDiagramType.SMART_BASIC,
+        title: 'rule.routing.guide.steps.4.title',
+        content: 'rule.routing.guide.steps.4.content',
+        annotations: [
+            { target: '.entry-node', text: 'rule.routing.guide.steps.4.annotation.smartMode' },
+            { target: '.smart-button', text: 'rule.routing.guide.steps.4.annotation.smartButton' },
+            { target: '.service-node-1', text: 'rule.routing.guide.steps.4.annotation.conditional' },
+        ],
+    },
+    {
+        diagram: TierDiagramType.SMART_CONDITIONS,
+        title: 'rule.routing.guide.steps.5.title',
+        content: 'rule.routing.guide.steps.5.content',
+        annotations: [
+            { target: '.entry-node', text: 'rule.routing.guide.steps.5.annotation.conditions' },
+            { target: '.service-node-1', text: 'rule.routing.guide.steps.5.annotation.modelBased' },
+            { target: '.service-node-2', text: 'rule.routing.guide.steps.5.annotation.tokenBased' },
+        ],
+    },
+    {
+        diagram: TierDiagramType.SMART_COMPLEX,
+        title: 'rule.routing.guide.steps.6.title',
+        content: 'rule.routing.guide.steps.6.content',
+        annotations: [
+            { target: '.entry-node', text: 'rule.routing.guide.steps.6.annotation.complex' },
+            { target: '.service-node-0', text: 'rule.routing.guide.steps.6.annotation.defaultRoute' },
+            { target: '.service-node-1', text: 'rule.routing.guide.steps.6.annotation.claudeRoute' },
+            { target: '.service-node-2', text: 'rule.routing.guide.steps.6.annotation.largeContext' },
         ],
     },
 ];
