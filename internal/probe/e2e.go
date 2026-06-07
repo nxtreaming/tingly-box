@@ -4,40 +4,27 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go/v3"
 	"github.com/sirupsen/logrus"
 
 	"github.com/tingly-dev/tingly-box/internal/client"
-	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
-	smartrouting "github.com/tingly-dev/tingly-box/internal/smart_routing"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
-
-// SelectServiceFn picks one load-balanced service from a set of smart-routing
-// matches. This is the single piece of behaviour E2EService borrows from the
-// server-side load balancer; passed as a callback to avoid an
-// internal/probe -> internal/server import cycle.
-type SelectServiceFn func(matched []*loadbalance.Service, rule *typ.Rule) (*loadbalance.Service, error)
 
 // E2EService runs SDK-level end-to-end probes against a rule, a saved
 // provider, or an inline provider config. It is independent of *Server and
 // is wired in NewServer.
 type E2EService struct {
-	config           *config.Config
-	clientPool       *client.ClientPool
-	selectFromRoutes SelectServiceFn
+	config     *config.Config
+	clientPool *client.ClientPool
 }
 
-// NewE2EService constructs a E2EService. selectFromRoutes is required and
-// receives the smart-routing decision when probing a rule target.
-func NewE2EService(cfg *config.Config, pool *client.ClientPool, selectFromRoutes SelectServiceFn) *E2EService {
+// NewE2EService constructs a E2EService.
+func NewE2EService(cfg *config.Config, pool *client.ClientPool) *E2EService {
 	return &E2EService{
-		config:           cfg,
-		clientPool:       pool,
-		selectFromRoutes: selectFromRoutes,
+		config:     cfg,
+		clientPool: pool,
 	}
 }
 
@@ -171,104 +158,46 @@ func (e *E2EService) resolveProviderConfigTarget(_ context.Context, req *E2ERequ
 	return provider, model, nil
 }
 
-func (e *E2EService) resolveRuleTarget(_ context.Context, req *E2ERequest) (*typ.Provider, string, error) {
+func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*typ.Provider, string, error) {
 	rule := e.config.GetRuleByUUID(req.RuleUUID)
 	if rule == nil {
 		return nil, "", fmt.Errorf("rule not found: %s", req.RuleUUID)
 	}
 
-	if rule.SmartEnabled && len(rule.SmartRouting) > 0 {
-		selectedService, err := e.resolveSmartRoutingForProbe(rule)
-		if err == nil && selectedService != nil {
-			provider, err := e.config.GetProviderByUUID(selectedService.Provider)
-			if err == nil && provider != nil && provider.Enabled {
-				model := selectedService.Model
-				if model == "" {
-					model = rule.RequestModel
-				}
-				logrus.Debugf("[probe-e2e] smart routing selected service: %s -> %s", provider.Name, model)
-				return provider, model, nil
-			}
-		}
-		logrus.Debugf("[probe-e2e] smart routing evaluation failed: %v, falling back to base services", err)
+	port := e.config.GetServerPort()
+	if port == 0 {
+		return nil, "", fmt.Errorf("server port unknown; cannot probe rule %q via TB interface", rule.UUID)
 	}
 
-	services := rule.GetServices()
-	if len(services) == 0 {
-		return nil, "", fmt.Errorf("rule has no services: %s", req.RuleUUID)
+	scenario := rule.Scenario
+	if scenario == "" {
+		scenario = typ.ScenarioOpenAI
 	}
 
-	var selectedService *loadbalance.Service
-	for _, svc := range services {
-		if svc.Active {
-			selectedService = svc
-			break
-		}
-	}
-	if selectedService == nil {
-		selectedService = services[0]
-	}
+	_, apiStyle := ScenarioEndpoint(string(scenario))
 
-	provider, err := e.config.GetProviderByUUID(selectedService.Provider)
-	if err != nil || provider == nil {
-		return nil, "", fmt.Errorf("provider not found for service: %s", selectedService.Provider)
-	}
-
-	if !provider.Enabled {
-		return nil, "", fmt.Errorf("provider is disabled: %s", provider.Name)
-	}
-
-	model := selectedService.Model
-	if model == "" {
-		model = rule.RequestModel
-	}
-
-	return provider, model, nil
-}
-
-func (e *E2EService) resolveSmartRoutingForProbe(rule *typ.Rule) (*loadbalance.Service, error) {
-	_, apiStyle := ScenarioEndpoint(string(rule.Scenario))
-
-	var reqCtx *smartrouting.RequestContext
+	// Route through the TB's own /tingly/{scenario} endpoint so that all
+	// rule processing — flags, smart routing, load balancing — is exercised.
+	// Path conventions mirror resolveVModelLoopbackTarget:
+	//   Anthropic SDK trims a trailing /v1 from BaseURL → omit /v1 suffix.
+	//   OpenAI SDK does not add /v1 → include /v1 in the path.
+	var apiBase string
 	switch apiStyle {
 	case protocol.APIStyleAnthropic:
-		probeReq := &anthropic.MessageNewParams{
-			Model:     anthropic.Model(rule.RequestModel),
-			MaxTokens: 5,
-			Messages: []anthropic.MessageParam{
-				anthropic.NewUserMessage(anthropic.NewTextBlock("hi")),
-			},
-		}
-		reqCtx = smartrouting.ExtractContext(probeReq)
+		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s", port, scenario)
 	default:
-		probeReq := &openai.ChatCompletionNewParams{
-			Model: openai.ChatModel(rule.RequestModel),
-			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.UserMessage("hi"),
-			},
-		}
-		reqCtx = smartrouting.ExtractContext(probeReq)
+		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s/v1", port, scenario)
 	}
 
-	router, err := smartrouting.NewRouter(rule.SmartRouting)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create smart routing router: %w", err)
-	}
+	logrus.Debugf("[probe-e2e] rule %s -> TB loopback %s (model=%s)", rule.UUID, apiBase, rule.RequestModel)
 
-	matchedServices, matched := router.EvaluateRequest(reqCtx)
-	if !matched || len(matchedServices) == 0 {
-		return nil, fmt.Errorf("no smart routing rule matched")
-	}
-
-	selectedService, err := e.selectFromRoutes(matchedServices, rule)
-	if err != nil {
-		return nil, fmt.Errorf("failed to select service from smart routing matches: %w", err)
-	}
-	if selectedService == nil {
-		return nil, fmt.Errorf("smart routing returned no selectable service")
-	}
-
-	return selectedService, nil
+	return e.resolveProviderConfigTarget(ctx, &E2ERequest{
+		Name:     string(scenario),
+		APIBase:  apiBase,
+		APIStyle: string(apiStyle),
+		Token:    e.config.GetModelToken(),
+		Model:    rule.RequestModel,
+	})
 }
 
 // ProbeProviderWithSDK runs an SDK probe by dispatching a minimal request
