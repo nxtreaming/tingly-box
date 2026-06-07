@@ -93,13 +93,15 @@ func (e *E2EService) resolveVModelLoopbackTarget(ctx context.Context, provider *
 		return nil, "", fmt.Errorf("server port unknown; cannot probe vmodel provider %q", provider.Name)
 	}
 
-	if provider.APIStyle != protocol.APIStyleAnthropic && provider.APIStyle != protocol.APIStyleOpenAI {
+	scenario, ok := defaultScenarioForAPIStyle(provider.APIStyle)
+	if !ok {
 		return nil, "", fmt.Errorf("vmodel probe unsupported for APIStyle %q", provider.APIStyle)
 	}
+	_, apiStyle := ScenarioEndpoint(string(scenario))
 	return e.resolveProviderConfigTarget(ctx, &E2ERequest{
 		Name:     provider.Name,
-		APIBase:  loopbackAPIBase(port, provider.APIStyle),
-		APIStyle: string(provider.APIStyle),
+		APIBase:  loopbackAPIBase(port, scenario),
+		APIStyle: string(apiStyle),
 		Token:    e.config.GetModelToken(),
 		Model:    model,
 	})
@@ -142,7 +144,9 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 		return provider, model, nil, nil
 	}
 
-	apiBase := loopbackAPIBase(port, provider.APIStyle)
+	scenario, _ := defaultScenarioForAPIStyle(provider.APIStyle)
+	_, apiStyle := ScenarioEndpoint(string(scenario))
+	apiBase := loopbackAPIBase(port, scenario)
 	probeHeaders := map[string]string{
 		"X-Tingly-Probe-Service": req.ProviderUUID + ":" + model,
 	}
@@ -151,7 +155,7 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 	loopbackProvider, loopbackModel, err := e.resolveProviderConfigTarget(ctx, &E2ERequest{
 		Name:     provider.Name,
 		APIBase:  apiBase,
-		APIStyle: string(provider.APIStyle),
+		APIStyle: string(apiStyle),
 		Token:    e.config.GetModelToken(),
 		Model:    model,
 	})
@@ -161,15 +165,26 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 	return loopbackProvider, loopbackModel, probeHeaders, nil
 }
 
-// loopbackAPIBase returns the TB loopback base URL for the given APIStyle.
-// Anthropic SDK trims a trailing /v1 from BaseURL; OpenAI SDK does not add /v1.
-// We match each SDK's expectation so the rebuilt path hits the right endpoint.
-func loopbackAPIBase(port int, style protocol.APIStyle) string {
+// loopbackAPIBase returns the TB loopback base URL for the given scenario.
+// TB registers both /tingly/:scenario and /tingly/:scenario/v1 with identical
+// handlers, so the base URL needs no /v1 suffix — each SDK appends its own
+// operation path (e.g. /chat/completions, /messages).
+func loopbackAPIBase(port int, scenario typ.RuleScenario) string {
+	path, _ := ScenarioEndpoint(string(scenario))
+	return fmt.Sprintf("http://localhost:%d%s", port, path)
+}
+
+// defaultScenarioForAPIStyle returns the default TB scenario for provider-level
+// probes, where no rule scenario is specified. Returns false for API styles
+// that have no matching /tingly/{scenario} endpoint (e.g. Google).
+func defaultScenarioForAPIStyle(style protocol.APIStyle) (typ.RuleScenario, bool) {
 	switch style {
 	case protocol.APIStyleAnthropic:
-		return fmt.Sprintf("http://localhost:%d/tingly/%s", port, typ.ScenarioAnthropic)
+		return typ.ScenarioAnthropic, true
+	case protocol.APIStyleOpenAI:
+		return typ.ScenarioOpenAI, true
 	default:
-		return fmt.Sprintf("http://localhost:%d/tingly/%s/v1", port, typ.ScenarioOpenAI)
+		return "", false
 	}
 }
 
@@ -218,7 +233,7 @@ func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*t
 	}
 
 	_, apiStyle := ScenarioEndpoint(string(scenario))
-	apiBase := loopbackAPIBase(port, apiStyle)
+	apiBase := loopbackAPIBase(port, scenario)
 
 	logrus.Debugf("[probe-e2e] rule %s -> TB loopback %s (model=%s)", rule.UUID, apiBase, rule.RequestModel)
 

@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,8 +62,8 @@ func TestResolveProviderTarget_OpenAI_RoutesLoopback(t *testing.T) {
 
 	assert.Equal(t, "gpt-4", model)
 	assert.Equal(t, protocol.APIStyleOpenAI, loopback.APIStyle)
-	assert.True(t, strings.HasPrefix(loopback.APIBase, "http://localhost:18080/tingly/openai/v1"),
-		"apiBase should point at TB loopback, got %s", loopback.APIBase)
+	assert.Equal(t, "http://localhost:18080/tingly/openai", loopback.APIBase,
+		"apiBase should point at TB loopback (no /v1 suffix), got %s", loopback.APIBase)
 	require.Contains(t, headers, "X-Tingly-Probe-Service")
 	assert.Equal(t, "p-openai:gpt-4", headers["X-Tingly-Probe-Service"])
 }
@@ -97,11 +96,8 @@ func TestResolveProviderTarget_Anthropic_RoutesLoopback(t *testing.T) {
 
 	assert.Equal(t, "claude-3-5-sonnet-20241022", model)
 	assert.Equal(t, protocol.APIStyleAnthropic, loopback.APIStyle)
-	// Anthropic SDK trims trailing /v1 — loopback path must NOT include /v1.
-	assert.True(t, strings.HasPrefix(loopback.APIBase, "http://localhost:18080/tingly/anthropic"),
-		"apiBase should point at TB loopback without /v1, got %s", loopback.APIBase)
-	assert.NotContains(t, loopback.APIBase, "/v1",
-		"Anthropic loopback must not include /v1 suffix, got %s", loopback.APIBase)
+	assert.Equal(t, "http://localhost:18080/tingly/anthropic", loopback.APIBase,
+		"apiBase should point at TB loopback (no /v1 suffix), got %s", loopback.APIBase)
 	assert.Equal(t, "p-anthropic:claude-3-5-sonnet-20241022", headers["X-Tingly-Probe-Service"])
 }
 

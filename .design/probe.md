@@ -34,7 +34,7 @@ Provider and rule probes route through TB's own HTTP endpoint (`http://localhost
 ```
 Probe code
   → SDK client (with probeHeaderRoundTripper)
-    → TB loopback /tingly/openai/v1/chat/completions
+    → TB loopback /tingly/{scenario}/chat/completions (or /messages)
       → determineRuleWithScenario (reads X-Tingly-Probe-* headers)
         → SimpleSelector.SelectService (pins service if header present)
           → upstream provider
@@ -42,16 +42,11 @@ Probe code
 
 ### URL conventions
 
-Anthropic's SDK trims a trailing `/v1` from `BaseURL`; OpenAI's SDK does not add one. `loopbackAPIBase()` accounts for this:
+`loopbackAPIBase(port, scenario)` delegates to `ScenarioEndpoint(scenario)` for the canonical `/tingly/{scenario}` path — no `/v1` suffix. TB registers both `/tingly/:scenario` and `/tingly/:scenario/v1` with identical handlers, so each SDK appends its own operation path (`/chat/completions`, `/messages`) without needing the prefix to carry a version segment.
 
-```
-APIStyleAnthropic → http://localhost:{port}/tingly/anthropic
-APIStyleOpenAI    → http://localhost:{port}/tingly/openai/v1
-```
+`resolveRuleTarget` passes `rule.Scenario` directly to `loopbackAPIBase`. If `ServerPort == 0` (unknown), it returns an error rather than falling back to direct (rule probes have no meaningful fallback).
 
-`resolveRuleTarget` derives `apiStyle` from `rule.Scenario` via `ScenarioEndpoint()`, then calls `loopbackAPIBase`. If `ServerPort == 0` (unknown), it returns an error rather than falling back to direct (rule probes have no meaningful fallback).
-
-`resolveProviderTarget` uses `provider.APIStyle` directly. Google providers and the `port == 0` case fall back to direct SDK calls.
+`resolveProviderTarget` calls `defaultScenarioForAPIStyle(provider.APIStyle)` to get the canonical scenario for the provider, then passes it to `loopbackAPIBase`. Google providers and the `port == 0` case fall back to direct SDK calls.
 
 Virtual model providers (`provider.IsVirtual()`) are also resolved to the TB loopback via `resolveVModelLoopbackTarget`, sharing the same `loopbackAPIBase` helper.
 
