@@ -2,6 +2,7 @@ package routing
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
@@ -41,6 +42,26 @@ func (s *SimpleSelector) SelectService(
 	rule *typ.Rule,
 	req interface{},
 ) (*typ.Provider, *loadbalance.Service, error) {
+	// X-Tingly-Probe-Service: {provider_uuid}:{model} — bypass all pipeline
+	// stages and pin to the specified service. Used by service-target probes
+	// that need to route through TB's middleware stack (for flag application)
+	// while targeting a specific provider+model.
+	if probeService := c.GetHeader("X-Tingly-Probe-Service"); probeService != "" {
+		if providerUUID, model, ok := strings.Cut(probeService, ":"); ok {
+			provider, err := s.selector.config.GetProviderByUUID(providerUUID)
+			if err != nil || provider == nil {
+				return nil, nil, fmt.Errorf("probe service provider not found: %s", providerUUID)
+			}
+			if !provider.Enabled {
+				return nil, nil, fmt.Errorf("probe service provider disabled: %s", providerUUID)
+			}
+			svc := &loadbalance.Service{Provider: providerUUID, Model: model, Active: true}
+			logrus.Debugf("[routing] probe service pin: provider=%s model=%s", provider.Name, model)
+			setRoutingDebugHeaders(c, provider.Name, provider.UUID, model, "probe_pin", -1)
+			return provider, svc, nil
+		}
+	}
+
 	// Build context (session ID resolved internally)
 	ctx := NewSelectionContext(rule, req, c, scenario)
 
@@ -60,24 +81,25 @@ func (s *SimpleSelector) SelectService(
 	// Store result metadata for observability
 	c.Set("routing_source", result.Source)
 
-	// Add debug headers when X-TBE-Debug-Routing is enabled
-	debugHeader := c.GetHeader("X-TBE-Debug-Routing")
-	logrus.Debugf("[routing-debug] X-TBE-Debug-Routing header = %q", debugHeader)
-	if debugHeader == "1" {
-		providerName := result.Provider.Name
-		modelName := result.Service.Model
-		source := result.Source
-		c.Header("X-TBE-Selected-Provider", providerName)
-		c.Header("X-TBE-Selected-Provider-UUID", result.Provider.UUID)
-		c.Header("X-TBE-Selected-Model", modelName)
-		c.Header("X-TBE-Routing-Source", source)
-		if result.MatchedSmartRuleIndex >= 0 {
-			c.Header("X-TBE-Matched-Smart-Rule", fmt.Sprintf("%d", result.MatchedSmartRuleIndex))
-		}
-		logrus.Infof("[routing-debug] Set debug headers: provider=%s model=%s source=%s", providerName, modelName, source)
-	}
+	setRoutingDebugHeaders(c, result.Provider.Name, result.Provider.UUID, result.Service.Model, result.Source, result.MatchedSmartRuleIndex)
 
 	return result.Provider, result.Service, nil
+}
+
+// setRoutingDebugHeaders emits X-Tingly-Selected-* response headers describing
+// the routing decision, but only when the request opted in via
+// X-Tingly-Debug-Routing: 1 (set by probes). matchedSmartRule < 0 means none.
+func setRoutingDebugHeaders(c *gin.Context, providerName, providerUUID, model, source string, matchedSmartRule int) {
+	if c.GetHeader("X-Tingly-Debug-Routing") != "1" {
+		return
+	}
+	c.Header("X-Tingly-Selected-Provider", providerName)
+	c.Header("X-Tingly-Selected-Provider-UUID", providerUUID)
+	c.Header("X-Tingly-Selected-Model", model)
+	c.Header("X-Tingly-Routing-Source", source)
+	if matchedSmartRule >= 0 {
+		c.Header("X-Tingly-Matched-Smart-Rule", fmt.Sprintf("%d", matchedSmartRule))
+	}
 }
 
 // SelectServiceForEmbeddings is a variant of SelectService for embedding requests.

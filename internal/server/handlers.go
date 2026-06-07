@@ -307,7 +307,35 @@ func isEnterpriseContextPresent(c *gin.Context) bool {
 	return strings.TrimSpace(c.GetString("enterprise_user_id")) != ""
 }
 
+// probeSyntheticRuleUUID marks the throwaway rule built for an
+// X-Tingly-Probe-Service request — it has no persisted identity.
+const probeSyntheticRuleUUID = "probe-synthetic"
+
 func (s *Server) determineRuleWithScenario(ctx *gin.Context, scenario typ.RuleScenario, modelName string) (*typ.Rule, error) {
+	// X-Tingly-Probe-Rule: load a specific rule by UUID (for applying its flags
+	// while service selection is overridden by X-Tingly-Probe-Service).
+	if ruleUUID := ctx.GetHeader("X-Tingly-Probe-Rule"); ruleUUID != "" {
+		if rule := s.config.GetRuleByUUID(ruleUUID); rule != nil {
+			return rule, nil
+		}
+		return nil, fmt.Errorf("probe rule not found: %s", ruleUUID)
+	}
+
+	// X-Tingly-Probe-Service: no matching rule needed — build a minimal synthetic
+	// rule so the handler can proceed with service selection pinned by the header.
+	if probeService := ctx.GetHeader("X-Tingly-Probe-Service"); probeService != "" {
+		if providerUUID, model, ok := strings.Cut(probeService, ":"); ok {
+			svc := &loadbalance.Service{Provider: providerUUID, Model: model, Active: true}
+			return &typ.Rule{
+				UUID:         probeSyntheticRuleUUID,
+				Scenario:     scenario,
+				RequestModel: model,
+				Services:     []*loadbalance.Service{svc},
+				Active:       true,
+			}, nil
+		}
+	}
+
 	cfg := s.config
 	if cfg != nil {
 		// Use the new MatchRuleByModelAndScenario which supports wildcard matching

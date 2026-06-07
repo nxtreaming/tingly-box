@@ -70,6 +70,7 @@ const getProviderInfo = (providerUuid: string, providersData: Provider[]) => {
 export interface ServiceNodeProps {
     provider: ConfigProvider;
     apiStyle: string;
+    scenario?: string;
     providersData: Provider[];
     active: boolean;
     onDelete: () => void;
@@ -182,6 +183,7 @@ const TierBadge: React.FC<TierBadgeProps> = ({ priority, onChange, active }) => 
 export const ServiceNode: React.FC<ServiceNodeProps> = ({
     provider,
     apiStyle,
+    scenario,
     providersData,
     active,
     onDelete,
@@ -238,6 +240,7 @@ export const ServiceNode: React.FC<ServiceNodeProps> = ({
                     targetType="provider"
                     targetId={provider.provider}
                     targetName={providerInfo.name}
+                    scenario={scenario}
                     model={provider.model}
                 />
             )}

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -86,6 +87,123 @@ func CreateHTTPClientWithProxy(proxyURL string) *http.Client {
 	return &http.Client{
 		Transport: transport,
 	}
+}
+
+// probeHeadersKey is a context key for probe-only HTTP headers.
+// Headers stored here are injected by probeHeaderRoundTripper into every
+// outgoing request that carries this context. Only set by probe code;
+// production traffic never touches this key.
+type probeHeadersKey struct{}
+
+// WithProbeHeaders stores headers in ctx so that clients using
+// probeHeaderRoundTripper inject them into each SDK HTTP call.
+func WithProbeHeaders(ctx context.Context, headers map[string]string) context.Context {
+	return context.WithValue(ctx, probeHeadersKey{}, headers)
+}
+
+// probeHeaderRoundTripper sits at the outermost layer of a transport chain and
+// adds probe-specific headers (stored in the request context by probe code)
+// to each outbound request. It is a no-op for non-probe requests.
+type probeHeaderRoundTripper struct {
+	inner http.RoundTripper
+}
+
+func (t *probeHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if headers, ok := req.Context().Value(probeHeadersKey{}).(map[string]string); ok && len(headers) > 0 {
+		req = req.Clone(req.Context())
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+	}
+	return t.inner.RoundTrip(req)
+}
+
+// wrapWithProbeHeaders wraps a transport so probe headers stored in request
+// contexts are injected into outgoing requests. No-op on non-probe requests.
+func wrapWithProbeHeaders(inner http.RoundTripper) http.RoundTripper {
+	return &probeHeaderRoundTripper{inner: inner}
+}
+
+// GetProbeHeaders returns probe headers stored in ctx by WithProbeHeaders.
+// Returns nil, false when no headers are present.
+func GetProbeHeaders(ctx context.Context) (map[string]string, bool) {
+	h, ok := ctx.Value(probeHeadersKey{}).(map[string]string)
+	return h, ok && len(h) > 0
+}
+
+// applyTransportWrap layers wrap() onto the HTTP transport of a probe client.
+// Accepts *OpenAIClient or *AnthropicClient; no-op for any other type.
+func applyTransportWrap(c interface{}, wrap func(http.RoundTripper) http.RoundTripper) {
+	switch tc := c.(type) {
+	case *OpenAIClient:
+		tc.HttpClient.Transport = wrap(tc.HttpClient.Transport)
+	case *AnthropicClient:
+		tc.httpClient.Transport = wrap(tc.httpClient.Transport)
+	}
+}
+
+// ApplyProbeHeadersToClient wraps the HTTP transport of a client so that
+// probe headers from the context are forwarded on every outgoing request.
+// Call this only on probe clients — not on production client instances.
+func ApplyProbeHeadersToClient(c interface{}) {
+	applyTransportWrap(c, wrapWithProbeHeaders)
+}
+
+// RoutingCapture holds routing-decision headers captured from a TB-loopback
+// probe response. Fields mirror the X-Tingly-Selected-* / X-Tingly-Routing-Source
+// headers set by SimpleSelector when X-Tingly-Debug-Routing: 1 is present.
+type RoutingCapture struct {
+	Mu                   sync.Mutex
+	SelectedProvider     string
+	SelectedProviderUUID string
+	SelectedModel        string
+	RoutingSource        string
+	MatchedSmartRule     string // raw header value; "-1" or index string
+
+	// Execution-level facts (set at dispatch, after endpoint resolution).
+	UpstreamAPI     string // e.g. "openai_chat", "openai_responses", "anthropic_v1"
+	UpstreamURL     string // real upstream endpoint TB forwarded to
+	MatchedRule     string // matched rule UUID (empty for synthetic provider probes)
+	MatchedRuleDesc string // percent-encoded; decoded by the probe layer
+	AppliedFlags    string // compact "endpoint=responses, thinking=high"
+}
+
+// captureRoutingRoundTripper reads X-Tingly-* routing headers from every
+// response and records them in the shared RoutingCapture. It is layered
+// outermost on probe clients so it sees the loopback response before the SDK.
+type captureRoutingRoundTripper struct {
+	inner   http.RoundTripper
+	capture *RoutingCapture
+}
+
+func (t *captureRoutingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.inner.RoundTrip(req)
+	if err == nil && resp != nil {
+		t.capture.Mu.Lock()
+		t.capture.SelectedProvider = resp.Header.Get("X-Tingly-Selected-Provider")
+		t.capture.SelectedProviderUUID = resp.Header.Get("X-Tingly-Selected-Provider-UUID")
+		t.capture.SelectedModel = resp.Header.Get("X-Tingly-Selected-Model")
+		t.capture.RoutingSource = resp.Header.Get("X-Tingly-Routing-Source")
+		t.capture.MatchedSmartRule = resp.Header.Get("X-Tingly-Matched-Smart-Rule")
+		t.capture.UpstreamAPI = resp.Header.Get("X-Tingly-Upstream-API")
+		t.capture.UpstreamURL = resp.Header.Get("X-Tingly-Upstream-URL")
+		t.capture.MatchedRule = resp.Header.Get("X-Tingly-Matched-Rule")
+		t.capture.MatchedRuleDesc = resp.Header.Get("X-Tingly-Matched-Rule-Desc")
+		t.capture.AppliedFlags = resp.Header.Get("X-Tingly-Applied-Flags")
+		t.capture.Mu.Unlock()
+	}
+	return resp, err
+}
+
+// ApplyRoutingCaptureToClient layers a captureRoutingRoundTripper on a probe
+// client's transport chain. The capture pointer is populated after the SDK
+// call completes. Returns the capture so the caller can read the result.
+func ApplyRoutingCaptureToClient(c interface{}) *RoutingCapture {
+	cap := &RoutingCapture{}
+	applyTransportWrap(c, func(inner http.RoundTripper) http.RoundTripper {
+		return &captureRoutingRoundTripper{inner: inner, capture: cap}
+	})
+	return cap
 }
 
 // TransportPoolInterface defines the interface for transport pools.

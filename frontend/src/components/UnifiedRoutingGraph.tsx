@@ -309,6 +309,7 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                                 key={p.uuid}
                                 provider={p}
                                 apiStyle={getApiStyle(p.provider)}
+                                scenario={record.scenario}
                                 providersData={providers}
                                 active={active && p.active !== false}
                                 onDelete={() => onDeleteProvider?.(p.uuid)}
@@ -373,6 +374,7 @@ export const UnifiedRoutingGraph: React.FC<UnifiedRoutingGraphProps> = ({
                                                 key={service.uuid}
                                                 provider={service}
                                                 apiStyle={getApiStyle(service.provider)}
+                                                scenario={record.scenario}
                                                 providersData={providers}
                                                 active={active && service.active !== false}
                                                 onDelete={() => onDeleteServiceFromSmartRule?.(rule.uuid, service.uuid)}
