@@ -323,7 +323,7 @@ export const ProbeV2Dialog: React.FC<ProbeV2DialogProps> = ({
             target_type: targetType,
             ...(targetType === 'rule'
                 ? { scenario: scenario || 'openai', rule_uuid: targetId }
-                : { provider_uuid: targetId, model: model || '', direct }),
+                : { provider_uuid: targetId, model: model || '', direct, ...(scenario ? { scenario } : {}) }),
             test_mode: mode,
             message: defaultMessage(mode),
         };

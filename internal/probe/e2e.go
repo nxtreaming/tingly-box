@@ -154,8 +154,16 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 		return provider, model, nil, nil
 	}
 
-	scenario, _ := defaultScenarioForAPIStyle(provider.APIStyle)
-	apiBase, apiStyle := loopbackAPIBase(port, scenario)
+	// Prefer the scenario the caller is probing under (the page's scenario, which
+	// may carry a profile suffix like "claude_code:p4") so the loopback URL
+	// matches the page. The api-style stays the provider's own — we test the
+	// provider with its real protocol, just under the page's scenario context.
+	scenario := typ.RuleScenario(req.Scenario)
+	if scenario == "" {
+		scenario, _ = defaultScenarioForAPIStyle(provider.APIStyle)
+	}
+	apiBase, _ := loopbackAPIBase(port, scenario)
+	apiStyle := provider.APIStyle
 	probeHeaders := map[string]string{
 		"X-Tingly-Probe-Service": req.ProviderUUID + ":" + model,
 		"X-Tingly-Debug-Routing":   "1",
