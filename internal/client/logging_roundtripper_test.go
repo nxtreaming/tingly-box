@@ -57,7 +57,7 @@ func TestLoggingRoundTripper_EnvProxy(t *testing.T) {
 
 	lrt := &loggingRoundTripper{
 		inner:    &fn,
-		provider: "test",
+		provider: &typ.Provider{Name: "test"},
 		proxy:    "direct", // no provider-level proxy
 	}
 

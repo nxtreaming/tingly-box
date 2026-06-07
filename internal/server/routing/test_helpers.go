@@ -158,6 +158,10 @@ func (m *mockConfig) SaveCurrentServiceID(ruleUUID string, serviceID string) err
 	return nil
 }
 
+func (m *mockConfig) GetEffectiveAffinity(rule *typ.Rule) time.Duration {
+	return time.Duration(rule.Flags.SessionAffinity) * time.Second
+}
+
 // testAffinityEntry creates a test affinity entry.
 func testAffinityEntry(svc *loadbalance.Service) *AffinityEntry {
 	return &AffinityEntry{

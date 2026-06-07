@@ -95,7 +95,6 @@ func NewAnthropicClient(provider *typ.Provider, model string, sessionID typ.Sess
 		transport = wrapWithUserAgent(transport, provider)
 		transport = wrapWithLogging(transport, provider)
 	}
-	transport = wrapWithProbeHeaders(transport)
 
 	httpClient := &http.Client{
 		Transport: transport,

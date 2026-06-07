@@ -119,10 +119,29 @@ func (t *probeHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, 
 }
 
 // wrapWithProbeHeaders wraps a transport so probe headers stored in request
-// contexts are injected into outgoing requests. Always applied; no-op cost
-// on non-probe requests.
+// contexts are injected into outgoing requests. No-op on non-probe requests.
 func wrapWithProbeHeaders(inner http.RoundTripper) http.RoundTripper {
 	return &probeHeaderRoundTripper{inner: inner}
+}
+
+// GetProbeHeaders returns probe headers stored in ctx by WithProbeHeaders.
+// Returns nil, false when no headers are present.
+func GetProbeHeaders(ctx context.Context) (map[string]string, bool) {
+	h, ok := ctx.Value(probeHeadersKey{}).(map[string]string)
+	return h, ok && len(h) > 0
+}
+
+// ApplyProbeHeadersToClient wraps the HTTP transport of a client so that
+// probe headers from the context are forwarded on every outgoing request.
+// Accepts *OpenAIClient or *AnthropicClient; no-op for any other type.
+// Call this only on probe clients — not on production client instances.
+func ApplyProbeHeadersToClient(c interface{}) {
+	switch tc := c.(type) {
+	case *OpenAIClient:
+		tc.HttpClient.Transport = wrapWithProbeHeaders(tc.HttpClient.Transport)
+	case *AnthropicClient:
+		tc.httpClient.Transport = wrapWithProbeHeaders(tc.httpClient.Transport)
+	}
 }
 
 // TransportPoolInterface defines the interface for transport pools.

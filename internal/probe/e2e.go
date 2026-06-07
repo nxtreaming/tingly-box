@@ -272,6 +272,10 @@ func (e *E2EService) ProbeProviderWithSDK(ctx context.Context, provider *typ.Pro
 		if oc == nil {
 			return nil, fmt.Errorf("failed to get OpenAI client for provider: %s", provider.Name)
 		}
+		// Wrap transport so probe headers in ctx reach the TB loopback endpoint.
+		if _, hasHeaders := client.GetProbeHeaders(ctx); hasHeaders {
+			client.ApplyProbeHeadersToClient(oc)
+		}
 		// Codex OAuth providers only speak the Responses API.
 		if isCodexOAuth(provider) {
 			return probeOpenAIResponses(ctx, oc, model, message, mode)
@@ -282,6 +286,10 @@ func (e *E2EService) ProbeProviderWithSDK(ctx context.Context, provider *typ.Pro
 		ac := e.clientPool.GetAnthropicClient(ctx, provider, model)
 		if ac == nil {
 			return nil, fmt.Errorf("failed to get Anthropic client for provider: %s", provider.Name)
+		}
+		// Wrap transport so probe headers in ctx reach the TB loopback endpoint.
+		if _, hasHeaders := client.GetProbeHeaders(ctx); hasHeaders {
+			client.ApplyProbeHeadersToClient(ac)
 		}
 		return probeAnthropicMessages(ctx, ac, model, message, mode)
 
