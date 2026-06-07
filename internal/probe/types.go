@@ -112,6 +112,11 @@ type E2ERequest struct {
 	TestMode E2EMode `json:"test_mode" binding:"required"`
 
 	Message string `json:"message,omitempty"`
+
+	// Direct skips the TB loopback and calls the upstream provider directly.
+	// Only meaningful for target_type="provider". Use this to isolate whether
+	// a failure is in the upstream provider or in TB's own middleware stack.
+	Direct bool `json:"direct,omitempty"`
 }
 
 // E2EData is an alias to ProbeResult — the canonical SDK-level probe result.

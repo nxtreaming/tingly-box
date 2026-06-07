@@ -70,7 +70,7 @@ func (e *E2EService) resolveTargetToProviderModel(ctx context.Context, req *E2ER
 	case E2ETargetProviderConfig:
 		provider, model, err = e.resolveProviderConfigTarget(ctx, req)
 	case E2ETargetRule:
-		provider, model, err = e.resolveRuleTarget(ctx, req)
+		provider, model, probeHeaders, err = e.resolveRuleTarget(ctx, req)
 	default:
 		return nil, "", nil, fmt.Errorf("invalid target type: %s", req.TargetType)
 	}
@@ -128,6 +128,14 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 		}
 	}
 
+	// Direct probe: caller wants to test the upstream provider in isolation,
+	// bypassing TB's middleware stack entirely. Useful for diagnosing whether
+	// a failure is upstream vs TB-internal.
+	if req.Direct {
+		logrus.Debugf("[probe-e2e] direct probe for provider %s (bypassing TB loopback)", provider.UUID)
+		return provider, model, nil, nil
+	}
+
 	// Google providers don't have a matching /tingly/{scenario} endpoint;
 	// probe them directly via SDK.
 	if provider.APIStyle == protocol.APIStyleGoogle {
@@ -149,6 +157,7 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 	apiBase := loopbackAPIBase(port, scenario)
 	probeHeaders := map[string]string{
 		"X-Tingly-Probe-Service": req.ProviderUUID + ":" + model,
+		"X-Tingly-Debug-Routing":   "1",
 	}
 	logrus.Debugf("[probe-e2e] provider %s -> TB loopback %s (service pin=%s:%s)", provider.UUID, apiBase, req.ProviderUUID, model)
 
@@ -216,15 +225,15 @@ func (e *E2EService) resolveProviderConfigTarget(_ context.Context, req *E2ERequ
 	return provider, model, nil
 }
 
-func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*typ.Provider, string, error) {
+func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*typ.Provider, string, map[string]string, error) {
 	rule := e.config.GetRuleByUUID(req.RuleUUID)
 	if rule == nil {
-		return nil, "", fmt.Errorf("rule not found: %s", req.RuleUUID)
+		return nil, "", nil, fmt.Errorf("rule not found: %s", req.RuleUUID)
 	}
 
 	port := e.config.GetServerPort()
 	if port == 0 {
-		return nil, "", fmt.Errorf("server port unknown; cannot probe rule %q via TB interface", rule.UUID)
+		return nil, "", nil, fmt.Errorf("server port unknown; cannot probe rule %q via TB interface", rule.UUID)
 	}
 
 	scenario := rule.Scenario
@@ -237,13 +246,21 @@ func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*t
 
 	logrus.Debugf("[probe-e2e] rule %s -> TB loopback %s (model=%s)", rule.UUID, apiBase, rule.RequestModel)
 
-	return e.resolveProviderConfigTarget(ctx, &E2ERequest{
+	probeHeaders := map[string]string{
+		"X-Tingly-Debug-Routing": "1",
+	}
+
+	provider, model, err := e.resolveProviderConfigTarget(ctx, &E2ERequest{
 		Name:     string(scenario),
 		APIBase:  apiBase,
 		APIStyle: string(apiStyle),
 		Token:    e.config.GetModelToken(),
 		Model:    rule.RequestModel,
 	})
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return provider, model, probeHeaders, nil
 }
 
 // ProbeProviderWithSDK runs an SDK probe by dispatching a minimal request
@@ -254,40 +271,74 @@ func (e *E2EService) ProbeProviderWithSDK(ctx context.Context, provider *typ.Pro
 
 	_, wrapProbeHeaders := client.GetProbeHeaders(ctx)
 
+	var result *E2EData
+	var err error
+
 	switch provider.APIStyle {
 	case protocol.APIStyleOpenAI:
 		oc := e.clientPool.GetOpenAIClient(ctx, provider, model)
 		if oc == nil {
 			return nil, fmt.Errorf("failed to get OpenAI client for provider: %s", provider.Name)
 		}
+		var routing *client.RoutingCapture
 		if wrapProbeHeaders {
 			client.ApplyProbeHeadersToClient(oc)
+			routing = client.ApplyRoutingCaptureToClient(oc)
 		}
 		// Codex OAuth providers only speak the Responses API.
 		if isCodexOAuth(provider) {
-			return probeOpenAIResponses(ctx, oc, model, message, mode)
+			result, err = probeOpenAIResponses(ctx, oc, model, message, mode)
+		} else {
+			result, err = probeOpenAIChat(ctx, oc, model, message, mode)
 		}
-		return probeOpenAIChat(ctx, oc, model, message, mode)
+		if err == nil && routing != nil {
+			applyRoutingCapture(result, routing)
+		}
 
 	case protocol.APIStyleAnthropic:
 		ac := e.clientPool.GetAnthropicClient(ctx, provider, model)
 		if ac == nil {
 			return nil, fmt.Errorf("failed to get Anthropic client for provider: %s", provider.Name)
 		}
+		var routing *client.RoutingCapture
 		if wrapProbeHeaders {
 			client.ApplyProbeHeadersToClient(ac)
+			routing = client.ApplyRoutingCaptureToClient(ac)
 		}
-		return probeAnthropicMessages(ctx, ac, model, message, mode)
+		result, err = probeAnthropicMessages(ctx, ac, model, message, mode)
+		if err == nil && routing != nil {
+			applyRoutingCapture(result, routing)
+		}
 
 	case protocol.APIStyleGoogle:
 		gc := e.clientPool.GetGoogleClient(ctx, provider, model)
 		if gc == nil {
 			return nil, fmt.Errorf("failed to get Google client for provider: %s", provider.Name)
 		}
-		return probeGoogleGenerate(ctx, gc, model, message, mode)
+		result, err = probeGoogleGenerate(ctx, gc, model, message, mode)
 
 	default:
 		return nil, fmt.Errorf("unsupported API style: %s", provider.APIStyle)
+	}
+
+	return result, err
+}
+
+// applyRoutingCapture copies the captured TB loopback routing decisions into
+// the probe result so callers can see which provider/model was ultimately
+// selected and via which routing path.
+func applyRoutingCapture(result *E2EData, cap *client.RoutingCapture) {
+	if result == nil {
+		return
+	}
+	cap.Mu.Lock()
+	defer cap.Mu.Unlock()
+	result.SelectedProvider = cap.SelectedProvider
+	result.SelectedProviderUUID = cap.SelectedProviderUUID
+	result.SelectedModel = cap.SelectedModel
+	result.RoutingSource = cap.RoutingSource
+	if cap.MatchedSmartRule != "" {
+		fmt.Sscanf(cap.MatchedSmartRule, "%d", &result.MatchedSmartRule)
 	}
 }
 

@@ -25,6 +25,14 @@ type ProbeResult struct {
 
 	// Request URL (for debugging)
 	RequestURL string `json:"request_url,omitempty"`
+
+	// Routing trace — populated for TB-loopback probes (provider and rule targets).
+	// Empty for direct probes and provider_config probes.
+	SelectedProvider     string `json:"selected_provider,omitempty"`
+	SelectedProviderUUID string `json:"selected_provider_uuid,omitempty"`
+	SelectedModel        string `json:"selected_model,omitempty"`
+	RoutingSource        string `json:"routing_source,omitempty"`
+	MatchedSmartRule     int    `json:"matched_smart_rule,omitempty"` // -1 = none, ≥0 = index
 }
 
 // ProbeToolCall represents a tool call in a probe response.

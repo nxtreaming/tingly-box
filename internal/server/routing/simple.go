@@ -80,21 +80,15 @@ func (s *SimpleSelector) SelectService(
 	// Store result metadata for observability
 	c.Set("routing_source", result.Source)
 
-	// Add debug headers when X-TBE-Debug-Routing is enabled
-	debugHeader := c.GetHeader("X-TBE-Debug-Routing")
-	logrus.Debugf("[routing-debug] X-TBE-Debug-Routing header = %q", debugHeader)
-	if debugHeader == "1" {
-		providerName := result.Provider.Name
-		modelName := result.Service.Model
-		source := result.Source
-		c.Header("X-TBE-Selected-Provider", providerName)
-		c.Header("X-TBE-Selected-Provider-UUID", result.Provider.UUID)
-		c.Header("X-TBE-Selected-Model", modelName)
-		c.Header("X-TBE-Routing-Source", source)
+	// Add debug headers when X-Tingly-Debug-Routing is enabled
+	if c.GetHeader("X-Tingly-Debug-Routing") == "1" {
+		c.Header("X-Tingly-Selected-Provider", result.Provider.Name)
+		c.Header("X-Tingly-Selected-Provider-UUID", result.Provider.UUID)
+		c.Header("X-Tingly-Selected-Model", result.Service.Model)
+		c.Header("X-Tingly-Routing-Source", result.Source)
 		if result.MatchedSmartRuleIndex >= 0 {
-			c.Header("X-TBE-Matched-Smart-Rule", fmt.Sprintf("%d", result.MatchedSmartRuleIndex))
+			c.Header("X-Tingly-Matched-Smart-Rule", fmt.Sprintf("%d", result.MatchedSmartRuleIndex))
 		}
-		logrus.Infof("[routing-debug] Set debug headers: provider=%s model=%s source=%s", providerName, modelName, source)
 	}
 
 	return result.Provider, result.Service, nil

@@ -144,6 +144,57 @@ func ApplyProbeHeadersToClient(c interface{}) {
 	}
 }
 
+// RoutingCapture holds routing-decision headers captured from a TB-loopback
+// probe response. Fields mirror the X-Tingly-Selected-* / X-Tingly-Routing-Source
+// headers set by SimpleSelector when X-Tingly-Debug-Routing: 1 is present.
+type RoutingCapture struct {
+	Mu                   sync.Mutex
+	SelectedProvider     string
+	SelectedProviderUUID string
+	SelectedModel        string
+	RoutingSource        string
+	MatchedSmartRule     string // raw header value; "-1" or index string
+}
+
+// captureRoutingRoundTripper reads X-TBE-Selected-* headers from every
+// response and records them in the shared RoutingCapture. It is layered
+// outermost on probe clients so it sees the loopback response before the SDK.
+type captureRoutingRoundTripper struct {
+	inner   http.RoundTripper
+	capture *RoutingCapture
+}
+
+func (t *captureRoutingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.inner.RoundTrip(req)
+	if err == nil && resp != nil {
+		t.capture.Mu.Lock()
+		t.capture.SelectedProvider = resp.Header.Get("X-Tingly-Selected-Provider")
+		t.capture.SelectedProviderUUID = resp.Header.Get("X-Tingly-Selected-Provider-UUID")
+		t.capture.SelectedModel = resp.Header.Get("X-Tingly-Selected-Model")
+		t.capture.RoutingSource = resp.Header.Get("X-Tingly-Routing-Source")
+		t.capture.MatchedSmartRule = resp.Header.Get("X-Tingly-Matched-Smart-Rule")
+		t.capture.Mu.Unlock()
+	}
+	return resp, err
+}
+
+// ApplyRoutingCaptureToClient layers a captureRoutingRoundTripper on a probe
+// client's transport chain. The capture pointer is populated after the SDK
+// call completes. Returns the capture so the caller can read the result.
+func ApplyRoutingCaptureToClient(c interface{}) *RoutingCapture {
+	cap := &RoutingCapture{}
+	wrap := func(inner http.RoundTripper) http.RoundTripper {
+		return &captureRoutingRoundTripper{inner: inner, capture: cap}
+	}
+	switch tc := c.(type) {
+	case *OpenAIClient:
+		tc.HttpClient.Transport = wrap(tc.HttpClient.Transport)
+	case *AnthropicClient:
+		tc.httpClient.Transport = wrap(tc.httpClient.Transport)
+	}
+	return cap
+}
+
 // TransportPoolInterface defines the interface for transport pools.
 // This allows both the real TransportPool and test doubles to be used.
 type TransportPoolInterface interface {
