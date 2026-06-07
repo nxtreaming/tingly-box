@@ -320,13 +320,12 @@ func (s *Server) determineRuleWithScenario(ctx *gin.Context, scenario typ.RuleSc
 	// X-Tingly-Probe-Service: no matching rule needed — build a minimal synthetic
 	// rule so the handler can proceed with service selection pinned by the header.
 	if probeService := ctx.GetHeader("X-Tingly-Probe-Service"); probeService != "" {
-		parts := strings.SplitN(probeService, ":", 2)
-		if len(parts) == 2 {
-			svc := &loadbalance.Service{Provider: parts[0], Model: parts[1], Active: true}
+		if providerUUID, model, ok := strings.Cut(probeService, ":"); ok {
+			svc := &loadbalance.Service{Provider: providerUUID, Model: model, Active: true}
 			return &typ.Rule{
 				UUID:         "probe-synthetic",
 				Scenario:     scenario,
-				RequestModel: parts[1],
+				RequestModel: model,
 				Services:     []*loadbalance.Service{svc},
 				Active:       true,
 			}, nil

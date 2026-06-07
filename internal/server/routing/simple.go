@@ -47,17 +47,16 @@ func (s *SimpleSelector) SelectService(
 	// that need to route through TB's middleware stack (for flag application)
 	// while targeting a specific provider+model.
 	if probeService := c.GetHeader("X-Tingly-Probe-Service"); probeService != "" {
-		parts := strings.SplitN(probeService, ":", 2)
-		if len(parts) == 2 {
-			provider, err := s.selector.config.GetProviderByUUID(parts[0])
+		if providerUUID, model, ok := strings.Cut(probeService, ":"); ok {
+			provider, err := s.selector.config.GetProviderByUUID(providerUUID)
 			if err != nil || provider == nil {
-				return nil, nil, fmt.Errorf("probe service provider not found: %s", parts[0])
+				return nil, nil, fmt.Errorf("probe service provider not found: %s", providerUUID)
 			}
 			if !provider.Enabled {
-				return nil, nil, fmt.Errorf("probe service provider disabled: %s", parts[0])
+				return nil, nil, fmt.Errorf("probe service provider disabled: %s", providerUUID)
 			}
-			svc := &loadbalance.Service{Provider: parts[0], Model: parts[1], Active: true}
-			logrus.Debugf("[routing] probe service pin: provider=%s model=%s", provider.Name, parts[1])
+			svc := &loadbalance.Service{Provider: providerUUID, Model: model, Active: true}
+			logrus.Debugf("[routing] probe service pin: provider=%s model=%s", provider.Name, model)
 			return provider, svc, nil
 		}
 	}

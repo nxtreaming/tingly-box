@@ -93,22 +93,12 @@ func (e *E2EService) resolveVModelLoopbackTarget(ctx context.Context, provider *
 		return nil, "", fmt.Errorf("server port unknown; cannot probe vmodel provider %q", provider.Name)
 	}
 
-	// Anthropic SDK trims a trailing /v1 from its BaseURL; OpenAI SDK does not.
-	// Pass each base in the form its client expects so the rebuilt request URL
-	// hits /v1/{messages,chat/completions} exactly once.
-	var path string
-	switch provider.APIStyle {
-	case protocol.APIStyleAnthropic:
-		path = "/virtual/anthropic"
-	case protocol.APIStyleOpenAI:
-		path = "/virtual/openai/v1"
-	default:
+	if provider.APIStyle != protocol.APIStyleAnthropic && provider.APIStyle != protocol.APIStyleOpenAI {
 		return nil, "", fmt.Errorf("vmodel probe unsupported for APIStyle %q", provider.APIStyle)
 	}
-
 	return e.resolveProviderConfigTarget(ctx, &E2ERequest{
 		Name:     provider.Name,
-		APIBase:  fmt.Sprintf("http://localhost:%d%s", port, path),
+		APIBase:  loopbackAPIBase(port, provider.APIStyle),
 		APIStyle: string(provider.APIStyle),
 		Token:    e.config.GetModelToken(),
 		Model:    model,
@@ -152,15 +142,7 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 		return provider, model, nil, nil
 	}
 
-	_, apiStyle := ScenarioEndpoint(deriveScenarioForAPIStyle(provider.APIStyle))
-	var apiBase string
-	switch apiStyle {
-	case protocol.APIStyleAnthropic:
-		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s", port, typ.ScenarioAnthropic)
-	default:
-		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s/v1", port, typ.ScenarioOpenAI)
-	}
-
+	apiBase := loopbackAPIBase(port, provider.APIStyle)
 	probeHeaders := map[string]string{
 		"X-Tingly-Probe-Service": req.ProviderUUID + ":" + model,
 	}
@@ -169,7 +151,7 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 	loopbackProvider, loopbackModel, err := e.resolveProviderConfigTarget(ctx, &E2ERequest{
 		Name:     provider.Name,
 		APIBase:  apiBase,
-		APIStyle: string(apiStyle),
+		APIStyle: string(provider.APIStyle),
 		Token:    e.config.GetModelToken(),
 		Model:    model,
 	})
@@ -179,14 +161,15 @@ func (e *E2EService) resolveProviderTarget(ctx context.Context, req *E2ERequest)
 	return loopbackProvider, loopbackModel, probeHeaders, nil
 }
 
-// deriveScenarioForAPIStyle maps a provider API style to a default scenario name
-// used when routing service probes through the TB loopback.
-func deriveScenarioForAPIStyle(style protocol.APIStyle) string {
+// loopbackAPIBase returns the TB loopback base URL for the given APIStyle.
+// Anthropic SDK trims a trailing /v1 from BaseURL; OpenAI SDK does not add /v1.
+// We match each SDK's expectation so the rebuilt path hits the right endpoint.
+func loopbackAPIBase(port int, style protocol.APIStyle) string {
 	switch style {
 	case protocol.APIStyleAnthropic:
-		return string(typ.ScenarioAnthropic)
+		return fmt.Sprintf("http://localhost:%d/tingly/%s", port, typ.ScenarioAnthropic)
 	default:
-		return string(typ.ScenarioOpenAI)
+		return fmt.Sprintf("http://localhost:%d/tingly/%s/v1", port, typ.ScenarioOpenAI)
 	}
 }
 
@@ -235,19 +218,7 @@ func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*t
 	}
 
 	_, apiStyle := ScenarioEndpoint(string(scenario))
-
-	// Route through the TB's own /tingly/{scenario} endpoint so that all
-	// rule processing — flags, smart routing, load balancing — is exercised.
-	// Path conventions mirror resolveVModelLoopbackTarget:
-	//   Anthropic SDK trims a trailing /v1 from BaseURL → omit /v1 suffix.
-	//   OpenAI SDK does not add /v1 → include /v1 in the path.
-	var apiBase string
-	switch apiStyle {
-	case protocol.APIStyleAnthropic:
-		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s", port, scenario)
-	default:
-		apiBase = fmt.Sprintf("http://localhost:%d/tingly/%s/v1", port, scenario)
-	}
+	apiBase := loopbackAPIBase(port, apiStyle)
 
 	logrus.Debugf("[probe-e2e] rule %s -> TB loopback %s (model=%s)", rule.UUID, apiBase, rule.RequestModel)
 
@@ -266,14 +237,15 @@ func (e *E2EService) resolveRuleTarget(ctx context.Context, req *E2ERequest) (*t
 func (e *E2EService) ProbeProviderWithSDK(ctx context.Context, provider *typ.Provider, model, message string, testMode E2EMode) (*E2EData, error) {
 	mode := testMode
 
+	_, wrapProbeHeaders := client.GetProbeHeaders(ctx)
+
 	switch provider.APIStyle {
 	case protocol.APIStyleOpenAI:
 		oc := e.clientPool.GetOpenAIClient(ctx, provider, model)
 		if oc == nil {
 			return nil, fmt.Errorf("failed to get OpenAI client for provider: %s", provider.Name)
 		}
-		// Wrap transport so probe headers in ctx reach the TB loopback endpoint.
-		if _, hasHeaders := client.GetProbeHeaders(ctx); hasHeaders {
+		if wrapProbeHeaders {
 			client.ApplyProbeHeadersToClient(oc)
 		}
 		// Codex OAuth providers only speak the Responses API.
@@ -287,8 +259,7 @@ func (e *E2EService) ProbeProviderWithSDK(ctx context.Context, provider *typ.Pro
 		if ac == nil {
 			return nil, fmt.Errorf("failed to get Anthropic client for provider: %s", provider.Name)
 		}
-		// Wrap transport so probe headers in ctx reach the TB loopback endpoint.
-		if _, hasHeaders := client.GetProbeHeaders(ctx); hasHeaders {
+		if wrapProbeHeaders {
 			client.ApplyProbeHeadersToClient(ac)
 		}
 		return probeAnthropicMessages(ctx, ac, model, message, mode)
