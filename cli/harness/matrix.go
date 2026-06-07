@@ -20,8 +20,9 @@ type MatrixCmd struct {
 	Scenarios  []string `kong:"name='scenario',sep=',',help='Filter by scenario name (can repeat or comma-separate)'"`
 	Sources    []string `kong:"name='source',sep=',',help='Filter by source protocol (can repeat or comma-separate)'"`
 	Targets    []string `kong:"name='target',sep=',',help='Filter by target protocol (can repeat or comma-separate)'"`
-	Streaming  bool     `kong:"name='streaming',help='Run only streaming tests'"`
-	NonStream  bool     `kong:"name='non-streaming',help='Run only non-streaming tests'"`
+	Streaming  bool   `kong:"name='streaming',help='Run only streaming tests'"`
+	NonStream  bool   `kong:"name='non-streaming',help='Run only non-streaming tests'"`
+	Mode       string `kong:"name='mode',default='all',enum='all,single,transitive',help='Hop selection: all (default), single (A→B only), transitive (A→B→C only)'"`
 	JsonOutput bool     `kong:"name='json',help='Output results as JSON'"`
 	Verbose    int      `kong:"name='verbose',short='v',type='counter',help='Verbose output (repeat for more detail)'"`
 	RecordDir  string   `kong:"name='record-dir',env='HARNESS_RECORD_DIR',help='Directory for recording requests/responses (default: disabled)'"`
@@ -33,8 +34,14 @@ type MatrixCmd struct {
 // Help returns extended help text shown by `harness matrix --help`.
 func (*MatrixCmd) Help() string {
 	return `Examples:
-  # Run all matrix tests
+  # Run everything: single-hop + two-hop (default)
   harness matrix
+
+  # Run only two-hop (A→B→C) transitive chain tests
+  harness matrix --mode=transitive
+
+  # Run only single-hop (A→B) tests
+  harness matrix --mode=single
 
   # Run specific scenario only
   harness matrix --scenario text
@@ -69,7 +76,7 @@ func (m *MatrixCmd) Run() error {
 		logrus.SetLevel(logrus.DebugLevel)
 	}
 
-	// Resolve streaming filter conflict early.
+	// Resolve flag conflicts early.
 	if m.Streaming && m.NonStream {
 		return fmt.Errorf("cannot specify both --streaming and --non-streaming")
 	}
@@ -105,11 +112,15 @@ func (m *MatrixCmd) Run() error {
 		matrix = matrix.WithMCPEnabled()
 	}
 
-	// Execute tests (only filtered combinations).
-	results := matrix.ExecuteAll()
-
-	// Filter results for backward compatibility (skipPairs etc.).
-	results = filterResults(results, m)
+	// Collect results for selected hop sections (--mode controls which).
+	var combined []protocoltest.TestResult
+	if m.Mode != "transitive" {
+		combined = append(combined, matrix.ExecuteAll()...)
+	}
+	if m.Mode != "single" {
+		combined = append(combined, matrix.ExecuteAllTransitive()...)
+	}
+	results := filterResults(combined, m)
 
 	// Output results
 	if m.JsonOutput {

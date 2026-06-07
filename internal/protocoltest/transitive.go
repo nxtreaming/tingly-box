@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TransitiveChain represents a two-hop conversion path: A→B then B→C.
@@ -78,7 +79,7 @@ func (m *Matrix) RunTransitive(t *testing.T) {
 
 	for _, scenario := range m.Scenarios {
 		scenario := scenario
-		if scenario.Name == "error" {
+		if scenario.SkipTransitive {
 			continue
 		}
 
@@ -150,49 +151,11 @@ func checkSemanticEquivalence(t *testing.T, chain TransitiveChain, r1, r2 *Round
 }
 
 // assertSemanticEquivalence verifies that two RoundTripResults carry the same
-// semantic payload despite being in different protocol formats. We compare
-// normalized fields rather than raw bytes. label identifies the comparison in
-// failure messages.
+// semantic payload despite being in different protocol formats.
 func assertSemanticEquivalence(t *testing.T, label string, r1, r2 *RoundTripResult) {
 	t.Helper()
-
-	// Role must match
-	if r1.Role != r2.Role {
-		t.Errorf("[%s] role mismatch: hop1=%q, hop2=%q", label, r1.Role, r2.Role)
-	}
-
-	// Content must match (normalize whitespace for minor formatting diffs)
-	c1 := strings.TrimSpace(r1.Content)
-	c2 := strings.TrimSpace(r2.Content)
-	if c1 != c2 {
-		t.Errorf("[%s] content mismatch:\n  hop1: %q\n  hop2: %q", label, truncate(c1, 200), truncate(c2, 200))
-	}
-
-	// Tool call count must match
-	if len(r1.ToolCalls) != len(r2.ToolCalls) {
-		t.Errorf("[%s] tool_call count mismatch: hop1=%d, hop2=%d", label, len(r1.ToolCalls), len(r2.ToolCalls))
-		return
-	}
-
-	// Each tool call's name and arguments must match
-	for i := range r1.ToolCalls {
-		tc1 := r1.ToolCalls[i]
-		tc2 := r2.ToolCalls[i]
-		if tc1.Name != tc2.Name {
-			t.Errorf("[%s] tool_call[%d].name mismatch: hop1=%q, hop2=%q", label, i, tc1.Name, tc2.Name)
-		}
-		if normalizeJSON(tc1.Arguments) != normalizeJSON(tc2.Arguments) {
-			t.Errorf("[%s] tool_call[%d].arguments mismatch:\n  hop1: %s\n  hop2: %s",
-				label, i, tc1.Arguments, tc2.Arguments)
-		}
-	}
-
-	// Usage: both should be present or both absent (for non-streaming)
-	if !r1.IsStreaming && !r2.IsStreaming {
-		if (r1.Usage == nil) != (r2.Usage == nil) {
-			t.Errorf("[%s] usage presence mismatch: hop1=%v, hop2=%v",
-				label, r1.Usage != nil, r2.Usage != nil)
-		}
+	for _, e := range semanticEquivalenceErrors(label, r1, r2) {
+		t.Errorf("%s: %s", e.Assertion, e.Error)
 	}
 }
 
@@ -200,4 +163,154 @@ func assertSemanticEquivalence(t *testing.T, label string, r1, r2 *RoundTripResu
 // Falls back to trimmed string comparison if the input is not valid JSON.
 func normalizeJSON(s string) string {
 	return strings.Join(strings.Fields(s), "")
+}
+
+// ExecuteAllTransitive runs two-hop chain tests without requiring testing.T.
+// It is the CLI-compatible counterpart of RunTransitive, returning []TestResult.
+// Name format: "scenario/A→B→C/mode".
+func (m *Matrix) ExecuteAllTransitive() []TestResult {
+	var results []TestResult
+	chains := m.DefaultChains()
+
+	for _, scenario := range m.Scenarios {
+		if scenario.SkipTransitive {
+			continue
+		}
+
+		env, err := NewTestEnvForCLI(m.testEnvOpts()...)
+		if err != nil {
+			for _, chain := range chains {
+				for _, streaming := range m.Streaming {
+					results = append(results, TestResult{
+						Name:      chain.TestName(scenario.Name, streaming),
+						Scenario:  scenario.Name,
+						Source:    chain.First.Source,
+						Target:    chain.Second.Target,
+						Streaming: streaming,
+						Passed:    false,
+						Errors:    []AssertionError{{Assertion: "setup", Error: fmt.Sprintf("failed to create test env: %v", err)}},
+					})
+				}
+			}
+			continue
+		}
+
+		for _, chain := range chains {
+			for _, streaming := range m.Streaming {
+				result := m.executeTransitiveChain(env, scenario, chain, streaming)
+				results = append(results, result)
+			}
+		}
+		env.Close()
+	}
+	return results
+}
+
+// executeTransitiveChain runs a single two-hop chain for a given scenario/mode.
+func (m *Matrix) executeTransitiveChain(env *TestEnv, scenario Scenario, chain TransitiveChain, streaming bool) TestResult {
+	name := chain.TestName(scenario.Name, streaming)
+	base := TestResult{
+		Name:      name,
+		Scenario:  scenario.Name,
+		Source:    chain.First.Source,
+		Target:    chain.Second.Target,
+		Streaming: streaming,
+	}
+
+	if reason, skip := skipTransitiveKey(chain, scenario.Name); skip {
+		base.Skipped = true
+		base.SkipReason = reason
+		return base
+	}
+	if reason, skip := streamingSkipReason(scenario, streaming); skip {
+		base.Skipped = true
+		base.SkipReason = reason
+		return base
+	}
+
+	start := time.Now()
+
+	env.SetupRoute(chain.First.Source, chain.First.Target, scenario)
+	r1, err := env.SendAsCLI(chain.First.Source, chain.First.Target, scenario, streaming)
+	if err != nil {
+		base.Passed = false
+		base.Errors = []AssertionError{{Assertion: "hop1:send", Error: err.Error()}}
+		base.Duration = time.Since(start)
+		return base
+	}
+
+	env.SetupRoute(chain.Second.Source, chain.Second.Target, scenario)
+	r2, err := env.SendAsCLI(chain.Second.Source, chain.Second.Target, scenario, streaming)
+	if err != nil {
+		base.Passed = false
+		base.Errors = []AssertionError{{Assertion: "hop2:send", Error: err.Error()}}
+		base.Duration = time.Since(start)
+		return base
+	}
+
+	var errs []AssertionError
+	for _, a := range scenario.Assertions {
+		if checkErr := a.Check(r1); checkErr != nil {
+			errs = append(errs, AssertionError{
+				Assertion: "hop1:" + a.Name,
+				Error:     checkErr.Error(),
+				Context:   truncate(string(r1.RawBody), 300),
+			})
+		}
+		if checkErr := a.Check(r2); checkErr != nil {
+			errs = append(errs, AssertionError{
+				Assertion: "hop2:" + a.Name,
+				Error:     checkErr.Error(),
+				Context:   truncate(string(r2.RawBody), 300),
+			})
+		}
+	}
+	errs = append(errs, semanticEquivalenceErrors(chain.String(), r1, r2)...)
+
+	base.Passed = len(errs) == 0
+	base.Errors = errs
+	base.Duration = time.Since(start)
+	base.HTTPStatus = r2.HTTPStatus
+	base.Response = r2
+	return base
+}
+
+// semanticEquivalenceErrors returns AssertionErrors for any semantic divergence
+// between hop1 and hop2 results. It is the non-testing.T version of assertSemanticEquivalence.
+func semanticEquivalenceErrors(label string, r1, r2 *RoundTripResult) []AssertionError {
+	var errs []AssertionError
+	add := func(name, msg string) {
+		errs = append(errs, AssertionError{Assertion: "equiv:" + name, Error: fmt.Sprintf("[%s] %s", label, msg)})
+	}
+
+	if r1.Role != r2.Role {
+		add("role", fmt.Sprintf("hop1=%q hop2=%q", r1.Role, r2.Role))
+	}
+	c1, c2 := strings.TrimSpace(r1.Content), strings.TrimSpace(r2.Content)
+	if c1 != c2 {
+		add("content", fmt.Sprintf("hop1=%q hop2=%q", truncate(c1, 200), truncate(c2, 200)))
+	}
+	if len(r1.ToolCalls) != len(r2.ToolCalls) {
+		add("tool_call_count", fmt.Sprintf("hop1=%d hop2=%d", len(r1.ToolCalls), len(r2.ToolCalls)))
+	} else {
+		for i := range r1.ToolCalls {
+			if r1.ToolCalls[i].Name != r2.ToolCalls[i].Name {
+				add(fmt.Sprintf("tool_call[%d].name", i), fmt.Sprintf("hop1=%q hop2=%q", r1.ToolCalls[i].Name, r2.ToolCalls[i].Name))
+			}
+			if normalizeJSON(r1.ToolCalls[i].Arguments) != normalizeJSON(r2.ToolCalls[i].Arguments) {
+				add(fmt.Sprintf("tool_call[%d].arguments", i), fmt.Sprintf("hop1=%s hop2=%s", r1.ToolCalls[i].Arguments, r2.ToolCalls[i].Arguments))
+			}
+		}
+	}
+	if !r1.IsStreaming && !r2.IsStreaming {
+		if (r1.Usage == nil) != (r2.Usage == nil) {
+			add("usage_presence", fmt.Sprintf("hop1=%v hop2=%v", r1.Usage != nil, r2.Usage != nil))
+		}
+	}
+	return errs
+}
+
+// TestName builds a TestResult name for this chain in a given scenario/mode.
+func (c TransitiveChain) TestName(scenario string, streaming bool) string {
+	return fmt.Sprintf("%s/%s/%s", scenario, c, streamMode(streaming))
 }

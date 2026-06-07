@@ -215,6 +215,25 @@ var skipSourceScenarios = map[string]string{
 	"openai_responses|streaming_tool_use": "Responses API source: streaming tool_use conversion incomplete",
 }
 
+// RunFull executes both single-hop and two-hop tests under t, organized as
+// two named sub-sections:
+//
+//   - "single_hop": every (source→target) pair × scenario × streaming mode
+//   - "two_hop":    every (A→B→C) transitive chain × scenario × streaming mode
+//
+// Run each section independently with -run TestFoo/single_hop or /two_hop.
+func (m *Matrix) RunFull(t *testing.T) {
+	t.Helper()
+	t.Run("single_hop", func(t *testing.T) {
+		t.Helper()
+		m.Run(t)
+	})
+	t.Run("two_hop", func(t *testing.T) {
+		t.Helper()
+		m.RunTransitive(t)
+	})
+}
+
 // Run executes all matrix combinations as subtests under t.
 // Each combination runs in its own TestEnv so state is isolated.
 func (m *Matrix) Run(t *testing.T) {
@@ -271,6 +290,26 @@ func (m *Matrix) Run(t *testing.T) {
 			}
 		})
 	}
+}
+
+// streamMode returns "stream" or "nonstream" for use in test names.
+func streamMode(streaming bool) string {
+	if streaming {
+		return "stream"
+	}
+	return "nonstream"
+}
+
+// streamingSkipReason returns a non-empty reason string when a scenario/mode
+// combination should be skipped due to streaming incompatibility.
+func streamingSkipReason(scenario Scenario, streaming bool) (string, bool) {
+	if streaming && !scenarioSupportsStreaming(scenario) {
+		return "scenario does not support streaming", true
+	}
+	if !streaming && scenarioRequiresStreaming(scenario) {
+		return "scenario requires streaming mode", true
+	}
+	return "", false
 }
 
 // scenarioSupportsStreaming returns true if the scenario has streaming mock responses.
@@ -458,8 +497,7 @@ func (m *Matrix) executeTest(env *TestEnv, scenario Scenario, source, target pro
 		}
 	}
 
-	// Check streaming compatibility
-	if streaming && !scenarioSupportsStreaming(scenario) {
+	if reason, skip := streamingSkipReason(scenario, streaming); skip {
 		return &TestResult{
 			Name:       m.buildTestName(scenario.Name, source, target, streaming),
 			Scenario:   scenario.Name,
@@ -467,19 +505,7 @@ func (m *Matrix) executeTest(env *TestEnv, scenario Scenario, source, target pro
 			Target:     target,
 			Streaming:  streaming,
 			Skipped:    true,
-			SkipReason: "scenario does not support streaming",
-		}
-	}
-
-	if !streaming && scenarioRequiresStreaming(scenario) {
-		return &TestResult{
-			Name:       m.buildTestName(scenario.Name, source, target, streaming),
-			Scenario:   scenario.Name,
-			Source:     source,
-			Target:     target,
-			Streaming:  streaming,
-			Skipped:    true,
-			SkipReason: "scenario requires streaming mode",
+			SkipReason: reason,
 		}
 	}
 
@@ -638,11 +664,7 @@ func (m *Matrix) executeOneWithEnv(env *TestEnv, s Scenario, source, target prot
 
 // buildTestName constructs a test name from its components.
 func (m *Matrix) buildTestName(scenario string, source, target protocol.APIType, streaming bool) string {
-	mode := "nonstream"
-	if streaming {
-		mode = "stream"
-	}
-	return fmt.Sprintf("%s/%s/%s/%s", scenario, source, target, mode)
+	return fmt.Sprintf("%s/%s/%s/%s", scenario, source, target, streamMode(streaming))
 }
 
 // executeBatch runs a test multiple times and aggregates the results.
