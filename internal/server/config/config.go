@@ -1445,10 +1445,11 @@ func newCCProfileRules(profiledScenario typ.RuleScenario, unified bool) []typ.Ru
 				Type:   loadbalance.TacticAdaptive,
 				Params: typ.DefaultAdaptiveParams(),
 			},
-			// Claude Code profiles inherit the built-in CC default: normalize the
-			// mid-conversation system role so third-party providers accept the
-			// request. Override per-rule for native Anthropic fidelity.
-			Flags:  typ.RuleFlags{ClaudeCodeCompat: true},
+			// Claude Code profiles inherit the built-in CC defaults: normalize the
+			// mid-conversation system role (ClaudeCodeCompat) so third-party
+			// providers accept the request, and strip the billing header
+			// (CleanHeader) so it never leaks to external providers.
+			Flags:  typ.RuleFlags{ClaudeCodeCompat: true, CleanHeader: true},
 			Active: true,
 		}
 	}
@@ -1646,8 +1647,6 @@ func (c *Config) GetScenarioFlag(scenario typ.RuleScenario, flagName string) boo
 		return flags.SmartCompact
 	case FlagSkipUsage:
 		return flags.SkipUsage
-	case FlagCleanHeader:
-		return flags.CleanHeader
 	default:
 		if config.Extensions == nil {
 			return false
@@ -1694,8 +1693,6 @@ func (c *Config) SetScenarioFlag(scenario typ.RuleScenario, flagName string, val
 		config.Flags.SmartCompact = value
 	case FlagSkipUsage:
 		config.Flags.SkipUsage = value
-	case FlagCleanHeader:
-		config.Flags.CleanHeader = value
 	case ExtensionSkillUser:
 		if config.Extensions == nil {
 			config.Extensions = make(map[string]interface{})

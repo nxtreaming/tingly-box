@@ -93,67 +93,41 @@ func init() {
 			},
 			Active: true,
 		},
-		{
-			UUID:          "builtin:claude_desktop:claude-sonnet-4-6",
-			Scenario:      typ.ScenarioClaudeDesktop,
-			RequestModel:  "claude-sonnet-4-6",
-			ResponseModel: "",
-			Description:   "Claude Desktop - Sonnet 4.6 model for balanced performance",
-			Services:      []*loadbalance.Service{},
-			LBTactic: typ.Tactic{
-				Type:   loadbalance.TacticAdaptive,
-				Params: typ.DefaultAdaptiveParams(),
-			},
-			Active: true,
+		cdRule("builtin:claude_desktop:claude-sonnet-4-6", "claude-sonnet-4-6", "Claude Desktop - Sonnet 4.6 model for balanced performance"),
+		cdRule("builtin:claude_desktop:claude-opus-4-6", "claude-opus-4-6", "Claude Desktop - Opus 4.6 model for complex tasks"),
+		cdRule("builtin:claude_desktop:claude-opus-4-7", "claude-opus-4-7", "Claude Desktop - Opus 4.7 model for advanced reasoning"),
+		cdRule("builtin:claude_desktop:claude-haiku-4-5", "claude-haiku-4-5", "Claude Desktop - Haiku 4.5 model for fast responses"),
+	}
+}
+
+// cdRule builds a built-in Claude Desktop rule with the shared defaults: an empty
+// service list, the default adaptive load-balancing tactic, Active, and the
+// clean_header + claude_code_compat flags on. Claude Desktop injects
+// x-anthropic-billing-header blocks into system messages (CleanHeader) and sends
+// mid-conversation system-role messages that third-party Anthropic-compatible
+// providers reject (ClaudeCodeCompat).
+func cdRule(uuid, requestModel, description string) typ.Rule {
+	return typ.Rule{
+		UUID:         uuid,
+		Scenario:     typ.ScenarioClaudeDesktop,
+		RequestModel: requestModel,
+		Description:  description,
+		Services:     []*loadbalance.Service{},
+		LBTactic: typ.Tactic{
+			Type:   loadbalance.TacticAdaptive,
+			Params: typ.DefaultAdaptiveParams(),
 		},
-		{
-			UUID:          "builtin:claude_desktop:claude-opus-4-6",
-			Scenario:      typ.ScenarioClaudeDesktop,
-			RequestModel:  "claude-opus-4-6",
-			ResponseModel: "",
-			Description:   "Claude Desktop - Opus 4.6 model for complex tasks",
-			Services:      []*loadbalance.Service{},
-			LBTactic: typ.Tactic{
-				Type:   loadbalance.TacticAdaptive,
-				Params: typ.DefaultAdaptiveParams(),
-			},
-			Active: true,
-		},
-		{
-			UUID:          "builtin:claude_desktop:claude-opus-4-7",
-			Scenario:      typ.ScenarioClaudeDesktop,
-			RequestModel:  "claude-opus-4-7",
-			ResponseModel: "",
-			Description:   "Claude Desktop - Opus 4.7 model for advanced reasoning",
-			Services:      []*loadbalance.Service{},
-			LBTactic: typ.Tactic{
-				Type:   loadbalance.TacticAdaptive,
-				Params: typ.DefaultAdaptiveParams(),
-			},
-			Active: true,
-		},
-		{
-			UUID:          "builtin:claude_desktop:claude-haiku-4-5",
-			Scenario:      typ.ScenarioClaudeDesktop,
-			RequestModel:  "claude-haiku-4-5",
-			ResponseModel: "",
-			Description:   "Claude Desktop - Haiku 4.5 model for fast responses",
-			Services:      []*loadbalance.Service{},
-			LBTactic: typ.Tactic{
-				Type:   loadbalance.TacticAdaptive,
-				Params: typ.DefaultAdaptiveParams(),
-			},
-			Active: true,
-		},
+		Flags:  typ.RuleFlags{ClaudeCodeCompat: true, CleanHeader: true},
+		Active: true,
 	}
 }
 
 // ccRule builds a built-in Claude Code rule with the shared defaults: an empty
 // service list, the default adaptive load-balancing tactic, Active, and the
-// claude_code_compat flag on. Claude Code emits mid-conversation system-role
-// messages that third-party Anthropic-compatible providers reject; normalizing
-// them is the right default for the built-in CC rules. Users can override the
-// flag per-rule from the Plugins card for native Anthropic fidelity.
+// claude_code_compat + clean_header flags on. Claude Code emits mid-conversation
+// system-role messages that third-party Anthropic-compatible providers reject
+// (ClaudeCodeCompat), and injects x-anthropic-billing-header blocks into system
+// messages that should never leak to external providers (CleanHeader).
 func ccRule(uuid, requestModel, description string) typ.Rule {
 	return typ.Rule{
 		UUID:         uuid,
@@ -165,7 +139,7 @@ func ccRule(uuid, requestModel, description string) typ.Rule {
 			Type:   loadbalance.TacticAdaptive,
 			Params: typ.DefaultAdaptiveParams(),
 		},
-		Flags:  typ.RuleFlags{ClaudeCodeCompat: true},
+		Flags:  typ.RuleFlags{ClaudeCodeCompat: true, CleanHeader: true},
 		Active: true,
 	}
 }

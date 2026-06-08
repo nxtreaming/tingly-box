@@ -77,7 +77,6 @@ func ruleExtraTransforms(flags typ.RuleFlags) []transform.Transform {
 // resolveRuleFlags returns the effective flags for this request: a copy of
 // the rule's persisted flags, with:
 // - cursor_compat_auto folded into cursor_compat when the inbound request carries Cursor headers
-// - scenario flags (ThinkingEffort, CleanHeader) injected for billing scenarios during transformation
 // Returns the zero value when no rule is bound.
 //
 // All flag folding/injection happens here (not at each handler call site) so that
@@ -100,9 +99,11 @@ func resolveRuleFlags(c *gin.Context, rule *typ.Rule) typ.RuleFlags {
 // flags and auto-apply CleanHeader for protocol transformation scenarios.
 //
 // This is the main entry point that merges:
-// 1. Rule-level flags (from the rule definition)
-// 2. Scenario flags (from the scenario configuration)
-// 3. Auto-applied flags (like CleanHeader for protocol transformation)
+//  1. Rule-level flags (from the rule definition)
+//  2. Scenario flags (from the scenario configuration)
+//  3. Auto-applied flags (like CleanHeader for protocol transformation)
+//  4. Provider-driven suppressions (CleanHeader is cleared for Claude OAuth providers;
+//     the billing header must reach Anthropic's billing backend unchanged).
 //
 // Side effect: it also attaches the resolved CustomUserAgent to the request
 // context (applyCustomUserAgent) so callers don't have to repeat that at each
@@ -115,6 +116,7 @@ func resolveRuleFlagsWithScenario(
 	scenarioType typ.RuleScenario,
 	scenarioConfig *typ.ScenarioConfig,
 	sourceAPI, targetAPI protocol.APIType,
+	provider *typ.Provider,
 ) typ.RuleFlags {
 	flags := resolveRuleFlags(c, rule)
 
@@ -123,9 +125,6 @@ func resolveRuleFlagsWithScenario(
 		if flags.ThinkingEffort == typ.ThinkingEffortDefault && scenarioConfig.Flags.ThinkingEffort != typ.ThinkingEffortDefault {
 			flags.ThinkingEffort = scenarioConfig.Flags.ThinkingEffort
 		}
-
-		// Inject scenario-level CleanHeader if not already set at rule level
-		flags.CleanHeader = flags.CleanHeader || scenarioConfig.Flags.CleanHeader
 
 		// Inject scenario-level ClaudeCodeCompat if not already set at rule level
 		flags.ClaudeCodeCompat = flags.ClaudeCodeCompat || scenarioConfig.Flags.ClaudeCodeCompat
@@ -148,6 +147,15 @@ func resolveRuleFlagsWithScenario(
 
 	// Auto-apply CleanHeader for protocol transformation in billing scenarios
 	flags = autoSetCleanHeaderFlag(flags, sourceAPI, targetAPI, scenarioType)
+
+	// Suppress CleanHeader when the provider is Claude OAuth (native Anthropic
+	// subscription). The x-anthropic-billing-header injected by Claude Code is
+	// consumed by Anthropic's billing backend; stripping it would break billing
+	// for OAuth subscribers even though it must be stripped for every other
+	// provider type (third-party Anthropic-compatible, OpenAI, etc.).
+	if flags.CleanHeader && provider.IsClaudeCodeProvider() {
+		flags.CleanHeader = false
+	}
 
 	// Attach the resolved User-Agent override to the request context here, at the
 	// single merge point, so the chat / v1 / beta handlers don't each repeat it.
