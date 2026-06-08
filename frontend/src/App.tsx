@@ -18,7 +18,6 @@ import Layout from './layout/Layout';
 import createAppTheme from './theme';
 
 import Login from './pages/Login';
-import Guiding from './pages/Guiding';
 import Onboarding from './pages/Onboarding';
 import { api } from './services/api';
 import APITokensPage from './pages/APITokensPage';
@@ -69,17 +68,6 @@ import SlackPage from './pages/remote-control/SlackPage';
 import MCPLocalMode from './pages/mcp/MCPLocalMode';
 import MCPRegisteredServers from './pages/mcp/MCPRegisteredServers';
 import ServerToolPage from './pages/servertool/ServerToolPage';
-import {
-    ZenClaudeCodePage,
-    ZenClaudeCodeProfilePage,
-    ZenCodexPage,
-    ZenOpenCodePage,
-    ZenXcodePage,
-    ZenVSCodePage,
-    ZenOpenAIPage,
-    ZenAnthropicPage,
-    ZenAgentPage,
-} from './pages/zen';
 
 // Loading fallback component - kept for potential future use with async data
 
@@ -266,18 +254,7 @@ function AppContent() {
                     <Route path="/mcp" element={<Navigate to="/mcp/sources" replace />} />
                     {/* Tools */}
                     <Route path="/tools/servertool" element={<ServerToolPage />} />
-                    {/* Zen Mode Routes - Use zen layout when in zen mode */}
-                    <Route path="/zen/claude_code" element={<ZenClaudeCodePage />} />
-                    <Route path="/zen/claude_code/profile/:profileId" element={<ZenClaudeCodeProfilePage />} />
-                    <Route path="/zen/codex" element={<ZenCodexPage />} />
-                    <Route path="/zen/opencode" element={<ZenOpenCodePage />} />
-                    <Route path="/zen/xcode" element={<ZenXcodePage />} />
-                    <Route path="/zen/vscode" element={<ZenVSCodePage />} />
-                    <Route path="/zen/openai" element={<ZenOpenAIPage />} />
-                    <Route path="/zen/anthropic" element={<ZenAnthropicPage />} />
-                    <Route path="/zen/agent" element={<ZenAgentPage />} />
-                    <Route path="/zen" element={<Navigate to="/zen/claude_code" replace />} />
-                    {/* Catch-all redirect for unknown routes */}
+                    {/* Catch-all redirect for unknown routes (also covers legacy /zen/* links) */}
                     <Route path="*" element={<Navigate to="/agent" replace />} />
                 </Route>
             </Routes>
