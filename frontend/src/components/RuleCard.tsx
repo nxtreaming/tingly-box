@@ -13,16 +13,18 @@ import { RuleCardDeleteDialog, RuleFlagEditDialog } from '@/components/rule-card
 import UnifiedRoutingGraph from '@/components/UnifiedRoutingGraph';
 import SmartRuleCatalogDialog from '@/components/rule-card/SmartRuleCatalogDialog';
 import GraphSettingsMenu from '@/components/GraphSettingsMenu';
-import RuleExtensionsCard from '@/components/rule-card/RuleExtensionsCard';
+import RulePluginsCard from '@/components/rule-card/RulePluginsCard';
 import FlagCatalogDialog from '@/components/rule-card/FlagCatalogDialog';
 import { formatRuleFlags, parseRuleFlags } from '@/components/rule-card/utils';
+import { getFlagValue, setFlagValue } from '@/components/rule-card/flagHelpers';
 
 // Module-level cache so we only fetch the flag catalog once per session.
-let _flagRegistryCache: FlagSpec[] | null = null;
+// `undefined` = never fetched; `[]` = fetched but empty (don't re-fetch).
+let _flagRegistryCache: FlagSpec[] | undefined = undefined;
 let _flagRegistryPromise: Promise<FlagSpec[]> | null = null;
 
 async function loadFlagRegistry(): Promise<FlagSpec[]> {
-    if (_flagRegistryCache) return _flagRegistryCache;
+    if (_flagRegistryCache !== undefined) return _flagRegistryCache;
     if (_flagRegistryPromise) return _flagRegistryPromise;
     _flagRegistryPromise = (async () => {
         try {
@@ -31,6 +33,7 @@ async function loadFlagRegistry(): Promise<FlagSpec[]> {
             _flagRegistryCache = data;
             return data;
         } catch {
+            // Don't cache failures — allow retry on next mount.
             return [];
         } finally {
             _flagRegistryPromise = null;
@@ -112,16 +115,20 @@ export const RuleCard: React.FC<RuleCardProps> = ({
 
     // Catalog dialog state + registry
     const [catalogOpen, setCatalogOpen] = useState(false);
-    const [flagRegistry, setFlagRegistry] = useState<FlagSpec[]>(_flagRegistryCache || []);
+    const [flagRegistry, setFlagRegistry] = useState<FlagSpec[]>(_flagRegistryCache ?? []);
+    const [registryLoaded, setRegistryLoaded] = useState(_flagRegistryCache !== undefined);
     const [registryLoading, setRegistryLoading] = useState(false);
 
     useEffect(() => {
-        if (flagRegistry.length > 0) return;
+        if (registryLoaded) return;
         let cancelled = false;
         setRegistryLoading(true);
         loadFlagRegistry()
             .then((data) => {
-                if (!cancelled) setFlagRegistry(data);
+                if (!cancelled) {
+                    setFlagRegistry(data);
+                    setRegistryLoaded(true);
+                }
             })
             .finally(() => {
                 if (!cancelled) setRegistryLoading(false);
@@ -129,7 +136,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [flagRegistry.length]);
+    }, [registryLoaded]);
 
     // Handler: Switch routing mode (simple toggle, preserves data)
     const handleRoutingModeSwitch = useCallback(async () => {
@@ -224,7 +231,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
 
     const handleOpenFlagEditor = useCallback(() => {
         if (!configRecord) return;
-        const currentFlags = formatRuleFlags(configRecord.flags);
+        const currentFlags = formatRuleFlags(configRecord.flags, flagRegistry);
         if (!currentFlags && configRecord.requestModel === 'cursor') {
             setFlagInput('cursor_compat=true');
         } else {
@@ -232,52 +239,36 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         }
         setFlagError(undefined);
         setFlagDialogOpen(true);
-    }, [configRecord]);
+    }, [configRecord, flagRegistry]);
 
     const handleSaveFlags = useCallback(async () => {
         if (!configRecord) return;
-        const result = parseRuleFlags(flagInput);
+        const result = parseRuleFlags(flagInput, flagRegistry, configRecord.flags);
         if (result.error) {
             setFlagError(result.error);
             return;
         }
-        await updateField(configRecord, setConfigRecord, 'flags', result.flags);
-        setFlagDialogOpen(false);
-    }, [configRecord, flagInput, updateField, setConfigRecord]);
+        const success = await updateField(configRecord, setConfigRecord, 'flags', result.flags);
+        if (success) setFlagDialogOpen(false);
+    }, [configRecord, flagInput, flagRegistry, updateField, setConfigRecord]);
 
     const handleSaveCatalogFlags = useCallback(async (next: RuleFlags) => {
         if (!configRecord) return;
-        await updateField(configRecord, setConfigRecord, 'flags', next);
-        setCatalogOpen(false);
+        const success = await updateField(configRecord, setConfigRecord, 'flags', next);
+        if (success) setCatalogOpen(false);
     }, [configRecord, updateField, setConfigRecord]);
 
     const handleToggleFlagFromCard = useCallback((key: string) => {
         if (!configRecord) return;
         const current = configRecord.flags || {};
-        let next: RuleFlags = { ...current };
-        switch (key) {
-            case 'cursor_compat':
-                next = { ...next, cursorCompat: !current.cursorCompat };
-                break;
-            case 'cursor_compat_auto':
-                next = { ...next, cursorCompatAuto: !current.cursorCompatAuto };
-                break;
-            case 'skip_usage':
-                next = { ...next, skipUsage: !current.skipUsage };
-                break;
-            case 'use_max_completion_tokens':
-                next = { ...next, useMaxCompletionTokens: !current.useMaxCompletionTokens };
-                break;
-            default:
-                return;
-        }
+        const next = setFlagValue(current, key, !getFlagValue(current, key));
         void updateField(configRecord, setConfigRecord, 'flags', next);
     }, [configRecord, updateField, setConfigRecord]);
 
     if (!configRecord) return null;
 
     const extensionsCard = (
-        <RuleExtensionsCard
+        <RulePluginsCard
             flags={configRecord.flags}
             registry={flagRegistry}
             active={configRecord.active}
