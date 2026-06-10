@@ -86,6 +86,24 @@ Normalizes existing configs:
   `UsageStore.RenameRuleUUID` (historical usage attribution). Daily/monthly
   usage aggregates do not carry `rule_uuid` and need no migration.
 
+### Usage path (`tingly-box cc --profile`)
+
+`generateCCEnv` (internal/command/cc_command.go) resolves the per-tier
+`ANTHROPIC_*_MODEL` env vars from the rules the request will actually hit,
+looked up by canonical UUID:
+
+- profile mode: `BuiltinRuleUUID(profiledScenario, tier)` →
+  `builtin:claude_code:p1:haiku`, falling back to the seeded short tier
+  name (`haiku`) when the rule is missing/inactive;
+- main scenario: the legacy `built-in-cc-*` constants, falling back to the
+  canonical `tingly/cc-*` names (same scheme as
+  `tbclient.resolveClaudeCodeModels`).
+
+Before normalization this was impossible for profiles — the env hardcoded
+the seeded short names and silently broke if a user renamed a profile
+rule's `request_model`. Request routing itself matches by
+scenario + request_model and needs no UUID.
+
 ### Profile deletion
 
 Because profile IDs are recycled, `DeleteProfile` purges the deleted
