@@ -261,6 +261,17 @@ func (a *AnthropicV1Adapter) FilterVirtualTools(response any, externalTools []To
 		}
 	}
 
+	if len(filtered) != len(msg.Content) {
+		// A virtual tool_use block was removed; re-parse so RawJSON reflects
+		// the filtered content (downstream writers prefer RawJSON).
+		msg.Content = filtered
+		if b, err := json.Marshal(msg); err == nil {
+			var fresh anthropic.Message
+			if json.Unmarshal(b, &fresh) == nil {
+				return &fresh, nil
+			}
+		}
+	}
 	msg.Content = filtered
 	return msg, nil
 }
