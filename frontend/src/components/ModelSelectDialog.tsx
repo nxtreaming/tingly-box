@@ -5,6 +5,7 @@ import { useProviderModels } from '@/hooks/useProviderModels';
 import { useGridLayout } from '@/hooks/useGridLayout';
 import { useProviderGroups } from '@/hooks/useProviderGroups';
 import { useModelSelection } from '@/hooks/useModelSelection';
+import { useRecentModels } from '@/hooks/useRecentModels';
 import { ModelSelectProvider, useModelSelectContext } from '@/contexts/ModelSelectContext';
 import type { Provider } from '@/types/provider';
 import { getModelTypeInfo } from '@/utils/modelUtils';
@@ -58,15 +59,25 @@ function ModelSelectTabInner({
     } = useModelSelectContext();
 
     const { handleModelSelect } = useModelSelection({ onSelected });
+    const { recentModels, lastProvider } = useRecentModels();
 
     const {
         groupedProviders,
         flattenedProviders,
     } = useProviderGroups(providers, singleProvider);
 
-    // Use external activeTab if provided, otherwise use internal state
-    // Add fallback to prevent flickering: use selectedProvider or first available provider
-    const currentTab = externalActiveTab ?? internalCurrentTab ?? selectedProvider ?? flattenedProviders[0]?.uuid;
+    // Use external activeTab if provided, otherwise use internal state.
+    // Fallback chain to prevent flickering:
+    //   1. externalActiveTab — parent-controlled tab
+    //   2. internalCurrentTab — user's in-session tab switch
+    //   3. selectedProvider — lock onto the selected provider if a model is chosen
+    //   4. lastProvider — remember the last chosen provider when nothing is selected
+    //   5. first available provider — final default
+    const currentTab = externalActiveTab
+        ?? internalCurrentTab
+        ?? (selectedProvider && selectedModel ? selectedProvider : undefined)
+        ?? lastProvider
+        ?? flattenedProviders[0]?.uuid;
 
     const handleTabChange = useCallback(async (providerUuid: string) => {
         if (externalActiveTab === undefined) {
@@ -157,8 +168,20 @@ function ModelSelectTabInner({
                 // Mark this provider as initialized
                 initializedProviderRef.current = selectedProvider;
             }
+        } else if (lastProvider) {
+            // No selection yet: open on the most recently used provider.
+            // Fetch its models so the right panel is populated on first open.
+            if (externalActiveTab === undefined) {
+                setInternalCurrentTab(lastProvider);
+            }
+            fetchModels(lastProvider);
+            const targetProvider = flattenedProviders.find(p => p.uuid === lastProvider);
+            if (targetProvider && onProviderChange) {
+                onProviderChange(targetProvider);
+            }
+            initializedProviderRef.current = lastProvider;
         }
-    }, [selectedProvider, flattenedProviders, externalActiveTab, onProviderChange, setInternalCurrentTab, fetchModels]);
+    }, [selectedProvider, lastProvider, flattenedProviders, externalActiveTab, onProviderChange, setInternalCurrentTab, fetchModels]);
 
     return (
         <Box sx={{ display: 'flex', flexDirection: 'row', height: '100%', width: '100%' }}>

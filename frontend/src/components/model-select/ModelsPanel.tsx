@@ -243,31 +243,16 @@ export function ModelsPanel({
             <Box sx={{ flex: 1, overflowY: 'auto', p: 2 }}>
                 <Stack spacing={2}>
                 {/* Controls */}
-                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                <Stack direction="row" justifyContent="flex-end" alignItems="center" spacing={2}>
+                    {/* Action buttons */}
                     <Stack direction="row" alignItems="center" spacing={1}>
-                        <TextField
-                            size="small"
-                            placeholder="Search models..."
-                            value={searchTerms[provider.uuid] || ''}
-                            onChange={(e) => handleSearchChange(provider.uuid, e.target.value)}
-                            slotProps={{
-                                input: {
-                                    startAdornment: (
-                                        <InputAdornment position="start">
-                                            <SearchIcon />
-                                        </InputAdornment>
-                                    ),
-                                },
-                            }}
-                            sx={{ width: 200 }}
-                        />
                         <Button
                             variant="outlined"
                             startIcon={<AddCircleOutlineIcon />}
                             onClick={() => onCustomModelEdit(provider)}
                             sx={{ height: 40, minWidth: 100 }}
                         >
-                            Customize
+                            Custom Model
                         </Button>
                         <Button
                             variant="outlined"
@@ -302,10 +287,30 @@ export function ModelsPanel({
                             </Button>
                         )}
                     </Stack>
-                    <Typography variant="caption" color="text.secondary">
-                        {pagination.totalItems} models
-                    </Typography>
+
+                    {/* Search box */}
+                    <TextField
+                        size="small"
+                        placeholder="Search models..."
+                        value={searchTerms[provider.uuid] || ''}
+                        onChange={(e) => handleSearchChange(provider.uuid, e.target.value)}
+                        slotProps={{
+                            input: {
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <SearchIcon />
+                                    </InputAdornment>
+                                ),
+                            },
+                        }}
+                        sx={{ width: 200 }}
+                    />
                 </Stack>
+
+                {/* Model count */}
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                    {pagination.totalItems} models
+                </Typography>
 
                 {/* New Models Section */}
                 {newModels[provider.uuid]?.newModels && newModels[provider.uuid].newModels.length > 0 && (
