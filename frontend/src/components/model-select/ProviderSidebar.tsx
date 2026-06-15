@@ -1,6 +1,6 @@
-import { CheckCircle } from '@/components/icons';
-import { Box, Stack, Typography } from '@mui/material';
-import React from 'react';
+import { CheckCircle, Search } from '@/components/icons';
+import { Box, Stack, Typography, TextField, InputAdornment } from '@mui/material';
+import React, { useState, useMemo } from 'react';
 import type { Provider } from '../../types/provider';
 import { AuthTypeBadge } from '../AuthTypeBadge';
 import { ApiStyleBadge } from '../ApiStyleBadge';
@@ -18,6 +18,25 @@ export function ProviderSidebar({
     selectedProvider,
     onTabChange,
 }: ProviderSidebarProps) {
+    const [providerSearchTerm, setProviderSearchTerm] = useState('');
+
+    // Filter providers based on search term
+    const filteredGroupedProviders = useMemo(() => {
+        if (!providerSearchTerm.trim()) {
+            return groupedProviders;
+        }
+
+        const searchLower = providerSearchTerm.toLowerCase();
+        return groupedProviders
+            .map(group => ({
+                authType: group.authType,
+                providers: group.providers.filter(provider =>
+                    provider.name.toLowerCase().includes(searchLower) ||
+                    provider.uuid.toLowerCase().includes(searchLower)
+                ),
+            }))
+            .filter(group => group.providers.length > 0);
+    }, [groupedProviders, providerSearchTerm]);
     return (
         <Box sx={{
             width: 300,
@@ -29,9 +48,22 @@ export function ProviderSidebar({
         }}>
             {/* Header */}
             <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                    Credentials ({groupedProviders.flatMap(g => g.providers).length})
-                </Typography>
+                <TextField
+                    size="small"
+                    placeholder="Search credentials..."
+                    value={providerSearchTerm}
+                    onChange={(e) => setProviderSearchTerm(e.target.value)}
+                    slotProps={{
+                        input: {
+                            startAdornment: (
+                                <InputAdornment position="start">
+                                    <Search />
+                                </InputAdornment>
+                            ),
+                        },
+                    }}
+                    sx={{ width: 200 }}
+                />
             </Box>
 
             {/* Vertical Navigation with Auth Type Grouping */}
@@ -48,7 +80,7 @@ export function ProviderSidebar({
                     },
                 }}
             >
-                {groupedProviders.map((group) => {
+                {filteredGroupedProviders.map((group) => {
                     return (
                         <Box key={`group-${group.authType}`}>
                             {/* Auth Type Header */}

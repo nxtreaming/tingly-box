@@ -4,8 +4,10 @@ import { createEventSystem } from '../utils/eventSystem';
 
 // Local storage key for recent models
 const RECENT_MODELS_STORAGE_KEY = 'tingly_recent_models';
+const LAST_PROVIDER_STORAGE_KEY = 'tingly_last_provider';
 const MAX_RECENT_MODELS = 3;
 const DEFAULT_RECENT_MODELS = {};
+const DEFAULT_LAST_PROVIDER = '';
 
 // Type for recent models data
 export type RecentModelsData = { [providerUuid: string]: string[] };
@@ -20,8 +22,10 @@ export const RECENT_MODELS_UPDATE_EVENT = recentModelsEvent.eventName;
 
 // Custom hook to manage recent models
 export const useRecentModels = () => {
-    const { data: recentModels, version, saveData, removeKey, setData, refetch } =
+    const { data: recentModels, version, saveData, removeKey, setData, refetch, loadData } =
         useLocalStorage<RecentModelsData>(RECENT_MODELS_STORAGE_KEY, DEFAULT_RECENT_MODELS);
+    const { data: lastProvider, saveData: saveLastProvider } =
+        useLocalStorage<Record<string, string>>(LAST_PROVIDER_STORAGE_KEY, {});
 
     // Listen for recent models updates from other components and reload
     useEffect(() => {
@@ -42,10 +46,14 @@ export const useRecentModels = () => {
         const newModels = [model, ...filtered].slice(0, MAX_RECENT_MODELS);
 
         if (saveData(providerUuid, newModels)) {
-            setData(prev => ({ ...prev, [providerUuid]: newModels }));
+            const currentData = loadData();
+            setData({ ...currentData, [providerUuid]: newModels });
             recentModelsEvent.dispatch({ providerUuid, modelName: model });
         }
-    }, [recentModels, saveData, setData]);
+
+        // Also update last used provider
+        saveLastProvider('default', providerUuid);
+    }, [recentModels, saveData, setData, saveLastProvider, loadData]);
 
     // Get recent models for a specific provider
     const getRecentModels = useCallback((providerUuid: string): string[] => {
@@ -55,14 +63,13 @@ export const useRecentModels = () => {
     // Clear recent models for a specific provider
     const clearRecentModels = useCallback((providerUuid: string) => {
         if (removeKey(providerUuid)) {
-            setData(prev => {
-                const newModels = { ...prev };
-                delete newModels[providerUuid];
-                return newModels;
-            });
+            const currentData = loadData();
+            const newModels = { ...currentData };
+            delete newModels[providerUuid];
+            setData(newModels);
             recentModelsEvent.dispatch({ providerUuid, modelName: '' });
         }
-    }, [removeKey, setData]);
+    }, [removeKey, setData, loadData]);
 
     // Helper functions for backward compatibility
     const loadRecentModelsFromStorage = useCallback(() => {
@@ -85,8 +92,10 @@ export const useRecentModels = () => {
 
     // Helper to listen for recent models updates (backward compatibility)
     const listenForRecentModelsUpdates = (callback: (providerUuid: string, modelName: string) => void) => {
-        return recentModelsEvent.listen(({ providerUuid, modelName }) => {
-            callback(providerUuid, modelName);
+        return recentModelsEvent.listen((payload) => {
+            if (payload) {
+                callback(payload.providerUuid, payload.modelName);
+            }
         });
     };
 
@@ -102,5 +111,6 @@ export const useRecentModels = () => {
         removeRecentModelsFromStorage,
         dispatchRecentModelsUpdate,
         listenForRecentModelsUpdates,
+        lastProvider: lastProvider['default'] || '',
     };
 };
