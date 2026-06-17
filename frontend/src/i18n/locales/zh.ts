@@ -874,11 +874,7 @@ export default {
       "deleteFailed": "删除配置文件失败",
       "mode": "模式",
       "unified": "统一",
-      "separate": "分离",
-      "unifiedDescription": "所有模型使用相同的路由规则",
-      "separateDescription": "每个模型使用自己的路由规则",
-      "modeUpdated": "配置文件模式已更新为 {{mode}}",
-      "modeUpdateFailed": "配置文件模式更新失败"
+      "separate": "分离"
     }
   },
   "prompt": {

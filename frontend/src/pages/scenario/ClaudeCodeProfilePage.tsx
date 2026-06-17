@@ -67,7 +67,6 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
     const [isProfileMutating, setIsProfileMutating] = useState(false);
     const [appVersion, setAppVersion] = useState('');
     const [unifiedMode, setUnifiedMode] = useState(currentProfile?.unified || false);
-    const [isUpdatingMode, setIsUpdatingMode] = useState(false);
     const [commandMode, setCommandMode] = useState<'npx' | 'global'>('npx');
 
     // Update unified mode when profile changes
@@ -140,30 +139,7 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
         }
     };
 
-    // Handle mode toggle
-    const handleModeToggle = async () => {
-        if (!profileId) return;
-        const newMode = !unifiedMode;
-        try {
-            setIsUpdatingMode(true);
-            // Only pass unified mode, let backend use existing name
-            const result = await api.updateProfile(BASE_SCENARIO, profileId, '', newMode);
-            if (result.success) {
-                setUnifiedMode(newMode);
-                showNotification(t('claudeCode.profile.modeUpdated', { mode: newMode ? t('claudeCode.profile.unified') : t('claudeCode.profile.separate') }), 'success');
-                refreshProfiles();
-                // Reload rules after mode change
-                await loadRules();
-            } else {
-                showNotification(`${t('claudeCode.profile.modeUpdateFailed')}: ${result.error || 'Unknown error'}`, 'error');
-            }
-        } catch {
-            showNotification(t('claudeCode.profile.modeUpdateFailed'), 'error');
-        } finally {
-            setIsUpdatingMode(false);
-        }
-    };
-
+    // Load rules for this profile
     const ccCommand = React.useMemo(() => {
         if (commandMode === 'npx' && appVersion) {
             return `npx -y tingly-box@${appVersion} cc --profile ${profileId}`;
@@ -280,40 +256,6 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
                                 },
                             ]}
                             activeTab="quickstart"
-                            onTabChange={() => {}}
-                        />
-                    </Box>
-                    <Box sx={{ px: 2, py: 0.5 }}>
-                        <ConfigRow
-                            tabs={[
-                                {
-                                    key: 'mode',
-                                    label: t('claudeCode.profile.mode'),
-                                    content: (
-                                        <Typography
-                                            variant="subtitle2"
-                                            color="text.secondary"
-                                            sx={{
-                                                fontFamily: 'monospace',
-                                                fontSize: '0.75rem',
-                                                cursor: 'pointer',
-                                                '&:hover': {
-                                                    textDecoration: 'underline',
-                                                    backgroundColor: 'action.hover'
-                                                },
-                                                padding: 1,
-                                                borderRadius: 1,
-                                                transition: 'all 0.2s ease-in-out'
-                                            }}
-                                        >
-                                            {unifiedMode
-                                                ? t('claudeCode.profile.unifiedDescription')
-                                                : t('claudeCode.profile.separateDescription')}
-                                        </Typography>
-                                    ),
-                                },
-                            ]}
-                            activeTab="mode"
                             onTabChange={() => {}}
                         />
                     </Box>
