@@ -330,8 +330,6 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
                 </UnifiedCard>
 
                 <TemplatePage
-                    title="Models and Forwarding Rules"
-                    scenario={scenario}
                     rules={rules}
                     onRulesChange={setRules}
                     collapsible={true}

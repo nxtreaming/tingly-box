@@ -13,6 +13,7 @@ import UnifiedCard from '@/components/UnifiedCard';
 import { EntryGuideDialog } from '@/components/tier/EntryGuideDialog';
 import type {TabTemplatePageProps} from './TemplatePage.types';
 import {TemplatePageActions} from './TemplatePageActions';
+import {TitleIconButtons} from './TitleIconButtons';
 import {useTemplatePageRules} from '@/pages/scenario/hooks/useTemplatePageRules';
 import {useScrollToNewRule} from '@/components/hooks/useScrollToNewRule';
 import {useModelSelectDialog} from '@/hooks/useModelSelectDialog';
@@ -66,7 +67,7 @@ const TemplatePage: React.FC<TabTemplatePageProps> = (props) => {
         onRulesChange = internalData.handleRulesChange,
         onProvidersLoad = internalData.loadProviders,
         loadRules = internalData.loadRules,
-        title = "",
+        title = "Model Rules",
         collapsible = false,
         allowDeleteRule = false,
         onRuleDelete = internalData.handleRuleDelete,
@@ -401,6 +402,15 @@ const TemplatePage: React.FC<TabTemplatePageProps> = (props) => {
                 id="models-and-forwarding-rules"
                 size="full"
                 title={title}
+                leftAction={
+                    <TitleIconButtons
+                        collapsible={collapsible}
+                        allExpanded={allExpanded}
+                        onToggleExpandAll={handleToggleExpandAll}
+                        showExpandCollapseButton={showExpandCollapseButton}
+                        onShowGuide={() => setShowGuide(true)}
+                    />
+                }
                 rightAction={rightAction}
                 sx={{ scrollMarginTop: 16 }}
             >
