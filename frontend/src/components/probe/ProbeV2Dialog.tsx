@@ -455,12 +455,30 @@ export const ProbeV2Dialog: React.FC<ProbeV2DialogProps> = ({
                     <Typography variant="subtitle1" fontWeight={600}>
                         {targetType === 'rule' ? t('probe.testRule') : t('probe.testProvider')}
                     </Typography>
-                    <Chip
-                        label={model ? `${targetName} | ${model}` : targetName}
-                        size="small"
-                        variant="outlined"
-                        sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 360 }}
-                    />
+                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                        {targetName}
+                    </Typography>
+                    {model && (
+                        <>
+                            <Typography variant="body2" color="text.secondary">
+                                ·
+                            </Typography>
+                            <Typography
+                                variant="body2"
+                                sx={{
+                                    fontFamily: 'monospace',
+                                    fontWeight: 500,
+                                    color: 'primary.main',
+                                    maxWidth: 200,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                }}
+                            >
+                                {model}
+                            </Typography>
+                        </>
+                    )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
                     {import.meta.env.DEV && (
