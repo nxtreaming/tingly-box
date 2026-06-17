@@ -14,7 +14,6 @@ import {
     ToggleButtonGroup,
     Collapse,
     Alert,
-    AlertTitle,
 } from '@mui/material';
 import {
     CheckCircle as CheckIcon,
@@ -177,12 +176,6 @@ const JourneyRow = memo(({ label, value, muted }: { label: string; value: React.
     );
 });
 
-const SectionTitle = ({ children }: { children: React.ReactNode }) => (
-    <Typography variant="body2" sx={{ fontWeight: 600, color: 'primary.main', mt: 2, mb: 0.5 }}>
-        {children}
-    </Typography>
-);
-
 // CollapsibleSection: a section with title and expand/collapse functionality
 interface CollapsibleSectionProps {
     title: string;
@@ -239,20 +232,21 @@ const StatusBar = memo(({ result }: { result: ProbeResult }) => {
     return (
         <Alert
             severity={ok ? 'success' : 'error'}
-            variant="filled"
+            variant="outlined"
             sx={{
                 mt: 2,
                 borderRadius: 2,
+                borderWidth: 2,
                 '& .MuiAlert-icon': {
-                    fontSize: 32,
+                    fontSize: 28,
                 },
             }}
-            icon={ok ? <CheckIcon sx={{ fontSize: 32 }} /> : <ErrorIcon sx={{ fontSize: 32 }} />}
+            icon={ok ? <CheckIcon sx={{ fontSize: 28 }} /> : <ErrorIcon sx={{ fontSize: 28 }} />}
         >
-            <AlertTitle sx={{ fontWeight: 700, fontSize: '1rem' }}>
-                {ok ? t('probe.success') : t('probe.failed')}
-            </AlertTitle>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                <Typography variant="subtitle1" fontWeight={700} sx={{ fontSize: '1rem' }}>
+                    {ok ? t('probe.success') : t('probe.failed')}
+                </Typography>
                 {d?.latency_ms ? (
                     <Chip
                         icon={<SpeedIcon sx={{ fontSize: 16 }} />}
@@ -260,7 +254,7 @@ const StatusBar = memo(({ result }: { result: ProbeResult }) => {
                         size="medium"
                         sx={{
                             height: 28,
-                            bgcolor: 'rgba(255,255,255,0.2)',
+                            bgcolor: ok ? 'success.main' : 'error.main',
                             color: 'common.white',
                             '& .MuiChip-icon': {
                                 color: 'common.white',
@@ -275,7 +269,7 @@ const StatusBar = memo(({ result }: { result: ProbeResult }) => {
                         size="medium"
                         sx={{
                             height: 28,
-                            bgcolor: 'rgba(255,255,255,0.2)',
+                            bgcolor: ok ? 'success.main' : 'error.main',
                             color: 'common.white',
                             '& .MuiChip-icon': {
                                 color: 'common.white',
@@ -283,20 +277,21 @@ const StatusBar = memo(({ result }: { result: ProbeResult }) => {
                         }}
                     />
                 ) : null}
-                {!ok && result.error && (
-                    <Typography
-                        variant="body2"
-                        sx={{
-                            fontFamily: 'monospace',
-                            fontSize: '0.85rem',
-                            color: 'common.white',
-                            wordBreak: 'break-word',
-                        }}
-                    >
-                        {result.error.message}
-                    </Typography>
-                )}
             </Box>
+            {!ok && result.error && (
+                <Typography
+                    variant="body2"
+                    sx={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.85rem',
+                        mt: 1,
+                        color: 'text.primary',
+                        wordBreak: 'break-word',
+                    }}
+                >
+                    {result.error.message}
+                </Typography>
+            )}
         </Alert>
     );
 });
