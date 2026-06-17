@@ -451,31 +451,18 @@ export const ProbeV2Dialog: React.FC<ProbeV2DialogProps> = ({
     return (
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { minHeight: 420 } }}>
             <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0 }}>
-                    <Typography variant="subtitle1" fontWeight={600}>
-                        {targetName}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', minWidth: 0, overflow: 'hidden' }}>
+                    <Typography
+                        variant="subtitle1"
+                        fontWeight={600}
+                        sx={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {model ? `${targetName} · ${model}` : targetName}
                     </Typography>
-                    {model && (
-                        <>
-                            <Typography variant="body2" color="text.secondary">
-                                ·
-                            </Typography>
-                            <Typography
-                                variant="body2"
-                                sx={{
-                                    fontFamily: 'monospace',
-                                    fontWeight: 500,
-                                    color: 'primary.main',
-                                    maxWidth: 200,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                }}
-                            >
-                                {model}
-                            </Typography>
-                        </>
-                    )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
                     {import.meta.env.DEV && (
