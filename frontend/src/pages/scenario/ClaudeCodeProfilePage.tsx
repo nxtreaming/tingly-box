@@ -29,7 +29,7 @@ import {
     Tooltip,
     Typography
 } from '@mui/material';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import TemplatePage from './components/TemplatePage.tsx';
@@ -52,11 +52,8 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
         notification,
         copyToClipboard,
         baseUrl,
+        isLoading,
     } = useScenarioPageInternal(scenario);
-
-    // Rules state
-    const [rules, setRules] = useState<any[]>([]);
-    const [loadingRule, setLoadingRule] = useState(true);
 
     // Profile state
     const { getProfiles, refresh: refreshProfiles } = useProfileContext();
@@ -73,20 +70,6 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
     useEffect(() => {
         setUnifiedMode(currentProfile?.unified || false);
     }, [currentProfile]);
-
-    // Load rules for this profile
-    const loadRules = useCallback(async () => {
-        setLoadingRule(true);
-        // Profile rules have their own scenario (e.g., claude_code:p1)
-        // Just load all rules for this profile scenario
-        const result = await api.getRules(scenario);
-        setRules(result.success ? result.data : []);
-        setLoadingRule(false);
-    }, [scenario]);
-
-    useEffect(() => {
-        loadRules();
-    }, [loadRules]);
 
     // Load app version for npm command
     useEffect(() => {
@@ -148,7 +131,7 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
     }, [commandMode, appVersion, profileId]);
 
     return (
-        <PageLayout loading={loadingRule} notification={notification}>
+        <PageLayout loading={isLoading} notification={notification}>
             <CardGrid>
                 <UnifiedCard
                     size="full"
@@ -272,8 +255,7 @@ const ClaudeCodeProfilePageContent: React.FC = () => {
                 </UnifiedCard>
 
                 <TemplatePage
-                    rules={rules}
-                    onRulesChange={setRules}
+                    scenario={scenario}
                     collapsible={true}
                     allowToggleRule={false}
                     allowAddRule={false}
