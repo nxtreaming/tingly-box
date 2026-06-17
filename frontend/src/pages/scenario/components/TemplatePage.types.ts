@@ -8,6 +8,10 @@ import type { Provider } from '@/types/provider';
  * Just provide `scenario` and TemplatePage will handle all data fetching internally.
  * <TemplatePage scenario="agent" />
  *
+ * PROFILE MODE:
+ * For profile-specific rules, provide the suffixed scenario.
+ * <TemplatePage scenario="claude_code:p1" />
+ *
  * HYBRID MODE (for custom logic):
  * Provide `scenario` plus override specific data props for custom behavior.
  * <TemplatePage scenario="custom" rules={customRules} onRulesChange={customHandler} />

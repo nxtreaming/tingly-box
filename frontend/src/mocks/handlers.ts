@@ -1380,7 +1380,6 @@ export const handlers = [
     http.get('/api/v1/rules', ({ request }) => {
         const url = new URL(request.url)
         const scenario = url.searchParams.get('scenario')
-        const profileId = url.searchParams.get('profile_id')
 
         if (scenario === 'imagegen') {
             return HttpResponse.json({
@@ -1404,8 +1403,9 @@ export const handlers = [
             })
         }
 
-        // Handle profile-specific rules
-        if (scenario === 'claude_code' && profileId) {
+        // Handle profile-specific rules (e.g., claude_code:p1)
+        if (scenario?.startsWith('claude_code:')) {
+            const profileId = scenario.split(':')[1];
             // Return mock rules for the specific profile
             return HttpResponse.json({
                 success: true,
