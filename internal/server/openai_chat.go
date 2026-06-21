@@ -17,7 +17,6 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/sirupsen/logrus"
 	"github.com/tingly-dev/tingly-box/internal/constant"
-	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/stream"
 	"github.com/tingly-dev/tingly-box/internal/protocol/token"
@@ -25,118 +24,6 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/server/forwarding"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
-
-// HandleOpenAIChatCompletions handles OpenAI v1 chat completion requests
-func (s *Server) HandleOpenAIChatCompletions(c *gin.Context) {
-
-	scenario := c.Param("scenario")
-
-	// Read raw body
-	bodyBytes, err := c.GetRawData()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: "Failed to read request body: " + err.Error(),
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	// Parse OpenAI-style request
-	var req protocol.OpenAIChatCompletionRequest
-	if err := json.Unmarshal(bodyBytes, &req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: "Invalid request body: " + err.Error(),
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	// Validate
-	responseModel := req.Model
-	if req.Model == "" {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: "Model is required",
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	if len(req.Messages) == 0 {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: "At least one message is required",
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	// Determine provider & model
-	var (
-		provider        *typ.Provider
-		selectedService *loadbalance.Service
-		rule            *typ.Rule
-	)
-
-	// Convert string to RuleScenario and validate
-	scenarioType := typ.RuleScenario(scenario)
-	if !isValidRuleScenario(scenarioType) {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: fmt.Sprintf("invalid scenario: %s", scenario),
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	//if !typ.ScenarioSupportsTransport(scenarioType, typ.TransportOpenAI) {
-	//	c.JSON(http.StatusBadRequest, ErrorResponse{
-	//		Error: ErrorDetail{
-	//			Message: fmt.Sprintf("scenario %s does not support OpenAI chat completions", scenario),
-	//			Type:    "invalid_request_error",
-	//		},
-	//	})
-	//	return
-	//}
-
-	// Check if this is the request model name first
-	rule, err = s.determineRuleWithScenario(c, scenarioType, req.Model)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: err.Error(),
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	s.applyVisionProxy(c, scenarioType, rule, &req.ChatCompletionNewParams)
-
-	// Select service using routing pipeline
-	provider, selectedService, err = s.routingSelector.SelectService(c, scenarioType, rule, &req.ChatCompletionNewParams)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorDetail{
-				Message: err.Error(),
-				Type:    "invalid_request_error",
-			},
-		})
-		return
-	}
-
-	actualModel := selectedService.Model
-	req.Model = actualModel
-
-	s.OpenAIChatCompletion(c, req, responseModel, provider, scenarioType, rule)
-}
 
 // OpenAIChatCompletion runs the provider-independent prologue once, then drives
 // the failover loop whose per-attempt callback re-runs the provider-dependent
@@ -338,6 +225,10 @@ func (s *Server) nonstreamOpenAIChat(c *gin.Context, provider *typ.Provider, ori
 func (s *Server) streamOpenAIChat(c *gin.Context, provider *typ.Provider, originalReq *openai.ChatCompletionNewParams, responseModel string, disableStreamUsage bool) {
 	req := originalReq
 
+	// Estimate input tokens up front and hand the scalar to the stream handler,
+	// so it depends on the estimate rather than the request for the usage fallback.
+	estimatedInputTokens := token.EstimateInputTokensSimple(req)
+
 	wrapper := s.clientPool.GetOpenAIClient(c.Request.Context(), provider, req.Model)
 	fc := forwarding.NewForwardContext(c.Request.Context(), provider)
 	streamResp, cancel, err := forwarding.ForwardOpenAIChatStream(fc, wrapper, req)
@@ -360,8 +251,9 @@ func (s *Server) streamOpenAIChat(c *gin.Context, provider *typ.Provider, origin
 	// Create handle context and handle stream
 	hc := protocol.NewHandleContext(c, responseModel)
 	hc.DisableStreamUsage = disableStreamUsage
+	hc.EstimatedInputTokens = estimatedInputTokens
 
-	usage, err := stream.HandleOpenAIChatStream(hc, streamResp, req)
+	usage, err := stream.HandleOpenAIChatStream(hc, streamResp)
 
 	// Track usage from stream handler
 	s.trackUsageWithTokenUsage(c, usage, err)
