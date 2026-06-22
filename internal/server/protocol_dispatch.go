@@ -418,7 +418,7 @@ func (s *Server) passthroughAnthropicBeta(
 				return
 			}
 
-			s.handleAnthropicStreamResponseV1Beta(c, req, streamResp, actualModel, responseModel, provider, recorder)
+			s.streamAnthropicBeta(c, req, streamResp, actualModel, responseModel, provider, recorder)
 			return
 		}
 
@@ -565,6 +565,16 @@ func (s *Server) buildOpenAIToAnthropicMCPHooks(
 			return nil
 		},
 	}
+}
+
+func extractOpenAIMessages(messages []openai.ChatCompletionMessageParamUnion) []map[string]any {
+	if len(messages) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(messages)
+	var out []map[string]any
+	_ = json.Unmarshal(b, &out)
+	return out
 }
 
 func buildOpenAIContinuationSegment(
