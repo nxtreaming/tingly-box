@@ -75,12 +75,6 @@ func (m *MultiModeMemoryLogMiddleware) Middleware() gin.HandlerFunc {
 		}
 		c.Set(GinRequestIDKey, requestID)
 
-		// Carry the id on the request context so request-scoped code (protocol
-		// conversion, upstream client calls) can log via logrus.WithContext(ctx);
-		// the MultiLogger hook routes those entries to the model_request source.
-		c.Request = c.Request.WithContext(obs.ContextWithRequestID(c.Request.Context(), requestID))
-
-		// Process request
 		c.Next()
 
 		// Build log entry manually for more control
