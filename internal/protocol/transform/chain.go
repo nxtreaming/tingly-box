@@ -204,6 +204,8 @@ func (ctx *TransformContext) configExtraForMetadata() map[string]any {
 func (ctx *TransformContext) Release() {
 	ctx.Request = nil
 	ctx.OriginalRequest = nil
+	ctx.TransformSteps = nil
+	ctx.Extra = nil
 }
 
 // TransformChain manages an ordered sequence of transforms
