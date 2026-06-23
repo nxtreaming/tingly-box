@@ -53,11 +53,11 @@ func (s *Server) AnthropicCountTokens(c *gin.Context) {
 	if err := json.Unmarshal(bodyBytes, &params); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error: ErrorDetail{
-				Message: fmt.Sprintf("Message error: %s", string(bodyBytes)),
+				Message: fmt.Sprintf("Message error: %s", err.Error()),
 				Type:    "invalid_request_error",
 			},
 		})
-		logrus.WithError(err).WithField("body", string(bodyBytes)).Errorf("Anthropic beta decode error")
+		logrus.WithError(err).Errorf("Anthropic beta decode error")
 		c.Abort()
 		return
 	}

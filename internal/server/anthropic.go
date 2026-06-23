@@ -147,11 +147,11 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 		if err := json.Unmarshal(bodyBytes, &betaMessages); err != nil {
 			c.JSON(http.StatusBadRequest, ErrorResponse{
 				Error: ErrorDetail{
-					Message: fmt.Sprintf("Message error: %s", string(bodyBytes)),
+					Message: fmt.Sprintf("Message decode error: %s", err.Error()),
 					Type:    "invalid_request_error",
 				},
 			})
-			logrus.WithError(err).WithField("body", string(bodyBytes)).Errorf("Anthropic beta decode error")
+			logrus.WithError(err).Errorf("Anthropic beta decode error")
 			c.Abort()
 			return
 		}
@@ -162,11 +162,11 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 		if err := json.Unmarshal(bodyBytes, &messages); err != nil {
 			c.JSON(http.StatusBadRequest, ErrorResponse{
 				Error: ErrorDetail{
-					Message: fmt.Sprintf("Message error: %s", string(bodyBytes)),
+					Message: fmt.Sprintf("Message decode error: %s", err.Error()),
 					Type:    "invalid_request_error",
 				},
 			})
-			logrus.WithError(err).WithField("body", string(bodyBytes)).Errorf("Anthropic decode error")
+			logrus.WithError(err).Errorf("Anthropic decode error")
 			c.Abort()
 			return
 		}
