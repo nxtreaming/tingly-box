@@ -250,17 +250,17 @@ func (s *Server) runOpenAIResponsesAttempt(c *gin.Context, req protocol.Response
 
 // convertToResponsesParams converts raw JSON to OpenAI SDK params format
 // This handles the model override and forwards the rest as-is
-func (s *Server) convertToResponsesParams(bodyBytes []byte, actualModel string) (responses.ResponseNewParams, error) {
+func (s *Server) convertToResponsesParams(bodyBytes []byte, actualModel string) (*responses.ResponseNewParams, error) {
 	// Preprocess to add type fields to input items (needed for union deserialization)
 	// and flatten output_text content blocks
 	processedData, err := protocol.PreprocessInputData(bodyBytes)
 	if err != nil {
-		return responses.ResponseNewParams{}, err
+		return nil, err
 	}
 
 	var raw map[string]any
 	if err := json.Unmarshal(processedData, &raw); err != nil {
-		return responses.ResponseNewParams{}, err
+		return nil, err
 	}
 
 	// Override the model
@@ -269,12 +269,12 @@ func (s *Server) convertToResponsesParams(bodyBytes []byte, actualModel string) 
 	// Marshal back to JSON and unmarshal into ResponseNewParams
 	modifiedJSON, err := json.Marshal(raw)
 	if err != nil {
-		return responses.ResponseNewParams{}, err
+		return nil, err
 	}
 
-	var params responses.ResponseNewParams
-	if err := json.Unmarshal(modifiedJSON, &params); err != nil {
-		return responses.ResponseNewParams{}, err
+	var params = &responses.ResponseNewParams{}
+	if err := json.Unmarshal(modifiedJSON, params); err != nil {
+		return nil, err
 	}
 
 	return params, nil

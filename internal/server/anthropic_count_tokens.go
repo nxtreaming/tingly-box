@@ -47,7 +47,6 @@ func (s *Server) AnthropicCountTokens(c *gin.Context) {
 	}
 
 	var requestModel string
-	var reqParams interface{} // For smart routing context extraction
 
 	// always use beta for token count
 	var params anthropic.BetaMessageCountTokensParams
@@ -86,7 +85,7 @@ func (s *Server) AnthropicCountTokens(c *gin.Context) {
 		return
 	}
 
-	provider, selectedService, err := s.routingSelector.SelectService(c, scenarioType, rule, reqParams)
+	provider, selectedService, err := s.routingSelector.SelectService(c, scenarioType, rule, nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
 			Error: ErrorDetail{

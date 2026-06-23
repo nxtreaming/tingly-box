@@ -156,7 +156,7 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 			return
 		}
 		requestModel = string(betaMessages.Model)
-		reqParams = &betaMessages.BetaMessageNewParams
+		reqParams = betaMessages.BetaMessageNewParams
 
 	} else {
 		if err := json.Unmarshal(bodyBytes, &messages); err != nil {
@@ -172,7 +172,7 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 		}
 
 		requestModel = string(messages.Model)
-		reqParams = &messages.MessageNewParams
+		reqParams = messages.MessageNewParams
 	}
 
 	// Check if this is the request requestModel name first
