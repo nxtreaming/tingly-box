@@ -1,0 +1,20 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  # Docker build and test tasks for ARM64
+  build:amd64:
+    summary: Build Docker image
+    cmds:
+      - |
+        docker build --platform linux/amd64 -t tingly-box:amd64 -f build/docker/docker.npx.Dockerfile .
+
+  test:amd64:
+    summary: Run tests in Linux AMD64 Docker container
+    deps:
+      - task: docker:build:amd64
+    cmds:
+      - |
+        docker run --rm --platform linux/amd64 tingly-box:amd64 \
+        sh -c "cd /app && go test ./internal/... -v"
