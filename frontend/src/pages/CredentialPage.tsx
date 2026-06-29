@@ -47,12 +47,7 @@ const CredentialPage = () => {
     const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
     const [apiKeyDialogMode, setApiKeyDialogMode] = useState<'add' | 'edit'>('add');
     const [providerFormData, setProviderFormData] = useState<ProviderFormData>({
-        uuid: undefined,
-        name: '',
-        apiBase: '',
-        apiStyle: undefined,
-        token: '',
-        enabled: true,
+        uuid: undefined, name: '', apiBase: '', apiStyle: undefined, token: '', enabled: true,
     });
 
     // Unified "Connect Provider" picker state
@@ -60,17 +55,11 @@ const CredentialPage = () => {
 
     const [isLocalProvider, setIsLocalProvider] = useState(false);
     const [fromConnectPicker, setFromConnectPicker] = useState(false);
-    const [isCustomMode, setIsCustomMode] = useState(false);
-    const [isDualMode, setIsDualMode] = useState(false);
 
     // OAuth Dialog state
     const [oauthDialogOpen, setOAuthDialogOpen] = useState(false);
     const [oauthAutoStartId, setOAuthAutoStartId] = useState<string | null>(null);
-    // When set, the OAuth dialog re-authenticates this existing provider in place
-    // (preserves UUID + all references) instead of creating a new one.
     const [oauthReauthUuid, setOAuthReauthUuid] = useState<string | null>(null);
-    // After a token refresh fails, prompt the user to reauthorize (refresh can't
-    // recover a revoked/expired credential — a fresh sign-in can).
     const [refreshFailPrompt, setRefreshFailPrompt] = useState<{
         open: boolean;
         providerUuid: string;
@@ -88,46 +77,25 @@ const CredentialPage = () => {
     useEffect(() => {
         const dialog = searchParams.get('dialog');
         const style = searchParams.get('style') as 'openai' | 'anthropic' | null;
-
-        // Handle dialog auto-open from URL
         if (dialog === 'add') {
-            // Clear URL params
             setSearchParams({});
-
             if (style === 'oauth') {
-                // Open OAuth dialog
                 setOAuthDialogOpen(true);
             } else {
-                // Open API Key dialog
                 const apiStyle = style === 'openai' || style === 'anthropic' ? style : undefined;
                 setApiKeyDialogMode('add');
                 setProviderFormData({
-                    uuid: undefined,
-                    name: '',
-                    apiBase: '',
-                    apiStyle: apiStyle,
-                    token: '',
-                    enabled: true,
-                    noKeyRequired: false,
-                    proxyUrl: '',
-                    userAgent: '',
-                    createDualProvider: false,
+                    uuid: undefined, name: '', apiBase: '', apiStyle: apiStyle, token: '',
+                    enabled: true, noKeyRequired: false, proxyUrl: '', userAgent: '',
                 } as any);
                 setApiKeyDialogOpen(true);
             }
         }
     }, [searchParams, setSearchParams]);
 
-    useEffect(() => {
-        loadProviders();
-    }, []);
+    useEffect(() => { loadProviders(); }, []);
 
-    // Quota data fetching
-    const {
-        quotaData,
-        refreshing,
-        refreshQuota,
-    } = useProviderQuota(providers, { fetchOnMount: true });
+    const { quotaData, refreshing, refreshQuota } = useProviderQuota(providers, { fetchOnMount: true });
 
     const showNotification = (message: string, severity: 'success' | 'error') => {
         notify[severity](message);
@@ -136,16 +104,8 @@ const CredentialPage = () => {
     const handleAddApiKey = () => {
         setApiKeyDialogMode('add');
         setProviderFormData({
-            uuid: undefined,
-            name: '',
-            apiBase: '',
-            apiStyle: undefined,
-            token: '',
-            enabled: true,
-            noKeyRequired: false,
-            proxyUrl: '',
-            userAgent: '',
-            createDualProvider: false,
+            uuid: undefined, name: '', apiBase: '', apiStyle: undefined, token: '',
+            enabled: true, noKeyRequired: false, proxyUrl: '', userAgent: '',
         } as any);
         setApiKeyDialogOpen(true);
     };
@@ -155,10 +115,6 @@ const CredentialPage = () => {
         setOAuthDialogOpen(true);
     };
 
-    // Route a pick from the unified "Connect Provider" picker to the matching
-    // existing dialog. Key/custom reuse the API-key form (the key form already
-    // derives protocols from a prefilled base URL); OAuth jumps straight into
-    // the OAuth flow via autoStart.
     const handleConnectSelect = (selection: ConnectSelection) => {
         setConnectOpen(false);
         if (selection.kind === 'oauth') {
@@ -172,31 +128,8 @@ const CredentialPage = () => {
         }
         if (selection.kind === 'custom') {
             setFromConnectPicker(true);
-            setIsCustomMode(true);
+            setIsLocalProvider(false);
             handleAddApiKey();
-            return;
-        }
-        if (selection.kind === 'dual') {
-            setFromConnectPicker(true);
-            setIsDualMode(true);
-            setApiKeyDialogMode('add');
-            setProviderFormData({
-                uuid: undefined,
-                name: '',
-                apiBase: '',
-                apiStyle: 'openai',
-                apiBaseOpenAI: '',
-                apiBaseAnthropic: '',
-                token: '',
-                enabled: true,
-                noKeyRequired: false,
-                proxyUrl: '',
-                userAgent: '',
-                authType: 'api_key',
-                createDualProvider: true,
-                protocols: ['openai', 'anthropic'],
-            } as any);
-            setApiKeyDialogOpen(true);
             return;
         }
         if (selection.kind === 'local') {
@@ -205,161 +138,51 @@ const CredentialPage = () => {
             setFromConnectPicker(true);
             setApiKeyDialogMode('add');
             setProviderFormData({
-                uuid: undefined,
-                name: lp.name,
-                apiBase: lp.url,
+                uuid: undefined, name: lp.name,
+                apiBase: lp.baseUrlOpenAI || lp.baseUrlAnthropic || '',
                 apiStyle: 'openai' as any,
-                token: lp.defaultApiKey ?? '',
-                enabled: true,
-                noKeyRequired: !lp.defaultApiKey,
+                token: lp.defaultApiKey ?? '', enabled: true, noKeyRequired: !lp.defaultApiKey,
+                providerBaseUrls: { openai: lp.baseUrlOpenAI, anthropic: lp.baseUrlAnthropic },
             } as any);
             setApiKeyDialogOpen(true);
             return;
         }
         const p = selection.provider;
+        setIsLocalProvider(false);
         setFromConnectPicker(true);
         setApiKeyDialogMode('add');
         setProviderFormData({
-            uuid: undefined,
-            name: p.alias || p.name,
+            uuid: undefined, name: p.alias || p.name,
             apiBase: p.baseUrlOpenAI || p.baseUrlAnthropic || '',
-            apiStyle: undefined,
-            token: '',
-            enabled: true,
-            noKeyRequired: false,
-            proxyUrl: '',
-            userAgent: '',
-            createDualProvider: false,
-            providerBaseUrls: {openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic},
+            apiStyle: undefined, token: '', enabled: true, noKeyRequired: false,
+            proxyUrl: '', userAgent: '',
+            providerBaseUrls: { openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic },
         } as any);
         setApiKeyDialogOpen(true);
-    };
-
-    // Edit-mode upgrade: a single-endpoint provider becomes a dual one. Keep the
-    // current URL as the OpenAI side and let the user fill the Anthropic URL.
-    const handleConvertToDual = () => {
-        setProviderFormData((fd: any) => ({
-            ...fd,
-            apiBaseOpenAI: fd.apiBase || fd.apiBaseOpenAI || '',
-            apiBaseAnthropic: '',
-            apiStyle: 'openai',
-            createDualProvider: true,
-            protocols: ['openai', 'anthropic'],
-        }));
-        setIsCustomMode(false);
-        setIsDualMode(true);
-    };
-
-    // Edit-mode downgrade: a dual provider becomes a single OpenAI endpoint.
-    const handleConvertToSingle = () => {
-        setProviderFormData((fd: any) => ({
-            ...fd,
-            apiBase: fd.apiBaseOpenAI || fd.apiBase || '',
-            apiStyle: 'openai',
-            apiBaseOpenAI: '',
-            apiBaseAnthropic: '',
-            createDualProvider: false,
-            protocols: ['openai'],
-        }));
-        setIsDualMode(false);
-        setIsCustomMode(true);
     };
 
     const loadProviders = async () => {
         setLoading(true);
         const result = await api.getProviders();
-        if (result.success) {
-            setProviders(result.data);
-        } else {
-            showNotification(`Failed to load providers: ${result.error}`, 'error');
-        }
+        if (result.success) { setProviders(result.data); }
+        else { showNotification(`Failed to load providers: ${result.error}`, 'error'); }
         setLoading(false);
     };
 
-    // Build the body for an add request:
-    // - BOTH protocols + both base URLs + dual toggle ON → single dual-mode provider.
-    // - BOTH protocols + dual toggle OFF → two separate single-protocol payloads.
-    // - Single protocol selected → single provider payload.
-    const buildAddProviderPayload = (override?: Partial<ProviderFormData>): any | any[] => {
-        // Merge dialog-resolved fields (e.g. free-typed apiBase / auto name)
-        // over the form state; those land via async onChange and may not be in
-        // state yet when submit fires.
+    // Build the body for an add request. Always produces exactly 1 provider record.
+    const buildAddProviderPayload = (override?: Partial<ProviderFormData>): any => {
         const fd: any = { ...providerFormData, ...(override || {}) };
-        const protocols =
-            (fd as any).protocols as ('openai' | 'anthropic')[] ||
-            [fd.apiStyle].filter(Boolean) as ('openai' | 'anthropic')[];
-        const providerBaseUrls = (fd as any).providerBaseUrls as
-            | { openai?: string; anthropic?: string }
-            | undefined;
-
-        // Source URLs are template-driven (providerBaseUrls) or, for custom
-        // endpoints, the form's own fields. apiBase is the OpenAI/primary URL by
-        // convention; a custom second URL lands in apiBaseAnthropic.
-        // `||` (not `??`) so an empty-string dual field — e.g. a custom
-        // same-address case where apiBaseAnthropic is '' — falls back to apiBase.
-        const openaiUrl =
-            providerBaseUrls?.openai || (fd as any).apiBaseOpenAI || fd.apiBase;
-        const anthropicUrl =
-            providerBaseUrls?.anthropic || (fd as any).apiBaseAnthropic || fd.apiBase;
-
-        const bothProtocols =
-            protocols.length === 2 && !!openaiUrl && !!anthropicUrl;
-        const shouldCreateDual = !!(fd as any).createDualProvider;
-
-        if (bothProtocols && shouldCreateDual) {
-            return {
-                name: fd.name,
-                api_base: openaiUrl,
-                api_style: 'openai' as const,
-                api_base_openai: openaiUrl,
-                api_base_anthropic: anthropicUrl,
-                token: fd.token,
-                no_key_required: (fd as any).noKeyRequired || false,
-                enabled: true,
-                proxy_url: (fd as any).proxyUrl ?? '',
-                user_agent: (fd as any).userAgent ?? '',
-                auth_type: 'api_key',
-            };
-        }
-
-        if (bothProtocols && !shouldCreateDual) {
-            // Legacy split: emit one record per protocol so the user gets
-            // two independent Provider entries sharing the same credential.
-            const baseRecord = {
-                token: fd.token,
-                no_key_required: (fd as any).noKeyRequired || false,
-                enabled: true,
-                proxy_url: (fd as any).proxyUrl ?? '',
-                user_agent: (fd as any).userAgent ?? '',
-                auth_type: 'api_key',
-            };
-            return [
-                {
-                    ...baseRecord,
-                    name: fd.name,
-                    api_base: openaiUrl,
-                    api_style: 'openai' as const,
-                },
-                {
-                    ...baseRecord,
-                    name: fd.name,
-                    api_base: anthropicUrl,
-                    api_style: 'anthropic' as const,
-                },
-            ];
-        }
-
-        const protocol = protocols[0];
-        const apiBase = providerBaseUrls?.[protocol] || fd.apiBase;
         return {
             name: fd.name,
-            api_base: apiBase,
-            api_style: protocol,
+            api_base: fd.apiBase,
+            api_style: fd.apiStyle,
+            api_base_openai: fd.apiBaseOpenAI || '',
+            api_base_anthropic: fd.apiBaseAnthropic || '',
             token: fd.token,
-            no_key_required: (fd as any).noKeyRequired || false,
+            no_key_required: fd.noKeyRequired || false,
             enabled: true,
-            proxy_url: (fd as any).proxyUrl ?? '',
-            user_agent: (fd as any).userAgent ?? '',
+            proxy_url: fd.proxyUrl ?? '',
+            user_agent: fd.userAgent ?? '',
             auth_type: 'api_key',
         };
     };
@@ -371,39 +194,17 @@ const CredentialPage = () => {
             api_base: fd.apiBase,
             api_style: fd.apiStyle,
             token: fd.token || undefined,
-            no_key_required: (fd as any).noKeyRequired || false,
+            no_key_required: fd.noKeyRequired || false,
             enabled: fd.enabled,
-            proxy_url: (fd as any).proxyUrl ?? '',
-            user_agent: (fd as any).userAgent ?? '',
-            api_base_openai: (fd as any).apiBaseOpenAI ?? '',
-            api_base_anthropic: (fd as any).apiBaseAnthropic ?? '',
+            proxy_url: fd.proxyUrl ?? '',
+            user_agent: fd.userAgent ?? '',
+            api_base_openai: fd.apiBaseOpenAI ?? '',
+            api_base_anthropic: fd.apiBaseAnthropic ?? '',
         };
     };
 
-    // Submit a single payload OR an array of payloads (legacy split). Returns
-    // a combined success flag and a (joined) error message for the
-    // notification layer.
-    const submitProviderPayloads = async (
-        payload: any | any[],
-        opts?: { force?: boolean }
-    ) => {
-        const list = Array.isArray(payload) ? payload : [payload];
-        const errors: string[] = [];
-        for (const p of list) {
-            const result = opts?.force
-                ? await api.addProvider(p, true)
-                : await api.addProvider(p);
-            if (!result.success) {
-                errors.push(result.error || 'unknown error');
-            }
-        }
-        return { success: errors.length === 0, error: errors.join('; ') };
-    };
-
-    // API Key handlers
     const handleProviderSubmit = async (e: React.FormEvent, resolved?: Partial<ProviderFormData>) => {
         e.preventDefault();
-
         if (apiKeyDialogMode === 'edit') {
             const providerData = buildEditProviderPayload(resolved);
             const result = await api.updateProvider(providerFormData.uuid!, providerData);
@@ -415,7 +216,7 @@ const CredentialPage = () => {
                 showNotification(`Failed to update provider: ${result.error}`, 'error');
             }
         } else {
-            const result = await submitProviderPayloads(buildAddProviderPayload(resolved));
+            const result = await api.addProvider(buildAddProviderPayload(resolved));
             if (result.success) {
                 showNotification('Provider added successfully!', 'success');
                 setApiKeyDialogOpen(false);
@@ -438,7 +239,7 @@ const CredentialPage = () => {
                 showNotification(`Failed to update provider: ${result.error}`, 'error');
             }
         } else {
-            const result = await submitProviderPayloads(buildAddProviderPayload(), { force: true });
+            const result = await api.addProvider(buildAddProviderPayload(), true);
             if (result.success) {
                 showNotification('Provider added successfully!', 'success');
                 setApiKeyDialogOpen(false);
@@ -451,42 +252,25 @@ const CredentialPage = () => {
 
     const handleDeleteProvider = async (uuid: string) => {
         const result = await api.deleteProvider(uuid);
-
-        if (result.success) {
-            showNotification('Provider deleted successfully!', 'success');
-            loadProviders();
-        } else {
-            showNotification(`Failed to delete provider: ${result.error}`, 'error');
-        }
+        if (result.success) { showNotification('Provider deleted successfully!', 'success'); loadProviders(); }
+        else { showNotification(`Failed to delete provider: ${result.error}`, 'error'); }
     };
 
     const handleToggleProvider = async (uuid: string) => {
         const result = await api.toggleProvider(uuid);
-
-        if (result.success) {
-            showNotification(result.message, 'success');
-            loadProviders();
-        } else {
-            showNotification(`Failed to toggle provider: ${result.error}`, 'error');
-        }
+        if (result.success) { showNotification(result.message, 'success'); loadProviders(); }
+        else { showNotification(`Failed to toggle provider: ${result.error}`, 'error'); }
     };
 
     const handleEditProvider = async (uuid: string) => {
         const result = await api.getProvider(uuid);
-
         if (result.success) {
             const provider = result.data;
             if (provider.auth_type === 'oauth') {
-                // Handle OAuth edit
                 setOAuthDetailProvider(result.data);
                 setOAuthDetailDialogOpen(true);
             } else {
-                // Handle API Key edit. A provider with both dual URLs opens the
-                // dedicated Dual form; everything else opens the standard form
-                // (which offers an upgrade-to-dual action for single endpoints).
-                const isDual = !!provider.api_base_openai && !!provider.api_base_anthropic;
-                setIsDualMode(isDual);
-                setIsCustomMode(false);
+                setIsLocalProvider(false);
                 setApiKeyDialogMode('edit');
                 setProviderFormData({
                     uuid: provider.uuid,
@@ -495,7 +279,7 @@ const CredentialPage = () => {
                     apiStyle: provider.api_style || 'openai',
                     apiBaseOpenAI: provider.api_base_openai || '',
                     apiBaseAnthropic: provider.api_base_anthropic || '',
-                    token: provider.token || "",
+                    token: provider.token || '',
                     enabled: provider.enabled,
                     noKeyRequired: provider.no_key_required || false,
                     proxyUrl: provider.proxy_url || '',
@@ -519,57 +303,31 @@ const CredentialPage = () => {
         loadProviders();
     };
 
-    // Re-authenticate an existing OAuth provider in place. Runs the normal OAuth
-    // flow for the provider's issuer, but the backend overwrites credentials on
-    // the same UUID — recovering a dead credential without orphaning the rules,
-    // smart routing, and model keys that reference it (which delete+recreate would).
     const handleReauthorize = (providerUuid: string) => {
         const provider = oauthProviders.find((p: any) => p.uuid === providerUuid);
         const issuer = provider?.oauth_detail?.provider_type || provider?.oauth_detail?.issuer;
-        if (!issuer) {
-            showNotification('Cannot reauthorize: provider issuer is unknown', 'error');
-            return;
-        }
+        if (!issuer) { showNotification('Cannot reauthorize: provider issuer is unknown', 'error'); return; }
         setOAuthReauthUuid(providerUuid);
         setOAuthAutoStartId(issuer);
         setOAuthDialogOpen(true);
     };
 
-    // Surface a refresh failure as a guided prompt: refreshing a token can't
-    // recover a credential whose refresh token was revoked or fully expired, so
-    // we steer the user to reauthorize (sign in again, in place) rather than
-    // leaving them with a dead toast and a delete+recreate as the only escape.
     const promptReauthAfterRefreshFailure = (providerUuid: string, reason: string) => {
         const provider = oauthProviders.find((p: any) => p.uuid === providerUuid);
-        setRefreshFailPrompt({
-            open: true,
-            providerUuid,
-            providerName: provider?.name || 'this provider',
-            reason: reason || 'Unknown error',
-        });
+        setRefreshFailPrompt({ open: true, providerUuid, providerName: provider?.name || 'this provider', reason: reason || 'Unknown error' });
     };
 
     const handleRefreshToken = async (providerUuid: string) => {
         try {
             const response = await api.oauthRefresh({ provider_uuid: providerUuid });
-
-            if (response?.success) {
-                showNotification('Token refreshed successfully!', 'success');
-                await loadProviders();
-            } else {
-                const reason = response?.data?.error || response?.error || response?.message || 'Unknown error';
-                promptReauthAfterRefreshFailure(providerUuid, reason);
-            }
+            if (response?.success) { showNotification('Token refreshed successfully!', 'success'); await loadProviders(); }
+            else { promptReauthAfterRefreshFailure(providerUuid, response?.data?.error || response?.error || response?.message || 'Unknown error'); }
         } catch (error: any) {
-            const reason = error?.response?.data?.error || error?.message || 'Unknown error';
-            promptReauthAfterRefreshFailure(providerUuid, reason);
+            promptReauthAfterRefreshFailure(providerUuid, error?.response?.data?.error || error?.message || 'Unknown error');
         }
     };
 
-    // Import handlers
-    const handleImportClick = () => {
-        setShowImportModal(true);
-    };
+    const handleImportClick = () => { setShowImportModal(true); };
 
     const handleImportData = async (data: string) => {
         setImporting(true);
@@ -579,47 +337,25 @@ const CredentialPage = () => {
                 const providersCreated = result.data?.providers_created || 0;
                 const providersUsed = result.data?.providers_used || 0;
                 let message = 'Provider import completed';
-                if (providersCreated > 0) {
-                    message += `. ${providersCreated} new provider${providersCreated > 1 ? 's' : ''} created`;
-                }
-                if (providersUsed > 0) {
-                    message += `. ${providersUsed} existing provider${providersUsed > 1 ? 's' : ''} referenced`;
-                }
-                if (providersCreated === 0 && providersUsed === 0) {
-                    message = 'No providers found in import data';
-                }
+                if (providersCreated > 0) message += `. ${providersCreated} new provider${providersCreated > 1 ? 's' : ''} created`;
+                if (providersUsed > 0) message += `. ${providersUsed} existing provider${providersUsed > 1 ? 's' : ''} referenced`;
+                if (providersCreated === 0 && providersUsed === 0) message = 'No providers found in import data';
                 showNotification(message, 'success');
                 setShowImportModal(false);
                 await loadProviders();
-            } else {
-                showNotification(`Import failed: ${result.error || 'Unknown error'}`, 'error');
-            }
-        } catch (err: any) {
-            showNotification(`Import failed: ${err?.message || 'Unknown error'}`, 'error');
-        } finally {
-            setImporting(false);
-        }
+            } else { showNotification(`Import failed: ${result.error || 'Unknown error'}`, 'error'); }
+        } catch (err: any) { showNotification(`Import failed: ${err?.message || 'Unknown error'}`, 'error'); }
+        finally { setImporting(false); }
     };
 
     const handleProviderFormChange = useCallback((field: keyof ProviderFormData, value: any) => {
         setProviderFormData(prev => ({ ...prev, [field]: value }));
     }, []);
 
-    // Derived state. Providers are partitioned by auth_type into two
-    // user-credential groups; vmodel providers are excluded here and rendered
-    // on the dedicated /credentials/virtual-models page.
     const { apiKeyProviders, oauthProviders, credentialCounts } = useMemo(() => {
         const apiKeys = providers.filter((p: any) => p.auth_type !== 'oauth' && p.auth_type !== 'vmodel');
         const oauth = providers.filter((p: any) => p.auth_type === 'oauth');
-        return {
-            apiKeyProviders: apiKeys,
-            oauthProviders: oauth,
-            credentialCounts: {
-                apiKeys: apiKeys.length,
-                oauth: oauth.length,
-                total: apiKeys.length + oauth.length,
-            },
-        };
+        return { apiKeyProviders: apiKeys, oauthProviders: oauth, credentialCounts: { apiKeys: apiKeys.length, oauth: oauth.length, total: apiKeys.length + oauth.length } };
     }, [providers]);
 
     return (
@@ -629,41 +365,10 @@ const CredentialPage = () => {
                     title="Credentials"
                     subtitle={`Managing ${credentialCounts.total} credential${credentialCounts.total !== 1 ? 's' : ''}`}
                     actions={
-                        <Stack
-                            direction="row"
-                            spacing={1}
-                            useFlexGap
-                            flexWrap="wrap"
-                            sx={{ justifyContent: { xs: 'flex-start', sm: 'flex-end' } }}
-                        >
-                            <Button
-                                component={Link}
-                                to="/onboarding"
-                                variant="outlined"
-                                startIcon={<ListAlt />}
-                                size="small"
-                                sx={{ minWidth: 130 }}
-                            >
-                                Providers
-                            </Button>
-                            <Button
-                                variant="outlined"
-                                startIcon={<Upload />}
-                                onClick={handleImportClick}
-                                size="small"
-                                sx={{ minWidth: 110 }}
-                            >
-                                Import
-                            </Button>
-                            <Button
-                                variant="contained"
-                                startIcon={<Add />}
-                                onClick={() => setConnectOpen(true)}
-                                size="small"
-                                sx={{ minWidth: 150 }}
-                            >
-                                Connect AI
-                            </Button>
+                        <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ justifyContent: { xs: 'flex-start', sm: 'flex-end' } }}>
+                            <Button component={Link} to="/onboarding" variant="outlined" startIcon={<ListAlt />} size="small" sx={{ minWidth: 130 }}>Providers</Button>
+                            <Button variant="outlined" startIcon={<Upload />} onClick={handleImportClick} size="small" sx={{ minWidth: 110 }}>Import</Button>
+                            <Button variant="contained" startIcon={<Add />} onClick={() => setConnectOpen(true)} size="small" sx={{ minWidth: 150 }}>Connect AI</Button>
                         </Stack>
                     }
                 />
@@ -671,85 +376,34 @@ const CredentialPage = () => {
                 {/* OAuth Section */}
                 <Surface padding={{ xs: 2, sm: 2.5 }}>
                     <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-                        <Typography variant="subtitle1" fontWeight={500}>
-                            OAuth
-                        </Typography>
-                        <Chip
-                            label={credentialCounts.oauth}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                            sx={{ height: 20, minWidth: 20, fontSize: '0.7rem' }}
-                        />
+                        <Typography variant="subtitle1" fontWeight={500}>OAuth</Typography>
+                        <Chip label={credentialCounts.oauth} size="small" color="primary" variant="outlined" sx={{ height: 20, minWidth: 20, fontSize: '0.7rem' }}/>
                     </Stack>
                     {credentialCounts.oauth > 0 ? (
-                        <OAuthTable
-                            providers={oauthProviders}
-                            onEdit={handleEditProvider}
-                            onToggle={handleToggleProvider}
-                            onDelete={handleDeleteProvider}
-                            onRefreshToken={handleRefreshToken}
-                            onReauthorize={handleReauthorize}
-                            onNotification={showNotification}
-                            providerQuotas={quotaData}
-                            refreshingQuotas={refreshing}
-                            onQuotaRefresh={refreshQuota}
-                        />
+                        <OAuthTable providers={oauthProviders} onEdit={handleEditProvider} onToggle={handleToggleProvider} onDelete={handleDeleteProvider} onRefreshToken={handleRefreshToken} onReauthorize={handleReauthorize} onNotification={showNotification} providerQuotas={quotaData} refreshingQuotas={refreshing} onQuotaRefresh={refreshQuota}/>
                     ) : (
-                        <EmptyStateGuide
-                            title="No OAuth Providers Configured"
-                            description="Configure OAuth providers like Claude Code, Gemini CLI, Qwen, etc."
-                            showOAuthButton={false}
-                            showHeroIcon={false}
-                            primaryButtonLabel="Add OAuth Provider"
-                            onAddApiKeyClick={handleAddOAuth}
-                        />
+                        <EmptyStateGuide title="No OAuth Providers Configured" description="Configure OAuth providers like Claude Code, Gemini CLI, Qwen, etc." showOAuthButton={false} showHeroIcon={false} primaryButtonLabel="Add OAuth Provider" onAddApiKeyClick={handleAddOAuth}/>
                     )}
                 </Surface>
 
                 {/* API Keys Section */}
                 <Surface padding={{ xs: 2, sm: 2.5 }}>
                     <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.5 }}>
-                        <Typography variant="subtitle1" fontWeight={500}>
-                            API Keys
-                        </Typography>
-                        <Chip
-                            label={credentialCounts.apiKeys}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                            sx={{ height: 20, minWidth: 20, fontSize: '0.7rem' }}
-                        />
+                        <Typography variant="subtitle1" fontWeight={500}>API Keys</Typography>
+                        <Chip label={credentialCounts.apiKeys} size="small" color="primary" variant="outlined" sx={{ height: 20, minWidth: 20, fontSize: '0.7rem' }}/>
                     </Stack>
                     {credentialCounts.apiKeys > 0 ? (
-                        <ApiKeyTable
-                            providers={apiKeyProviders}
-                            onEdit={handleEditProvider}
-                            onToggle={handleToggleProvider}
-                            onDelete={handleDeleteProvider}
-                            onNotification={showNotification}
-                            providerQuotas={quotaData}
-                            refreshingQuotas={refreshing}
-                            onQuotaRefresh={refreshQuota}
-                        />
+                        <ApiKeyTable providers={apiKeyProviders} onEdit={handleEditProvider} onToggle={handleToggleProvider} onDelete={handleDeleteProvider} onNotification={showNotification} providerQuotas={quotaData} refreshingQuotas={refreshing} onQuotaRefresh={refreshQuota}/>
                     ) : (
-                        <EmptyStateGuide
-                            title="No API Keys Configured"
-                            description="Configure API keys to access AI services like OpenAI, Anthropic, etc."
-                            showOAuthButton={false}
-                            showHeroIcon={false}
-                            primaryButtonLabel="Connect AI"
-                            onAddApiKeyClick={handleAddApiKey}
-                        />
+                        <EmptyStateGuide title="No API Keys Configured" description="Configure API keys to access AI services like OpenAI, Anthropic, etc." showOAuthButton={false} showHeroIcon={false} primaryButtonLabel="Connect AI" onAddApiKeyClick={handleAddApiKey}/>
                     )}
                 </Surface>
-
             </Stack>
 
-            {/* API Key Provider Dialog */}
+            {/* API Key Provider Dialog — unified, no mode flags */}
             <ProviderFormDialog
                 open={apiKeyDialogOpen}
-                onClose={() => { setApiKeyDialogOpen(false); setIsLocalProvider(false); setFromConnectPicker(false); setIsCustomMode(false); setIsDualMode(false); }}
+                onClose={() => { setApiKeyDialogOpen(false); setIsLocalProvider(false); setFromConnectPicker(false); }}
                 onBack={fromConnectPicker ? () => setConnectOpen(true) : undefined}
                 onSubmit={handleProviderSubmit}
                 onForceAdd={handleProviderForceAdd}
@@ -757,101 +411,42 @@ const CredentialPage = () => {
                 onChange={handleProviderFormChange}
                 mode={apiKeyDialogMode}
                 optionalEditableToken={isLocalProvider}
-                customMode={isCustomMode}
-                dualMode={isDualMode}
-                onConvertToDual={handleConvertToDual}
-                onConvertToSingle={handleConvertToSingle}
             />
 
             {/* Unified provider picker */}
-            <ConnectProviderDialog
-                open={connectOpen}
-                onClose={() => setConnectOpen(false)}
-                onSelect={handleConnectSelect}
-            />
+            <ConnectProviderDialog open={connectOpen} onClose={() => setConnectOpen(false)} onSelect={handleConnectSelect}/>
 
             {/* OAuth Add Dialog */}
-            <OAuthDialog
-                open={oauthDialogOpen}
-                autoStartProviderId={oauthAutoStartId}
-                reauthProviderUuid={oauthReauthUuid}
-                onClose={() => {
-                    setOAuthDialogOpen(false);
-                    setOAuthAutoStartId(null);
-                    setOAuthReauthUuid(null);
-                }}
-                onSuccess={handleOAuthSuccess}
-            />
+            <OAuthDialog open={oauthDialogOpen} autoStartProviderId={oauthAutoStartId} reauthProviderUuid={oauthReauthUuid} onClose={() => { setOAuthDialogOpen(false); setOAuthAutoStartId(null); setOAuthReauthUuid(null); }} onSuccess={handleOAuthSuccess}/>
 
             {/* Refresh-failed → reauthorize guidance */}
-            <Dialog
-                open={refreshFailPrompt.open}
-                onClose={() => setRefreshFailPrompt((s) => ({ ...s, open: false }))}
-                maxWidth="xs"
-                fullWidth
-            >
+            <Dialog open={refreshFailPrompt.open} onClose={() => setRefreshFailPrompt((s) => ({ ...s, open: false }))} maxWidth="xs" fullWidth>
                 <DialogTitle>Token refresh failed</DialogTitle>
                 <DialogContent>
                     <Stack spacing={2} sx={{ pt: 0.5 }}>
                         <Alert severity="warning">{refreshFailPrompt.reason}</Alert>
                         <Typography variant="body2" color="text.secondary">
-                            Refreshing the token for <strong>{refreshFailPrompt.providerName}</strong> didn't
-                            work. If the credential was revoked or has fully expired, a refresh can't recover
-                            it — reauthorize to sign in again. This overwrites the credential in place, keeping
-                            the same provider so your routing rules and model keys stay intact.
+                            Refreshing the token for <strong>{refreshFailPrompt.providerName}</strong> didn't work. If the credential was revoked or has fully expired, a refresh can't recover it — reauthorize to sign in again. This overwrites the credential in place, keeping the same provider so your routing rules and model keys stay intact.
                         </Typography>
                     </Stack>
                 </DialogContent>
                 <DialogActions>
-                    <Button
-                        color="inherit"
-                        onClick={() => setRefreshFailPrompt((s) => ({ ...s, open: false }))}
-                    >
-                        Dismiss
-                    </Button>
-                    <Button
-                        variant="contained"
-                        startIcon={<VpnKey />}
-                        onClick={() => {
-                            const uuid = refreshFailPrompt.providerUuid;
-                            setRefreshFailPrompt((s) => ({ ...s, open: false }));
-                            handleReauthorize(uuid);
-                        }}
-                    >
-                        Reauthorize
-                    </Button>
+                    <Button color="inherit" onClick={() => setRefreshFailPrompt((s) => ({ ...s, open: false }))}>Dismiss</Button>
+                    <Button variant="contained" startIcon={<VpnKey />} onClick={() => { const uuid = refreshFailPrompt.providerUuid; setRefreshFailPrompt((s) => ({ ...s, open: false })); handleReauthorize(uuid); }}>Reauthorize</Button>
                 </DialogActions>
             </Dialog>
 
             {/* OAuth Detail/Edit Dialog */}
-            <OAuthDetailDialog
-                open={oauthDetailDialogOpen}
-                provider={oauthDetailProvider}
-                onClose={() => setOAuthDetailDialogOpen(false)}
-                onSubmit={async (data: OAuthEditFormData) => {
-                    if (!oauthDetailProvider?.uuid) return;
-                    const result = await api.updateProvider(oauthDetailProvider.uuid, {
-                        name: data.name,
-                        api_base: data.apiBase,
-                        api_style: data.apiStyle,
-                        enabled: data.enabled,
-                        proxy_url: data.proxyUrl ?? '',
-                    });
-                    if (!result.success) {
-                        throw new Error(result.error || 'Failed to update provider');
-                    }
-                    showNotification('Provider updated successfully!', 'success');
-                    loadProviders();
-                }}
-            />
+            <OAuthDetailDialog open={oauthDetailDialogOpen} provider={oauthDetailProvider} onClose={() => setOAuthDetailDialogOpen(false)} onSubmit={async (data: OAuthEditFormData) => {
+                if (!oauthDetailProvider?.uuid) return;
+                const result = await api.updateProvider(oauthDetailProvider.uuid, { name: data.name, api_base: data.apiBase, api_style: data.apiStyle, enabled: data.enabled, proxy_url: data.proxyUrl ?? '' });
+                if (!result.success) throw new Error(result.error || 'Failed to update provider');
+                showNotification('Provider updated successfully!', 'success');
+                loadProviders();
+            }}/>
 
             {/* Import Modal */}
-            <ImportModal
-                open={showImportModal}
-                onClose={() => setShowImportModal(false)}
-                onImport={handleImportData}
-                loading={importing}
-            />
+            <ImportModal open={showImportModal} onClose={() => setShowImportModal(false)} onImport={handleImportData} loading={importing}/>
         </PageLayout>
     );
 };

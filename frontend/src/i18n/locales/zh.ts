@@ -241,53 +241,17 @@ export default {
     "addDescription": "选择提供商并输入您的 API 密钥以连接 AI 服务。支持多种协议的提供商可以启用多个协议。",
     "editTitle": "修改连接",
     "addButton": "连接",
-    "apiStyle": {
-      "label": "API 风格",
-      "placeholder": "选择 API 风格...",
-      "helperOpenAI": "支持来自 OpenAI、Google 和许多其他 OpenAI 兼容提供商的模型",
-      "helperAnthropic": "用于 Anthropic 兼容的 AI 提供商，通常与 Claude Code 一起使用。",
-      "openAI": "OpenAI 兼容",
-      "anthropic": "Anthropic 兼容",
-      "recommendedBadge": "推荐",
-      "customOpenAIHint": "大多数端点使用 OpenAI API —— 除非确定，否则从这里开始。",
-      "customAnthropicHint": "仅当您的端点明确支持 Anthropic（Claude）API 时选择。",
-      "switchWarning": "API 风格已更改。基础 URL 已重置。请选择兼容的提供商。"
-    },
-    "provider": {
-      "label": "Base URL",
-      "placeholder": "选择已知服务或粘贴 Base URL"
-    },
-    "region": {
-      "cn": "中国",
-      "global": "全球"
-    },
     "protocol": {
-      "label": "协议"
+      "label": "协议",
+      "openAILabel": "OpenAI 兼容",
+      "anthropicLabel": "Anthropic 兼容",
+      "helperOpenAI": "支持来自 OpenAI、Google 和许多其他 OpenAI 兼容提供商的模型",
+      "helperAnthropic": "用于 Anthropic 兼容的 AI 提供商，通常与 Claude Code 一起使用",
+      "fromTemplate": "来自模板",
+      "recommendedBadge": "推荐"
     },
-    "dual": {
-      "modeLabel": "Dual 模式",
-      "tooltipTitle": "勾选两种协议时的保存方式",
-      "normalModeDesc": "普通模式（未勾选）：创建两条独立 Base URL（OpenAI 与 Anthropic 各一条）。",
-      "dualModeDesc": "Dual 模式（已勾选）：合并为一个Provider，按需切换服务 OpenAI 与 Anthropic。",
-      "outcomeSplit": "将创建 2 条独立 Base URL（共用同一密钥）。",
-      "outcomeMerged": "将保留 1 条 Base URL，同时服务 OpenAI 与 Anthropic。"
-    },
-    "customDual": {
-      "openAILabel": "OpenAI Base URL",
-      "anthropicLabel": "Anthropic Base URL"
-    },
-    "dualForm": {
-      "title": "添加 Dual 端点",
-      "editTitle": "编辑 Dual 端点",
-      "anthropicPlaceholder": "https://api.example.com/anthropic",
-      "help": "两种协议共用下方的 API Key，入站请求会被路由到对应的端点。",
-      "convertToSingle": "转为单端点",
-      "verifyBothOk": "两个端点均验证通过",
-      "verifyBothFailed": "两个端点均验证失败",
-      "verifyOneFailed": "{{side}} 端点验证失败"
-    },
-    "providerSingle": {
-      "convertToDual": "添加 Anthropic 端点（升级为 Dual）"
+    "candidates": {
+      "title": "匹配的提供商 — 点击填充 URL"
     },
     "keyName": {
       "label": "名称",

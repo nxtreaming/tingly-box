@@ -240,53 +240,17 @@ export default {
     "addDescription": "Select a provider and enter your API key to connect AI services. Multiple protocols can be enabled for providers that support them.",
     "editTitle": "Edit Connection",
     "addButton": "Connect",
-    "apiStyle": {
-      "label": "API Style",
-      "placeholder": "Select API style...",
-      "helperOpenAI": "Supports models from OpenAI, Google and many other OpenAI-compatible providers",
-      "helperAnthropic": "For Anthropic-compatible AI providers, commonly used with Claude Code.",
-      "openAI": "OpenAI Compatible",
-      "anthropic": "Anthropic Compatible",
-      "recommendedBadge": "Recommended",
-      "customOpenAIHint": "Most endpoints speak the OpenAI API — start here unless you know otherwise.",
-      "customAnthropicHint": "Only if your endpoint explicitly supports the Anthropic (Claude) API.",
-      "switchWarning": "API style changed. Base URL has been reset. Please select a compatible provider."
-    },
-    "provider": {
-      "label": "Base URL",
-      "placeholder": "Pick a known service or paste a base URL"
-    },
-    "region": {
-      "cn": "China",
-      "global": "Global"
-    },
     "protocol": {
-      "label": "Protocol"
+      "label": "Protocols",
+      "openAILabel": "OpenAI Compatible",
+      "anthropicLabel": "Anthropic Compatible",
+      "helperOpenAI": "Supports models from OpenAI, Google and many other OpenAI-compatible providers",
+      "helperAnthropic": "For Anthropic-compatible AI providers, commonly used with Claude Code",
+      "fromTemplate": "from template",
+      "recommendedBadge": "Recommended"
     },
-    "dual": {
-      "modeLabel": "Dual mode",
-      "tooltipTitle": "How both protocols are saved",
-      "normalModeDesc": "Normal mode (unchecked): creates two separate base URLs, one for OpenAI and one for Anthropic.",
-      "dualModeDesc": "Dual mode (checked): merges into one provider, switching between OpenAI and Anthropic on demand.",
-      "outcomeSplit": "Will create 2 separate base URLs (sharing this key).",
-      "outcomeMerged": "Will keep 1 base URL serving both OpenAI and Anthropic."
-    },
-    "customDual": {
-      "openAILabel": "OpenAI Base URL",
-      "anthropicLabel": "Anthropic Base URL"
-    },
-    "dualForm": {
-      "title": "Add Dual endpoint",
-      "editTitle": "Edit Dual endpoint",
-      "anthropicPlaceholder": "https://api.example.com/anthropic",
-      "help": "Both protocols share the API key below. Inbound requests are routed to the matching endpoint.",
-      "convertToSingle": "Convert to a single endpoint",
-      "verifyBothOk": "Both endpoints verified",
-      "verifyBothFailed": "Both endpoints failed",
-      "verifyOneFailed": "{{side}} endpoint failed"
-    },
-    "providerSingle": {
-      "convertToDual": "Add an Anthropic endpoint (make it a Dual provider)"
+    "candidates": {
+      "title": "Matching providers — click to fill URLs"
     },
     "keyName": {
       "label": "Name",
