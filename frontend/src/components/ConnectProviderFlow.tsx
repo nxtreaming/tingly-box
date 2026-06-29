@@ -53,6 +53,7 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
                 name: lp.name, apiBase: lp.baseUrlOpenAI || lp.baseUrlAnthropic || '', apiStyle: 'openai', token: '',
                 enabled: true, noKeyRequired: true,
                 providerBaseUrls: { openai: lp.baseUrlOpenAI, anthropic: lp.baseUrlAnthropic },
+                selectedProviderId: lp.id,
             } as any);
             setApiKeyDialogOpen(true);
             return;
@@ -66,6 +67,7 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
             apiStyle: undefined, token: '', enabled: true, noKeyRequired: false,
             proxyUrl: '', userAgent: '',
             providerBaseUrls: { openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic },
+            selectedProviderId: p.id,
         } as any);
         setApiKeyDialogOpen(true);
     }, [onClose]);

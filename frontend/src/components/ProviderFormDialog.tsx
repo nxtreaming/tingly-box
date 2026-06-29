@@ -51,6 +51,9 @@ export interface EnhancedProviderFormData {
     apiBaseOpenAI?: string;
     apiBaseAnthropic?: string;
     createDualProvider?: boolean;
+    /** If set, prefer this exact provider ID when resolving the template.
+     *  Avoids mismatches when multiple providers share the same base URL. */
+    selectedProviderId?: string;
 }
 
 interface PresetProviderFormDialogProps {
@@ -170,8 +173,9 @@ const ProviderFormDialog = ({
         initialSlotsRef.current = {openAI: {...initOpenAI}, anthropic: {...initAnthropic}};
 
         if (mode === 'edit') {
-            // Edit mode: find matching provider from stored URLs
+            // Edit mode: prefer exact match by ID, fall back to URL match.
             const matchingProvider =
+                (data.selectedProviderId && allProviders.find(p => p.id === data.selectedProviderId)) ||
                 allProviders.find(
                     p => (hasDualOpenAI && p.baseUrlOpenAI === data.apiBaseOpenAI) ||
                          (hasDualAnthropic && p.baseUrlAnthropic === data.apiBaseAnthropic) ||
@@ -180,8 +184,9 @@ const ProviderFormDialog = ({
             setSelectedProvider(matchingProvider);
             setProviderInputValue(matchingProvider ? matchingProvider.alias || matchingProvider.name : data.apiBase || '');
         } else {
-            // Add mode: resolve from data
+            // Add mode: prefer exact match by ID, fall back to URL match.
             const matchingProvider =
+                (data.selectedProviderId && allProviders.find(p => p.id === data.selectedProviderId)) ||
                 allProviders.find(
                     p => (data.providerBaseUrls?.openai && p.baseUrlOpenAI === data.providerBaseUrls.openai) ||
                          (data.providerBaseUrls?.anthropic && p.baseUrlAnthropic === data.providerBaseUrls.anthropic) ||

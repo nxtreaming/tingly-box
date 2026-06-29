@@ -143,6 +143,7 @@ const CredentialPage = () => {
                 apiStyle: 'openai' as any,
                 token: lp.defaultApiKey ?? '', enabled: true, noKeyRequired: !lp.defaultApiKey,
                 providerBaseUrls: { openai: lp.baseUrlOpenAI, anthropic: lp.baseUrlAnthropic },
+                selectedProviderId: lp.id,
             } as any);
             setApiKeyDialogOpen(true);
             return;
@@ -157,6 +158,7 @@ const CredentialPage = () => {
             apiStyle: undefined, token: '', enabled: true, noKeyRequired: false,
             proxyUrl: '', userAgent: '',
             providerBaseUrls: { openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic },
+            selectedProviderId: p.id,
         } as any);
         setApiKeyDialogOpen(true);
     };
