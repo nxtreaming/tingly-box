@@ -309,7 +309,7 @@ const ProviderFormDialog = ({
         cb('apiStyle', openAI.enabled ? 'openai' : anthropic.enabled ? 'anthropic' : undefined);
         cb('apiBaseOpenAI', openAI.enabled ? openAI.url : '');
         cb('apiBaseAnthropic', anthropic.enabled ? anthropic.url : '');
-        cb('apiBase', openAI.url || anthropic.url);
+        cb('apiBase', openAI.enabled ? openAI.url : anthropic.enabled ? anthropic.url : '');
     }, []);
 
     // Delegate to parent onChange + sync protocol fields
@@ -342,12 +342,10 @@ const ProviderFormDialog = ({
     const toggleSlot = (kind: ProtocolKind) => {
         if (kind === 'anthropic') {
             const next = {...slotAnthropic, enabled: !slotAnthropic.enabled};
-            if (!next.enabled) next.url = '';
             setSlotAnthropic(next);
             commitProtocolState(slotOpenAI, next);
         } else {
             const next = {...slotOpenAI, enabled: !slotOpenAI.enabled};
-            if (!next.enabled) next.url = '';
             setSlotOpenAI(next);
             commitProtocolState(next, slotAnthropic);
         }
@@ -552,6 +550,8 @@ const ProviderFormDialog = ({
                                         label={selectedProvider.alias || selectedProvider.name}
                                         size="small"
                                         variant="outlined"
+                                        onClick={() => handleSelectProvider(selectedProvider)}
+                                        sx={{cursor: 'pointer'}}
                                     />
                                 )}
                                 {urlCandidates
