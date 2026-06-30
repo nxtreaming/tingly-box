@@ -60,6 +60,13 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
         }
         // Known provider from the picker — template fills protocol slots
         const p = selection.provider;
+        console.log('[ConnectProviderFlow] screen1 → screen2 known provider:', {
+            id: p.id,
+            name: p.name,
+            alias: p.alias,
+            baseUrlOpenAI: p.baseUrlOpenAI,
+            baseUrlAnthropic: p.baseUrlAnthropic,
+        });
         setOptionalEditableToken(false);
         setProviderFormData({
             uuid: undefined, name: p.alias || p.name,

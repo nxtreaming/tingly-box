@@ -105,11 +105,6 @@ export const useProviderDialog = (
 
         if (selection.kind === 'local') {
             const lp = selection.provider as any;
-            // Self-hosted endpoints behave like Custom: the localhost:port base URL
-            // is only a pre-fill, not a fixed value — users run on their own host
-            // and port, so the field must stay editable. (customMode = true renders
-            // the editable URL input; the form seeds it from apiBase below.)
-            setCustomMode(true);
             setProviderFormData({
                 name: lp.alias || lp.name,
                 apiBase: lp.url || lp.baseUrlOpenAI || lp.baseUrlAnthropic || '',
@@ -117,6 +112,7 @@ export const useProviderDialog = (
                 token: lp.defaultApiKey ?? '',
                 enabled: true,
                 noKeyRequired: !lp.defaultApiKey,
+                selectedProviderId: lp.id,
             });
             setProviderDialogOpen(true);
             return;
@@ -135,9 +131,7 @@ export const useProviderDialog = (
             userAgent: '',
             createDualProvider: false,
             providerBaseUrls: { openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic },
-            protocols: p.supportsOpenAI && p.supportsAnthropic
-                ? ['openai', 'anthropic']
-                : p.supportsOpenAI ? ['openai'] : ['anthropic'],
+            selectedProviderId: p.id,
         });
         setProviderDialogOpen(true);
     }, [defaultApiStyle]);

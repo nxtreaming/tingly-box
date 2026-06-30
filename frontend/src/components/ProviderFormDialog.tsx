@@ -173,6 +173,16 @@ const ProviderFormDialog = ({
     // ── Init/reset on open ────────────────────────────────────────
     useEffect(() => {
         if (!open) return;
+
+        console.log('[ProviderFormDialog] open mode=%s, data:', mode, {
+            selectedProviderId: data.selectedProviderId,
+            apiBase: data.apiBase,
+            apiBaseOpenAI: data.apiBaseOpenAI,
+            apiBaseAnthropic: data.apiBaseAnthropic,
+            apiStyle: data.apiStyle,
+            providerBaseUrls: data.providerBaseUrls,
+        });
+
         setVerificationResult(null);
         setBaseUrlError(false);
         setAdvancedOpen(mode === 'edit');
@@ -194,37 +204,76 @@ const ProviderFormDialog = ({
         setSlotAnthropic(initAnthropic);
 
         if (mode === 'edit') {
-            // Find ALL presets matching the configured URL(s). Only auto-select
-            // when exactly one matches — multiple matches require the user to
-            // choose, preventing misconfiguration.
-            const urlMatches = allProviders.filter(
-                p => (hasDualOpenAI && p.baseUrlOpenAI === data.apiBaseOpenAI) ||
-                     (hasDualAnthropic && p.baseUrlAnthropic === data.apiBaseAnthropic) ||
-                     (!hasDualOpenAI && !hasDualAnthropic && (p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase))
-            );
+            // Find ALL presets matching the configured URL(s). When multiple
+            // URLs exist, require every URL to match — partial matches don't count.
+            const urlMatches = allProviders.filter(p => {
+                if (hasDualOpenAI && hasDualAnthropic) {
+                    // Both protocols configured — both URLs must match
+                    return p.baseUrlOpenAI === data.apiBaseOpenAI &&
+                           p.baseUrlAnthropic === data.apiBaseAnthropic;
+                }
+                if (hasDualOpenAI) {
+                    return p.baseUrlOpenAI === data.apiBaseOpenAI;
+                }
+                if (hasDualAnthropic) {
+                    return p.baseUrlAnthropic === data.apiBaseAnthropic;
+                }
+                // Legacy single apiBase
+                return p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase;
+            });
+            console.log('[ProviderFormDialog] edit mode urlMatches count=%d:', urlMatches.length,
+                urlMatches.map(p => ({id: p.id, name: p.name, alias: p.alias})));
             // When there's a selectedProviderId and it's among the urlMatches,
             // treat it as unique (the user previously picked this exact preset).
             const idMatch = data.selectedProviderId
                 ? urlMatches.find(p => p.id === data.selectedProviderId)
                 : null;
             if (idMatch) {
+                console.log('[ProviderFormDialog] edit → idMatch:', {id: idMatch.id, name: idMatch.name, alias: idMatch.alias});
                 setSelectedProvider(idMatch);
             } else if (urlMatches.length === 1) {
+                console.log('[ProviderFormDialog] edit → unique match:', {id: urlMatches[0].id, name: urlMatches[0].name, alias: urlMatches[0].alias});
                 setSelectedProvider(urlMatches[0]);
             } else {
+                console.log('[ProviderFormDialog] edit → no auto-select (matches=%d)', urlMatches.length);
                 // Multiple matches (or none) — don't auto-select.
                 // urlCandidates shows them as clickable chips above the slots.
                 setSelectedProvider(null);
             }
+        } else if (data.selectedProviderId) {
+            // Add mode with a preselected provider from screen 1 — strictly
+            // follow the clicked provider, don't recalculate from URLs.
+            const provider = allProviders.find(p => p.id === data.selectedProviderId);
+            console.log('[ProviderFormDialog] add preselected: lookup id=%s → found=%s',
+                data.selectedProviderId, provider ? `${provider.id} / ${provider.name} / ${provider.alias}` : 'NOT FOUND');
+            if (provider) {
+                setSelectedProvider(provider);
+                const nextOpenAI: ProtocolSlotData = {
+                    url: provider.baseUrlOpenAI || '',
+                    enabled: !!provider.baseUrlOpenAI,
+                };
+                const nextAnthropic: ProtocolSlotData = {
+                    url: provider.baseUrlAnthropic || '',
+                    enabled: !!provider.baseUrlAnthropic,
+                };
+                console.log('[ProviderFormDialog] add preselected → slots:', {
+                    openAI: nextOpenAI,
+                    anthropic: nextAnthropic,
+                });
+                setSlotOpenAI(nextOpenAI);
+                setSlotAnthropic(nextAnthropic);
+                commitProtocolState(nextOpenAI, nextAnthropic);
+            }
         } else {
-            // Add mode: prefer exact match by ID, fall back to URL match.
-            const matchingProvider =
-                (data.selectedProviderId && allProviders.find(p => p.id === data.selectedProviderId)) ||
-                allProviders.find(
-                    p => (data.providerBaseUrls?.openai && p.baseUrlOpenAI === data.providerBaseUrls.openai) ||
-                         (data.providerBaseUrls?.anthropic && p.baseUrlAnthropic === data.providerBaseUrls.anthropic) ||
-                         (data.apiBase && (p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase))
-                ) || null;
+            // Add mode without a preselected provider — try URL matching.
+            const matchingProvider = allProviders.find(
+                p => (data.providerBaseUrls?.openai && p.baseUrlOpenAI === data.providerBaseUrls.openai) ||
+                     (data.providerBaseUrls?.anthropic && p.baseUrlAnthropic === data.providerBaseUrls.anthropic) ||
+                     (data.apiBase && (p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase))
+            ) || null;
+            console.log('[ProviderFormDialog] add url-match:', matchingProvider
+                ? `found ${matchingProvider.id} / ${matchingProvider.name}`
+                : 'no match');
             setSelectedProvider(matchingProvider);
             if (matchingProvider) {
                 // Fill slots from template

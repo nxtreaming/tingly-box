@@ -123,6 +123,7 @@ const Onboarding: React.FC = () => {
                 token: lp.defaultApiKey ?? '',
                 enabled: true,
                 noKeyRequired: !lp.defaultApiKey,
+                selectedProviderId: lp.id,
             });
             return;
         }
@@ -131,14 +132,14 @@ const Onboarding: React.FC = () => {
         openDialogWith({
             name: p.alias || p.name,
             apiBase: p.baseUrlOpenAI || p.baseUrlAnthropic || '',
-            apiStyle: (p.baseUrlOpenAI ? 'openai' : 'anthropic') as any,
+            apiStyle: undefined as any,
             token: '',
             enabled: true,
-            protocols: p.supportsOpenAI && p.supportsAnthropic ? ['openai', 'anthropic'] : p.supportsOpenAI ? ['openai'] : ['anthropic'],
             providerBaseUrls: {
                 openai: p.baseUrlOpenAI,
                 anthropic: p.baseUrlAnthropic,
             },
+            selectedProviderId: p.id,
         });
     };
 
