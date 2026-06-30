@@ -1,6 +1,7 @@
 import ConnectProviderDialog, { type ConnectSelection } from '@/components/ConnectProviderDialog';
 import OAuthDialog from '@/components/OAuthDialog';
 import ProviderFormDialog, { type EnhancedProviderFormData } from '@/components/ProviderFormDialog';
+import { buildProviderFormData } from '@/hooks/useProviderDialog';
 import { useState, useCallback } from 'react';
 import { api } from '@/services/api';
 
@@ -19,8 +20,7 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
 }) => {
     const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false);
     const [apiKeyDialogMode] = useState<'add'>('add');
-    const [isLocalProvider, setIsLocalProvider] = useState(false);
-    const [isDualMode, setIsDualMode] = useState(false);
+    const [optionalEditableToken, setOptionalEditableToken] = useState(false);
     const [oauthDialogOpen, setOAuthDialogOpen] = useState(false);
     const [oauthAutoStartId, setOAuthAutoStartId] = useState<string | null>(null);
     const [providerFormData, setProviderFormData] = useState<EnhancedProviderFormData>({
@@ -29,55 +29,22 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
 
     const handleConnectSelect = useCallback((selection: ConnectSelection) => {
         onClose();
-        setIsDualMode(false);
+
+        // oauth / import are handled separately
         if (selection.kind === 'oauth') {
             setOAuthAutoStartId(selection.providerId);
             setOAuthDialogOpen(true);
             return;
         }
-        if (selection.kind === 'import') {
-            return;
-        }
-        if (selection.kind === 'custom') {
-            setIsLocalProvider(false);
-            setProviderFormData({
-                name: '', apiBase: '', apiStyle: undefined, token: '', enabled: true, noKeyRequired: false, proxyUrl: '',
-            });
-            setApiKeyDialogOpen(true);
-            return;
-        }
-        if (selection.kind === 'dual') {
-            // Dual endpoint: two URLs (OpenAI + Anthropic) under one key, always
-            // saved as a single fused record. No protocol selector / topology toggle.
-            setIsLocalProvider(false);
-            setIsDualMode(true);
-            setProviderFormData({
-                name: '', apiBase: '', apiStyle: 'openai', token: '', enabled: true, noKeyRequired: false, proxyUrl: '',
-                apiBaseOpenAI: '', apiBaseAnthropic: '', createDualProvider: true,
-                protocols: ['openai', 'anthropic'],
-            } as any);
-            setApiKeyDialogOpen(true);
-            return;
-        }
-        if (selection.kind === 'local') {
-            const lp = selection.provider;
-            setIsLocalProvider(true);
-            setProviderFormData({
-                name: lp.name, apiBase: lp.baseUrlOpenAI || lp.baseUrlAnthropic || '', apiStyle: 'openai', token: '',
-                enabled: true, noKeyRequired: true,
-            } as any);
-            setApiKeyDialogOpen(true);
-            return;
-        }
-        const p = selection.provider;
-        setIsLocalProvider(false);
-        setProviderFormData({
-            uuid: undefined, name: p.alias || p.name,
-            apiBase: p.baseUrlOpenAI || p.baseUrlAnthropic || '',
-            apiStyle: undefined, token: '', enabled: true, noKeyRequired: false,
-            proxyUrl: '', userAgent: '', createDualProvider: false,
-            providerBaseUrls: { openai: p.baseUrlOpenAI, anthropic: p.baseUrlAnthropic },
-        } as any);
+        if (selection.kind === 'import') return;
+
+        const built = buildProviderFormData(selection)!;
+        console.log('[ConnectProviderFlow] screen1 → screen2:', {
+            kind: selection.kind,
+            selectedProviderId: built.formData.selectedProviderId,
+        });
+        setOptionalEditableToken(built.optionalEditableToken);
+        setProviderFormData(built.formData);
         setApiKeyDialogOpen(true);
     }, [onClose]);
 
@@ -129,15 +96,14 @@ const ConnectProviderFlow: React.FC<ConnectProviderFlowProps> = ({
             />
             <ProviderFormDialog
                 open={apiKeyDialogOpen}
-                onClose={() => { setApiKeyDialogOpen(false); setIsLocalProvider(false); setIsDualMode(false); }}
-                onBack={() => { setApiKeyDialogOpen(false); onClose(); /* re-open handled by parent */ }}
+                onClose={() => { setApiKeyDialogOpen(false); setOptionalEditableToken(false); }}
+                onBack={() => { setApiKeyDialogOpen(false); onClose(); }}
                 onSubmit={handleProviderSubmit}
                 onForceAdd={handleProviderForceAdd}
                 data={providerFormData}
                 onChange={handleFieldChange}
                 mode={apiKeyDialogMode}
-                optionalEditableToken={isLocalProvider}
-                dualMode={isDualMode}
+                optionalEditableToken={optionalEditableToken}
             />
             <OAuthDialog
                 open={oauthDialogOpen}

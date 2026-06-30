@@ -1,4 +1,4 @@
-import {ArrowBack, Close, ExpandMore, InfoOutlined} from '@/components/icons';
+import {ArrowBack, Close, ExpandMore} from '@/components/icons';
 import {
     Accordion,
     AccordionDetails,
@@ -6,6 +6,7 @@ import {
     Alert,
     Box,
     Button,
+    Chip,
     CircularProgress,
     Dialog,
     DialogActions,
@@ -13,7 +14,6 @@ import {
     DialogTitle,
     FormControlLabel,
     IconButton,
-    Link,
     Stack,
     Switch,
     TextField,
@@ -24,16 +24,13 @@ import {useTranslation} from 'react-i18next';
 import {type UniqueProvider, useProviderTemplates} from '../services/serviceProviders';
 import {api} from '../services/api';
 import ApiKeyField from '@/components/provider-form-dialog/ApiKeyField';
-import CustomEndpointField from '@/components/provider-form-dialog/CustomEndpointField';
-import DualToggle from '@/components/provider-form-dialog/DualToggle';
-import DualUrlFields from '@/components/provider-form-dialog/DualUrlFields';
 import KeyNameField from '@/components/provider-form-dialog/KeyNameField';
-import ProtocolSelector from '@/components/provider-form-dialog/ProtocolSelector';
-import ProviderAutocomplete from '@/components/provider-form-dialog/ProviderAutocomplete';
+import ProtocolSlot, {type ProtocolSlotData, type ProtocolKind} from '@/components/provider-form-dialog/ProtocolSlot';
 import ProxyUrlField from '@/components/provider-form-dialog/ProxyUrlField';
 import VerificationResultPanel from '@/components/provider-form-dialog/VerificationResultPanel';
-import {detectOpenAICapabilities} from '@/components/provider-form-dialog/helpers';
 import {type VerificationResult, runProviderProbe} from '@/components/provider-form-dialog/probe';
+import ProviderIcon from '@/components/ProviderIcon';
+import RegionBadge from '@/components/RegionBadge';
 
 export interface EnhancedProviderFormData {
     uuid?: string;
@@ -48,20 +45,17 @@ export interface EnhancedProviderFormData {
     authType?: 'api_key' | 'oauth';
     protocols?: ('openai' | 'anthropic')[];
     providerBaseUrls?: { openai?: string; anthropic?: string };
-    // Dual-mode optional URLs. When both are set, the backend routes per
-    // inbound protocol natively. When only one is set, falls back to apiBase.
     apiBaseOpenAI?: string;
     apiBaseAnthropic?: string;
     createDualProvider?: boolean;
+    /** If set, prefer this exact provider ID when resolving the template.
+     *  Avoids mismatches when multiple providers share the same base URL. */
+    selectedProviderId?: string;
 }
 
 interface PresetProviderFormDialogProps {
     open: boolean;
     onClose: () => void;
-    // `resolved` carries fields the dialog finalises at submit time (free-typed
-    // apiBase, the auto-generated name, etc). Parents must merge it over their
-    // form state because those values are committed via async onChange and are
-    // not yet visible in state when this fires.
     onSubmit: (e: React.FormEvent, resolved?: Partial<EnhancedProviderFormData>) => void | Promise<void>;
     onForceAdd?: () => void;
     onBack?: () => void;
@@ -73,198 +67,226 @@ interface PresetProviderFormDialogProps {
     isFirstProvider?: boolean;
     /** Pass true for local providers: token field stays editable but is not required. */
     optionalEditableToken?: boolean;
-    /** When true, the user entered via "Custom endpoint" — hide the provider
-     *  dropdown and show a plain URL text field instead. Custom endpoints are
-     *  strictly single-protocol. */
-    customMode?: boolean;
-    /** When true, the user entered via "Dual endpoint" — show two URL fields
-     *  (OpenAI + Anthropic) under one key and always save a single fused record.
-     *  No protocol selector, no topology toggle. */
-    dualMode?: boolean;
-    /** Edit-mode upgrade: convert a single custom provider into a dual one. */
-    onConvertToDual?: () => void;
-    /** Edit-mode downgrade: convert a dual provider back to a single endpoint. */
-    onConvertToSingle?: () => void;
 }
 
+/**
+ * Unified provider form — one layout for all API-key provider creation.
+ *
+ * Protocols are independent, additive slots (OpenAI / Anthropic). Users can
+ * add or remove protocol slots at any time. The "dual" concept is gone —
+ * a provider simply has 1 or 2 protocol URLs.
+ */
 const ProviderFormDialog = ({
-                                open,
-                                onClose,
-                                onSubmit,
-                                onBack,
-                                data,
-                                onChange,
-                                mode,
-                                title,
-                                submitText,
-                                isFirstProvider = false,
-                                optionalEditableToken = false,
-                                customMode = false,
-                                dualMode = false,
-                                onConvertToDual,
-                                onConvertToSingle,
-                            }: PresetProviderFormDialogProps) => {
+    open,
+    onClose,
+    onSubmit,
+    onBack,
+    data,
+    onChange,
+    mode,
+    title,
+    submitText,
+    isFirstProvider = false,
+    optionalEditableToken = false,
+}: PresetProviderFormDialogProps) => {
     const {t} = useTranslation();
-    const defaultTitle = dualMode
-        ? (mode === 'add'
-            ? t('providerDialog.dualForm.title', {defaultValue: 'Add Dual endpoint'})
-            : t('providerDialog.dualForm.editTitle', {defaultValue: 'Edit Dual endpoint'}))
-        : (mode === 'add' ? t('providerDialog.addTitle') : t('providerDialog.editTitle'));
+    const defaultTitle = mode === 'add' ? t('providerDialog.addTitle') : t('providerDialog.editTitle');
     const defaultSubmitText = mode === 'add' ? t('providerDialog.addButton') : t('common.saveChanges');
 
+    // ── Local state ───────────────────────────────────────────────
     const [verifying, setVerifying] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const [noApiKey, setNoApiKey] = useState(data.noKeyRequired || false);
     const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
     const [selectedProvider, setSelectedProvider] = useState<UniqueProvider | null>(null);
-    const [protocolOpenAI, setProtocolOpenAI] = useState(false);
-    const [protocolAnthropic, setProtocolAnthropic] = useState(false);
     const [nameIsAutoFilled, setNameIsAutoFilled] = useState(true);
-    // In add mode the name field is hidden by default — almost everyone wants
-    // the auto-generated label and can rename later. Edit mode always shows
-    // the field so users can see/edit the existing name.
     const [showNameField, setShowNameField] = useState(mode === 'edit');
-    const [providerInputValue, setProviderInputValue] = useState('');
     const [useGlobalProxy, setUseGlobalProxy] = useState(false);
     const [globalProxyUrl, setGlobalProxyUrl] = useState('');
-    const [createDualProvider, setCreateDualProvider] = useState(false);
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const [baseUrlError, setBaseUrlError] = useState(false);
-    // Dual-form local mirrors for the two URL fields (snappy typing; committed
-    // to data.apiBaseOpenAI / data.apiBaseAnthropic on blur / submit).
-    const [fusOpenAIUrl, setFusOpenAIUrl] = useState('');
-    const [fusAnthropicUrl, setFusAnthropicUrl] = useState('');
-    // Whether the provider being edited already has both dual URLs stored.
-    const [isExistingDual, setIsExistingDual] = useState(false);
-    // Snapshot of dual URLs captured on dialog open, used for downgrade/revert.
-    const initialDualRef = useRef<{ openAI: string; anthropic: string; apiBase: string; apiStyle: string }>({
-        openAI: '', anthropic: '', apiBase: '', apiStyle: 'openai',
-    });
+
+    // ── Protocol slot state (independent from provider selection) ──
+    const [slotOpenAI, setSlotOpenAI] = useState<ProtocolSlotData>({url: '', enabled: true});
+    const [slotAnthropic, setSlotAnthropic] = useState<ProtocolSlotData>({url: '', enabled: false});
 
     const allProviders = useProviderTemplates();
 
-    // Keep onChange in a ref so we can call it from effects/handlers without
-    // putting it in dependency arrays (parent passes a fresh function each render).
+    // Stable onChange ref so effects/handlers don't depend on it.
     const onChangeRef = useRef(onChange);
-    useEffect(() => {
-        onChangeRef.current = onChange;
-    });
+    useEffect(() => { onChangeRef.current = onChange; });
 
-    const openAICapabilities = useMemo(
-        () => detectOpenAICapabilities(selectedProvider),
-        [selectedProvider]
-    );
-
-    // Find the matching template only when the dialog opens. Depend on
-    // `open` (a stable boolean transition) rather than `data.apiBase` so that
-    // typing in the field doesn't recompute this and re-trigger init.
-    // We resolve in both modes so prefilled add-mode data (e.g. picked from
-    // onboarding) shows the provider in the Autocomplete instead of blank.
-    const matchingProvider = useMemo(() => {
-        if (!open) return null;
-        if (!data.apiBase) return null;
-        // Match by apiBase alone - this handles onboarding prefills where apiStyle is undefined
-        return (
-            allProviders.find(
-                p => p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase
-            ) || null
-        );
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, allProviders]);
-
-    useEffect(() => {
-        setNoApiKey(data.noKeyRequired || false);
-    }, [data.noKeyRequired]);
-
-    useEffect(() => {
-        setCreateDualProvider(!!data.createDualProvider);
-    }, [data.createDualProvider]);
-
-    // Fetch global proxy URL once on mount
+    // ── Fetch global proxy on mount ───────────────────────────────
     useEffect(() => {
         api.getConfig().then((result) => {
-            const gp = result?.data?.http_transport?.global_proxy_url ?? '';
-            setGlobalProxyUrl(gp);
+            setGlobalProxyUrl(result?.data?.http_transport?.global_proxy_url ?? '');
         });
     }, []);
 
-    // Reset / initialise local state when the dialog opens.
-    // Only runs on the open transition — never during typing.
+    // ── URL → provider suggestions ──────────────────────────────────
+    const urlCandidates = useMemo(() => {
+        if (selectedProvider) return []; // already selected, no need to suggest
+        const activeUrl = slotOpenAI.url.trim() || slotAnthropic.url.trim();
+        if (!activeUrl) return [];
+        let hostname: string;
+        try { hostname = new URL(activeUrl).hostname; } catch { return []; }
+        if (!hostname) return [];
+        const deduped = new Map<string, UniqueProvider>();
+        allProviders.forEach(p => {
+            if (deduped.has(p.id)) return;
+            const ou = (p.baseUrlOpenAI || '').toLowerCase();
+            const au = (p.baseUrlAnthropic || '').toLowerCase();
+            try {
+                if (new URL(ou).hostname === hostname || new URL(au).hostname === hostname) {
+                    deduped.set(p.id, p);
+                }
+            } catch { /* skip malformed URLs */ }
+        });
+        return Array.from(deduped.values()).slice(0, 5);
+    }, [slotOpenAI.url, slotAnthropic.url, selectedProvider, allProviders]);
+
+    const handleSelectProvider = (provider: UniqueProvider) => {
+        setSelectedProvider(provider);
+        const nextOpenAI: ProtocolSlotData = {
+            url: provider.baseUrlOpenAI || '',
+            enabled: !!provider.baseUrlOpenAI,
+        };
+        const nextAnthropic: ProtocolSlotData = {
+            url: provider.baseUrlAnthropic || '',
+            enabled: !!provider.baseUrlAnthropic,
+        };
+        setSlotOpenAI(nextOpenAI);
+        setSlotAnthropic(nextAnthropic);
+        commitProtocolState(nextOpenAI, nextAnthropic);
+        onChangeRef.current('providerBaseUrls', {
+            openai: provider.baseUrlOpenAI,
+            anthropic: provider.baseUrlAnthropic,
+        });
+        onChangeRef.current('selectedProviderId', provider.id);
+        if (nameIsAutoFilled || !data.name) {
+            onChangeRef.current('name', provider.alias || provider.name);
+            setNameIsAutoFilled(true);
+        }
+        setVerificationResult(null);
+    };
+
+    // ── Init/reset on open ────────────────────────────────────────
     useEffect(() => {
         if (!open) return;
 
+        console.log('[ProviderFormDialog] open mode=%s, data:', mode, {
+            selectedProviderId: data.selectedProviderId,
+            apiBase: data.apiBase,
+            apiBaseOpenAI: data.apiBaseOpenAI,
+            apiBaseAnthropic: data.apiBaseAnthropic,
+            apiStyle: data.apiStyle,
+            providerBaseUrls: data.providerBaseUrls,
+        });
+
         setVerificationResult(null);
         setBaseUrlError(false);
-        // Seed the dual-form URL mirrors. By convention apiBase carries the
-        // OpenAI URL, so fall back to it when apiBaseOpenAI is empty.
-        setFusOpenAIUrl(data.apiBaseOpenAI || data.apiBase || '');
-        setFusAnthropicUrl(data.apiBaseAnthropic || '');
-        // Edit mode opens the advanced panel so users can see/change existing settings.
         setAdvancedOpen(mode === 'edit');
-        // Hide the optional name field on each add-mode open; edit-mode keeps
-        // it visible so users can review the existing name.
         setShowNameField(mode === 'edit');
 
+        const hasDualOpenAI = !!data.apiBaseOpenAI;
+        const hasDualAnthropic = !!data.apiBaseAnthropic;
+
+        // Seed protocol slots from data
+        const initOpenAI: ProtocolSlotData = {
+            url: data.apiBaseOpenAI || (data.apiStyle !== 'anthropic' ? data.apiBase : ''),
+            enabled: hasDualOpenAI || !!data.apiBaseOpenAI || data.apiStyle === 'openai' || (!data.apiStyle && !hasDualAnthropic),
+        };
+        const initAnthropic: ProtocolSlotData = {
+            url: data.apiBaseAnthropic || (data.apiStyle === 'anthropic' ? data.apiBase : ''),
+            enabled: hasDualAnthropic || data.apiStyle === 'anthropic',
+        };
+        setSlotOpenAI(initOpenAI);
+        setSlotAnthropic(initAnthropic);
+
         if (mode === 'edit') {
-            // Hydrate dual state: existing dual URLs imply the protocol
-            // is already enabled, regardless of the legacy apiStyle pin.
-            const hasDualOpenAI = !!data.apiBaseOpenAI;
-            const hasDualAnthropic = !!data.apiBaseAnthropic;
-            const existingDual = hasDualOpenAI && hasDualAnthropic;
-            setIsExistingDual(existingDual);
-            // Snapshot for downgrade/revert operations.
-            initialDualRef.current = {
-                openAI: data.apiBaseOpenAI || '',
-                anthropic: data.apiBaseAnthropic || '',
-                apiBase: data.apiBase,
-                apiStyle: data.apiStyle || 'openai',
-            };
-            setCreateDualProvider(false);
-            setProtocolOpenAI(hasDualOpenAI || data.apiStyle === 'openai');
-            setProtocolAnthropic(hasDualAnthropic || data.apiStyle === 'anthropic');
-            setSelectedProvider(matchingProvider);
-            setProviderInputValue(
-                matchingProvider ? matchingProvider.alias || matchingProvider.name : data.apiBase
-            );
-        } else {
-            if (data.protocols && data.protocols.length > 0) {
-                setProtocolOpenAI(data.protocols.includes('openai'));
-                setProtocolAnthropic(data.protocols.includes('anthropic'));
-            } else if (data.apiStyle) {
-                setProtocolOpenAI(data.apiStyle === 'openai');
-                setProtocolAnthropic(data.apiStyle === 'anthropic');
-            } else if (matchingProvider) {
-                // When apiBase matches a known provider (e.g., from onboarding),
-                // auto-select the provider's supported protocols
-                setProtocolOpenAI(!!matchingProvider.baseUrlOpenAI);
-                setProtocolAnthropic(!!matchingProvider.baseUrlAnthropic);
-            } else if (customMode) {
-                // Custom endpoints are OpenAI-compatible in the vast majority of
-                // cases — pre-select OpenAI so users aren't stuck with nothing
-                // chosen, and let the recommendation hint steer the rare exception.
-                setProtocolOpenAI(true);
-                setProtocolAnthropic(false);
+            // Find ALL presets matching the configured URL(s). When multiple
+            // URLs exist, require every URL to match — partial matches don't count.
+            const urlMatches = allProviders.filter(p => {
+                if (hasDualOpenAI && hasDualAnthropic) {
+                    // Both protocols configured — both URLs must match
+                    return p.baseUrlOpenAI === data.apiBaseOpenAI &&
+                           p.baseUrlAnthropic === data.apiBaseAnthropic;
+                }
+                if (hasDualOpenAI) {
+                    return p.baseUrlOpenAI === data.apiBaseOpenAI;
+                }
+                if (hasDualAnthropic) {
+                    return p.baseUrlAnthropic === data.apiBaseAnthropic;
+                }
+                // Legacy single apiBase
+                return p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase;
+            });
+            console.log('[ProviderFormDialog] edit mode urlMatches count=%d:', urlMatches.length,
+                urlMatches.map(p => ({id: p.id, name: p.name, alias: p.alias})));
+            // When there's a selectedProviderId and it's among the urlMatches,
+            // treat it as unique (the user previously picked this exact preset).
+            const idMatch = data.selectedProviderId
+                ? urlMatches.find(p => p.id === data.selectedProviderId)
+                : null;
+            if (idMatch) {
+                console.log('[ProviderFormDialog] edit → idMatch:', {id: idMatch.id, name: idMatch.name, alias: idMatch.alias});
+                setSelectedProvider(idMatch);
+            } else if (urlMatches.length === 1) {
+                console.log('[ProviderFormDialog] edit → unique match:', {id: urlMatches[0].id, name: urlMatches[0].name, alias: urlMatches[0].alias});
+                setSelectedProvider(urlMatches[0]);
             } else {
-                setProtocolOpenAI(false);
-                setProtocolAnthropic(false);
+                console.log('[ProviderFormDialog] edit → no auto-select (matches=%d)', urlMatches.length);
+                // Multiple matches (or none) — don't auto-select.
+                // urlCandidates shows them as clickable chips above the slots.
+                setSelectedProvider(null);
             }
-            setIsExistingDual(false);
-            setCreateDualProvider(false);
-            // If the parent prefilled apiBase to a known provider (onboarding
-            // browse / paste-detect), seed the Autocomplete with it so users see
-            // the picked provider rather than a blank field. In custom mode
-            // (including self-hosted) the field is a free-text URL input, so seed
-            // the URL itself — never the provider's display name/alias.
-            const seedProvider = customMode ? null : matchingProvider;
-            setSelectedProvider(seedProvider);
-            setProviderInputValue(
-                seedProvider
-                    ? seedProvider.alias || seedProvider.name
-                    : data.apiBase || ''
-            );
+        } else if (data.selectedProviderId) {
+            // Add mode with a preselected provider from screen 1 — strictly
+            // follow the clicked provider, don't recalculate from URLs.
+            const provider = allProviders.find(p => p.id === data.selectedProviderId);
+            console.log('[ProviderFormDialog] add preselected: lookup id=%s → found=%s',
+                data.selectedProviderId, provider ? `${provider.id} / ${provider.name} / ${provider.alias}` : 'NOT FOUND');
+            if (provider) {
+                setSelectedProvider(provider);
+                const nextOpenAI: ProtocolSlotData = {
+                    url: provider.baseUrlOpenAI || '',
+                    enabled: !!provider.baseUrlOpenAI,
+                };
+                const nextAnthropic: ProtocolSlotData = {
+                    url: provider.baseUrlAnthropic || '',
+                    enabled: !!provider.baseUrlAnthropic,
+                };
+                console.log('[ProviderFormDialog] add preselected → slots:', {
+                    openAI: nextOpenAI,
+                    anthropic: nextAnthropic,
+                });
+                setSlotOpenAI(nextOpenAI);
+                setSlotAnthropic(nextAnthropic);
+                commitProtocolState(nextOpenAI, nextAnthropic);
+            }
+        } else {
+            // Add mode without a preselected provider — try URL matching.
+            const matchingProvider = allProviders.find(
+                p => (data.providerBaseUrls?.openai && p.baseUrlOpenAI === data.providerBaseUrls.openai) ||
+                     (data.providerBaseUrls?.anthropic && p.baseUrlAnthropic === data.providerBaseUrls.anthropic) ||
+                     (data.apiBase && (p.baseUrlOpenAI === data.apiBase || p.baseUrlAnthropic === data.apiBase))
+            ) || null;
+            console.log('[ProviderFormDialog] add url-match:', matchingProvider
+                ? `found ${matchingProvider.id} / ${matchingProvider.name}`
+                : 'no match');
+            setSelectedProvider(matchingProvider);
+            if (matchingProvider) {
+                // Fill slots from template
+                if (matchingProvider.baseUrlOpenAI) {
+                    setSlotOpenAI({url: matchingProvider.baseUrlOpenAI, enabled: true});
+                }
+                if (matchingProvider.baseUrlAnthropic) {
+                    setSlotAnthropic({url: matchingProvider.baseUrlAnthropic, enabled: true});
+                }
+            }
         }
 
-        // Restore "use global proxy" checkbox state from localStorage (add mode only)
+        // "Use global proxy" state (add mode only)
         if (mode === 'add') {
             const savedUseGlobal = localStorage.getItem('provider_use_global_proxy') === 'true';
             setUseGlobalProxy(savedUseGlobal);
@@ -277,70 +299,184 @@ const ProviderFormDialog = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
-    // Helper: push protocol-related fields to parent in one batch.
-    // Called only from user-driven handlers (not from a render-triggered effect).
-    //
-    // Dual-mode rule: when BOTH protocols are checked and we have a known
-    // template (provider) with both base URLs, emit `apiBaseOpenAI` +
-    // `apiBaseAnthropic` so the backend stores them as dual fields. The
-    // legacy `apiBase`/`apiStyle` still get populated (set to the openai URL
-    // by convention) so single-protocol consumers keep working.
-    //
-    // When only ONE protocol is checked, behavior matches the previous
-    // single-protocol UX: pick the matching URL into `apiBase` and clear the
-    // other-side dual field.
-    const syncProtocolsToParent = useCallback(
-        (
-            nextOpenAI: boolean,
-            nextAnthropic: boolean,
-            provider: UniqueProvider | null
-        ) => {
-            const protocols: ('openai' | 'anthropic')[] = [];
-            if (nextOpenAI) protocols.push('openai');
-            if (nextAnthropic) protocols.push('anthropic');
+    // ── Sync protocol slots to parent form data ───────────────────
+    const syncProtocolsToParent = useCallback((openAI: ProtocolSlotData, anthropic: ProtocolSlotData) => {
+        const cb = onChangeRef.current;
+        const protocols: ('openai' | 'anthropic')[] = [];
+        if (openAI.enabled) protocols.push('openai');
+        if (anthropic.enabled) protocols.push('anthropic');
+        cb('protocols', protocols);
+        cb('apiStyle', openAI.enabled ? 'openai' : anthropic.enabled ? 'anthropic' : undefined);
+        cb('apiBaseOpenAI', openAI.enabled ? openAI.url : '');
+        cb('apiBaseAnthropic', anthropic.enabled ? anthropic.url : '');
+        cb('apiBase', openAI.enabled ? openAI.url : anthropic.enabled ? anthropic.url : '');
+    }, []);
 
-            const cb = onChangeRef.current;
-            cb('protocols', protocols);
-            cb('apiStyle', protocols.length > 0 ? protocols[0] : undefined);
+    // Delegate to parent onChange + sync protocol fields
+    const commitProtocolState = useCallback((openAI: ProtocolSlotData, anthropic: ProtocolSlotData) => {
+        syncProtocolsToParent(openAI, anthropic);
+    }, [syncProtocolsToParent]);
 
-            if (provider) {
-                cb('providerBaseUrls', {
-                    openai: provider.baseUrlOpenAI,
-                    anthropic: provider.baseUrlAnthropic,
-                });
+    // ── Slot mutation handlers ────────────────────────────────────
+    const updateOpenAIUrl = (url: string) => {
+        const next = {...slotOpenAI, url};
+        setSlotOpenAI(next);
+        setVerificationResult(null);
+        if (url.trim()) setBaseUrlError(false);
+        if (selectedProvider && url !== selectedProvider.baseUrlOpenAI) {
+            setSelectedProvider(null);
+        }
+    };
+    const updateAnthropicUrl = (url: string) => {
+        const next = {...slotAnthropic, url};
+        setSlotAnthropic(next);
+        setVerificationResult(null);
+        if (url.trim()) setBaseUrlError(false);
+        if (selectedProvider && url !== selectedProvider.baseUrlAnthropic) {
+            setSelectedProvider(null);
+        }
+    };
+    const commitOpenAI = () => commitProtocolState(slotOpenAI, slotAnthropic);
+    const commitAnthropic = () => commitProtocolState(slotOpenAI, slotAnthropic);
 
-                const dual = createDualProvider
-                    && nextOpenAI && nextAnthropic
-                    && !!provider.baseUrlOpenAI && !!provider.baseUrlAnthropic;
+    const toggleSlot = (kind: ProtocolKind) => {
+        if (kind === 'anthropic') {
+            const next = {...slotAnthropic, enabled: !slotAnthropic.enabled};
+            setSlotAnthropic(next);
+            commitProtocolState(slotOpenAI, next);
+        } else {
+            const next = {...slotOpenAI, enabled: !slotOpenAI.enabled};
+            setSlotOpenAI(next);
+            commitProtocolState(next, slotAnthropic);
+        }
+        setVerificationResult(null);
+    };
 
-                if (dual) {
-                    cb('apiBaseOpenAI', provider.baseUrlOpenAI);
-                    cb('apiBaseAnthropic', provider.baseUrlAnthropic);
-                    // Use the OpenAI URL as the legacy primary so single-
-                    // protocol consumers (model probes, model list, etc.)
-                    // see a populated apiBase.
-                    cb('apiBase', provider.baseUrlOpenAI);
-                } else if (nextOpenAI && provider.baseUrlOpenAI) {
-                    cb('apiBase', provider.baseUrlOpenAI);
-                    cb('apiBaseOpenAI', '');
-                    cb('apiBaseAnthropic', '');
-                } else if (nextAnthropic && provider.baseUrlAnthropic) {
-                    cb('apiBase', provider.baseUrlAnthropic);
-                    cb('apiBaseOpenAI', '');
-                    cb('apiBaseAnthropic', '');
-                } else {
-                    cb('apiBaseOpenAI', '');
-                    cb('apiBaseAnthropic', '');
-                }
-            } else {
-                // Free-form / custom single endpoint — no dual fields here.
-                // (Two-endpoint dual is configured via the dedicated Dual form.)
-                cb('apiBaseOpenAI', '');
-                cb('apiBaseAnthropic', '');
-            }
-        },
-        [createDualProvider]
-    );
+    // ── Name helpers ──────────────────────────────────────────────
+    const computeAutoName = useCallback((): string => {
+        if (selectedProvider) return selectedProvider.alias || selectedProvider.name;
+        const raw = slotOpenAI.url || slotAnthropic.url || '';
+        try {
+            const host = new URL(raw).hostname;
+            if (host) return host;
+        } catch { /* not a URL */ }
+        return t('providerDialog.keyName.fallback', {defaultValue: 'Custom Provider'});
+    }, [selectedProvider, slotOpenAI.url, slotAnthropic.url, t]);
+
+    const ensureName = (): string => {
+        if (data.name && data.name.trim()) return data.name;
+        const auto = computeAutoName();
+        onChangeRef.current('name', auto);
+        return auto;
+    };
+
+    // ── Verification ──────────────────────────────────────────────
+    const handleVerify = async () => {
+        setVerificationResult(null);
+
+        if (noApiKey) return true;
+
+        const probeMessages = {
+            failed: t('providerDialog.verification.failed'),
+            networkError: t('providerDialog.verification.networkError'),
+        };
+        const effectiveName = ensureName();
+        const token = data.token;
+
+        if (!effectiveName || !token) {
+            setVerificationResult({success: false, message: t('providerDialog.verification.missingFields')});
+            return false;
+        }
+
+        // Collect enabled protocols to probe
+        const probes: Array<{style: 'openai' | 'anthropic'; url: string}> = [];
+        if (slotOpenAI.enabled) {
+            const u = slotOpenAI.url.trim();
+            if (!u) { setBaseUrlError(true); return false; }
+            probes.push({style: 'openai', url: u});
+        }
+        if (slotAnthropic.enabled) {
+            const u = slotAnthropic.url.trim();
+            if (!u) { setBaseUrlError(true); return false; }
+            probes.push({style: 'anthropic', url: u});
+        }
+        if (probes.length === 0) {
+            setVerificationResult({success: false, message: 'At least one protocol must be enabled'});
+            return false;
+        }
+
+        setVerifying(true);
+
+        if (probes.length === 1) {
+            const p = probes[0];
+            const result = await runProviderProbe(
+                {name: effectiveName, apiStyle: p.style, apiBase: p.url, token, authType: data.authType},
+                probeMessages,
+            );
+            setVerificationResult(result);
+            setVerifying(false);
+            return result.success;
+        }
+
+        // Dual-protocol probe: run both, report per-side
+        const results = await Promise.all(
+            probes.map(p => runProviderProbe(
+                {name: effectiveName, apiStyle: p.style, apiBase: p.url, token, authType: data.authType},
+                probeMessages,
+            ))
+        );
+        const success = results.every(r => r.success);
+        const sideLine = (label: string, r: VerificationResult) =>
+            `${r.success ? '✓' : '✗'} ${label}: ${r.message}`;
+        setVerificationResult({
+            success,
+            message: success
+                ? 'Both endpoints verified'
+                : results.every(r => !r.success)
+                    ? 'Both endpoints failed'
+                    : `${results[0].success ? 'Anthropic' : 'OpenAI'} endpoint failed`,
+            details: probes.map((p, i) => sideLine(p.style === 'openai' ? 'OpenAI' : 'Anthropic', results[i])).join(' • '),
+        });
+        setVerifying(false);
+        return success;
+    };
+
+    // ── Submit ────────────────────────────────────────────────────
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        // Validate: at least one protocol with a URL
+        const hasOpenAI = slotOpenAI.enabled && slotOpenAI.url.trim();
+        const hasAnthropic = slotAnthropic.enabled && slotAnthropic.url.trim();
+        if (!hasOpenAI && !hasAnthropic) {
+            setBaseUrlError(true);
+            return;
+        }
+
+        // Commit final protocol URLs to parent
+        commitProtocolState(slotOpenAI, slotAnthropic);
+
+        const resolved: Partial<EnhancedProviderFormData> = {
+            apiBaseOpenAI: slotOpenAI.enabled ? slotOpenAI.url.trim() : '',
+            apiBaseAnthropic: slotAnthropic.enabled ? slotAnthropic.url.trim() : '',
+            apiBase: slotOpenAI.url.trim() || slotAnthropic.url.trim(),
+            apiStyle: slotOpenAI.enabled ? 'openai' : 'anthropic',
+            name: ensureName(),
+            protocols: (() => {
+                const p: ('openai' | 'anthropic')[] = [];
+                if (slotOpenAI.enabled) p.push('openai');
+                if (slotAnthropic.enabled) p.push('anthropic');
+                return p;
+            })(),
+        };
+
+        setSubmitting(true);
+        try {
+            await onSubmit(e, resolved);
+        } finally {
+            setSubmitting(false);
+        }
+    };
 
     const handleUseGlobalProxyChange = (checked: boolean) => {
         setUseGlobalProxy(checked);
@@ -352,363 +488,24 @@ const ProviderFormDialog = ({
         }
     };
 
-    // OAuth-bound providers are issuer-locked to a single protocol.
-    // In edit mode, non-dual providers are also locked — protocol changes
-    // require upgrading to dual (via the dual toggle) or creating a new entry.
-    const dualLocked = data.authType === 'oauth';
-    const protocolLocked = mode === 'edit' && !isExistingDual;
-    const effectiveLocked = dualLocked || protocolLocked;
+    // ── Derived ───────────────────────────────────────────────────
+    const hasAnyProtocol = (slotOpenAI.enabled && slotOpenAI.url.trim()) ||
+                           (slotAnthropic.enabled && slotAnthropic.url.trim());
 
-    // For an existing dual provider being edited: deselecting one side
-    // downgrades it to a single-protocol provider.
-    const handleDualDowngrade = (nextOpenAI: boolean, nextAnthropic: boolean) => {
-        const cb = onChangeRef.current;
-        const snap = initialDualRef.current;
-        if (nextOpenAI && !nextAnthropic) {
-            cb('apiBase', snap.openAI || snap.apiBase);
-            cb('apiStyle', 'openai');
-            cb('apiBaseOpenAI', '');
-            cb('apiBaseAnthropic', '');
-        } else if (!nextOpenAI && nextAnthropic) {
-            cb('apiBase', snap.anthropic);
-            cb('apiStyle', 'anthropic');
-            cb('apiBaseOpenAI', '');
-            cb('apiBaseAnthropic', '');
-        }
-        // Disallowing both-false: ignore the toggle if it would leave no protocol.
-    };
-
-    // Custom endpoints are strictly single-protocol (radio semantics):
-    // selecting one clears the other; the active option can't be unselected.
-    const selectCustomProtocol = (openai: boolean) => {
-        setProtocolOpenAI(openai);
-        setProtocolAnthropic(!openai);
-        setVerificationResult(null);
-        syncProtocolsToParent(openai, !openai, selectedProvider);
-    };
-
-    const toggleOpenAIProtocol = () => {
-        if (effectiveLocked) return;
-        if (selectedProvider && !selectedProvider.supportsOpenAI) return;
-        if (customMode) { if (!protocolOpenAI) selectCustomProtocol(true); return; }
-        const next = !protocolOpenAI;
-        if (isExistingDual && !next && !protocolAnthropic) return;
-        setProtocolOpenAI(next);
-        setVerificationResult(null);
-        if (isExistingDual) handleDualDowngrade(next, protocolAnthropic);
-        else syncProtocolsToParent(next, protocolAnthropic, selectedProvider);
-    };
-
-    const toggleAnthropicProtocol = () => {
-        if (effectiveLocked) return;
-        if (selectedProvider && !selectedProvider.supportsAnthropic) return;
-        if (customMode) { if (!protocolAnthropic) selectCustomProtocol(false); return; }
-        const next = !protocolAnthropic;
-        if (isExistingDual && !next && !protocolOpenAI) return;
-        setProtocolAnthropic(next);
-        setVerificationResult(null);
-        if (isExistingDual) handleDualDowngrade(protocolOpenAI, next);
-        else syncProtocolsToParent(protocolOpenAI, next, selectedProvider);
-    };
-
-    const handleProviderSelect = (newValue: string | UniqueProvider | null) => {
-        setVerificationResult(null);
-        setBaseUrlError(false);
-        const cb = onChangeRef.current;
-
-        if (typeof newValue === 'string') {
-            // User pressed Enter on a free-typed string
-            setSelectedProvider(null);
-            cb('apiBase', newValue);
-            cb('providerBaseUrls', undefined);
-            setProviderInputValue(newValue);
-            return;
-        }
-
-        if (newValue) {
-            // Picked a known provider from the list
-            setSelectedProvider(newValue);
-            const displayName = newValue.alias || newValue.name;
-
-            const nextOpenAI = newValue.supportsOpenAI;
-            const nextAnthropic = newValue.supportsAnthropic;
-            setProtocolOpenAI(nextOpenAI);
-            setProtocolAnthropic(nextAnthropic);
-
-            const baseUrl = newValue.baseUrlOpenAI || newValue.baseUrlAnthropic || '';
-            cb('apiBase', baseUrl);
-            cb('providerBaseUrls', {
-                openai: newValue.baseUrlOpenAI,
-                anthropic: newValue.baseUrlAnthropic,
-            });
-            // Sync protocols/apiStyle in the same batch
-            syncProtocolsToParent(nextOpenAI, nextAnthropic, newValue);
-
-            setProviderInputValue(displayName);
-
-            if (nameIsAutoFilled || !data.name) {
-                cb('name', displayName);
-                setNameIsAutoFilled(true);
-            }
-            return;
-        }
-
-        // Cleared
-        setSelectedProvider(null);
-        cb('apiBase', '');
-        cb('providerBaseUrls', undefined);
-        setProtocolOpenAI(false);
-        setProtocolAnthropic(false);
-        syncProtocolsToParent(false, false, null);
-        setProviderInputValue('');
-    };
-
-    // IMPORTANT: do NOT call parent onChange on every keystroke here.
-    // We only update the local input state. apiBase gets written:
-    //   - when the user picks an option (handleProviderSelect)
-    //   - when the user blurs the input (handleProviderInputBlur)
-    //   - or implicitly on submit (we read providerInputValue if needed).
-    // This is what made typing feel snappy again.
-    const handleProviderInputChange = (
-        _event: React.SyntheticEvent,
-        newValue: string
-    ) => {
-        setProviderInputValue(newValue);
-        if (newValue.trim()) setBaseUrlError(false);
-        // If the user is editing away from the selected provider's display name,
-        // detach the selection so the protocol checkboxes become editable again.
-        if (
-            selectedProvider &&
-            newValue !== (selectedProvider.alias || selectedProvider.name)
-        ) {
-            setSelectedProvider(null);
-        }
-    };
-
-    const handleProviderInputBlur = () => {
-        // Commit free-form input to apiBase if it doesn't match a selected provider.
-        if (!selectedProvider) {
-            const cb = onChangeRef.current;
-            if (data.apiBase !== providerInputValue) {
-                cb('apiBase', providerInputValue);
-                cb('providerBaseUrls', undefined);
-            }
-        }
-    };
-
-    // Compute a sensible default name when the user leaves the field blank.
-    // Uses the provider's display label directly (no " API Key" suffix — the
-    // credential is already in the API Keys section, so the suffix is noise).
-    // Falls back to apiBase hostname or a generic label.
-    const computeAutoName = useCallback((): string => {
-        if (selectedProvider) {
-            return selectedProvider.alias || selectedProvider.name;
-        }
-        const raw = (dualMode ? fusOpenAIUrl : data.apiBase) || providerInputValue || '';
-        try {
-            const host = new URL(raw).hostname;
-            if (host) return host;
-        } catch { /* not a URL */ }
-        return t('providerDialog.keyName.fallback', {defaultValue: 'Custom Provider'});
-    }, [selectedProvider, dualMode, fusOpenAIUrl, data.apiBase, providerInputValue, t]);
-
-    // Ensure a name exists before submit/verify. Writes back to parent so the
-    // submit payload carries the generated value.
-    const ensureName = (): string => {
-        if (data.name && data.name.trim()) return data.name;
-        const auto = computeAutoName();
-        onChangeRef.current('name', auto);
-        return auto;
-    };
-
-    const handleVerify = async () => {
-        if (noApiKey) {
-            setVerificationResult(null);
-            return true;
-        }
-
-        const probeMessages = {
-            failed: t('providerDialog.verification.failed'),
-            networkError: t('providerDialog.verification.networkError'),
-        };
-
-        // Dual form: a fused provider answers BOTH protocols, so verifying
-        // only one URL would leave the other (often the just-typed one) untested.
-        // Probe both endpoints and report per-side results.
-        if (dualMode) {
-            const openai = fusOpenAIUrl.trim();
-            const anthropic = fusAnthropicUrl.trim();
-            const effectiveName = ensureName();
-            if (!effectiveName || !openai || !anthropic || !data.token) {
-                setVerificationResult({
-                    success: false,
-                    message: t('providerDialog.verification.missingFields'),
-                });
-                return false;
-            }
-            setVerifying(true);
-            setVerificationResult(null);
-            const [oRes, aRes] = await Promise.all([
-                runProviderProbe(
-                    {name: effectiveName, apiStyle: 'openai', apiBase: openai, token: data.token, authType: data.authType},
-                    probeMessages,
-                ),
-                runProviderProbe(
-                    {name: effectiveName, apiStyle: 'anthropic', apiBase: anthropic, token: data.token, authType: data.authType},
-                    probeMessages,
-                ),
-            ]);
-            const success = oRes.success && aRes.success;
-            const sideLine = (label: string, r: VerificationResult) =>
-                `${r.success ? '✓' : '✗'} ${label}: ${r.message}`;
-            setVerificationResult({
-                success,
-                message: success
-                    ? t('providerDialog.dualForm.verifyBothOk', {defaultValue: 'Both endpoints verified'})
-                    : !oRes.success && !aRes.success
-                        ? t('providerDialog.dualForm.verifyBothFailed', {defaultValue: 'Both endpoints failed'})
-                        : t('providerDialog.dualForm.verifyOneFailed', {
-                            defaultValue: '{{side}} endpoint failed',
-                            side: oRes.success ? 'Anthropic' : 'OpenAI',
-                        }),
-                details: [sideLine('OpenAI', oRes), sideLine('Anthropic', aRes)].join(' • '),
-            });
-            setVerifying(false);
-            return success;
-        }
-
-        const apiStyle = protocolOpenAI ? 'openai' : protocolAnthropic ? 'anthropic' : undefined;
-        const apiBase =
-            protocolOpenAI && selectedProvider?.baseUrlOpenAI
-                ? selectedProvider.baseUrlOpenAI
-                : protocolAnthropic && selectedProvider?.baseUrlAnthropic
-                    ? selectedProvider.baseUrlAnthropic
-                    : data.apiBase || providerInputValue;
-
-        const effectiveName = ensureName();
-
-        if (!effectiveName || !apiBase || !data.token || !apiStyle) {
-            setVerificationResult({
-                success: false,
-                message: t('providerDialog.verification.missingFields'),
-            });
-            return false;
-        }
-
-        setVerifying(true);
-        setVerificationResult(null);
-
-        const result = await runProviderProbe(
-            {name: effectiveName, apiStyle, apiBase, token: data.token, authType: data.authType},
-            probeMessages,
-        );
-        setVerificationResult(result);
-        setVerifying(false);
-        return result.success;
-    };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-
-        if (dualMode) {
-            // Dual form: two URLs, one key, always a single fused record.
-            const openai = fusOpenAIUrl.trim();
-            const anthropic = fusAnthropicUrl.trim();
-            if (!openai || !anthropic) {
-                setBaseUrlError(true);
-                return;
-            }
-            const resolved: Partial<EnhancedProviderFormData> = {
-                apiBaseOpenAI: openai,
-                apiBaseAnthropic: anthropic,
-                apiBase: openai,
-                apiStyle: 'openai',
-                createDualProvider: true,
-                name: ensureName(),
-                protocols: ['openai', 'anthropic'] as any,
-            };
-            setSubmitting(true);
-            try {
-                await onSubmit(e, resolved);
-            } finally {
-                setSubmitting(false);
-            }
-            return;
-        }
-        const effectiveBase = data.apiBase || providerInputValue;
-        if (!effectiveBase.trim()) {
-            setBaseUrlError(true);
-            return;
-        }
-
-        // Collect the values we finalise here so the parent can use them
-        // directly. onChange writes to parent state asynchronously, so the
-        // parent's submit closure would otherwise read stale values — that's
-        // why a free-typed provider could not be added without first clicking
-        // "Test Connection" (which triggered extra renders that flushed state).
-        const resolved: Partial<EnhancedProviderFormData> = {};
-
-        // Make sure any free-form text in the provider input is committed before submit.
-        if (!selectedProvider && data.apiBase !== providerInputValue) {
-            onChangeRef.current('apiBase', providerInputValue);
-            onChangeRef.current('providerBaseUrls', undefined);
-            resolved.apiBase = providerInputValue;
-            (resolved as any).providerBaseUrls = undefined;
-        }
-
-        resolved.name = ensureName();
-
-        // NO MANDATORY VERIFICATION - allow adding keys without testing
-        // Verification is optional via the "Test Connection" button.
-        //
-        // Do NOT close the dialog here: the parent's submit handler is async
-        // and closes the dialog itself only after the add/update succeeds.
-        // Closing eagerly dismissed the dialog even when the request failed,
-        // making it look like the key was saved when it was not.
-        //
-        // Await so the button can show a spinner while the request is in
-        // flight. On success the parent unmounts this dialog; on failure it
-        // stays open and the spinner clears so the user can retry.
-        setSubmitting(true);
-        try {
-            await onSubmit(e, resolved);
-        } finally {
-            setSubmitting(false);
-        }
-    };
-
-    // Dual form implies both protocols; its own URL validation gates submit.
-    const hasAnyProtocol = dualMode || protocolOpenAI || protocolAnthropic;
-
-    // Persistent /v1 suffix hint: shown in custom mode when an OpenAI
-    // protocol is selected and the user has typed a URL that doesn't already
-    // end with /v1. Stays hidden while the field is empty — nothing to append to,
-    // and popping a hint over a blank input is just noise.
-    const currentUrl = data.apiBase || providerInputValue;
-    const urlAlreadyHasV1 = /\/v1\/?$/.test(currentUrl);
-    const showV1Hint = customMode && protocolOpenAI && currentUrl.trim().length > 0 && !urlAlreadyHasV1;
-    const applyV1Suffix = () => {
-        const base = currentUrl.replace(/\/+$/, '');
+    // Persistent /v1 suffix hint: shown on the OpenAI slot when the user is
+    // typing a free-form URL (no provider template) that doesn't already end
+    // with /v1. Mirrors the old CustomEndpointField's floating tooltip.
+    const persistentV1Hint =
+        !selectedProvider &&
+        slotOpenAI.enabled &&
+        slotOpenAI.url.trim().length > 0 &&
+        !(/\/v1\/?$/.test(slotOpenAI.url));
+    const handleApplyV1Suffix = () => {
+        const base = slotOpenAI.url.replace(/\/+$/, '');
         const newUrl = `${base}/v1`;
-        setProviderInputValue(newUrl);
-        onChangeRef.current('apiBase', newUrl);
-        setVerificationResult(null);
+        updateOpenAIUrl(newUrl);
+        commitProtocolState({...slotOpenAI, url: newUrl}, slotAnthropic);
     };
-
-    // When both protocols are checked on a template that exposes two base URLs,
-    // the outcome ("merge into one" vs "create two") is otherwise invisible.
-    // Surface it as a one-line hint that tracks the dual toggle.
-    const hasBothBaseUrls = !!selectedProvider?.baseUrlOpenAI && !!selectedProvider?.baseUrlAnthropic;
-    // add mode: shown when both protocols are selected
-    // edit mode: shown for non-dual providers when the template supports both sides (upgrade path)
-    // Dual toggle / topology hint are template-only concerns (presets keep the
-    // split-vs-merge choice). Custom and dual paths never show them.
-    const isPresetMode = !customMode && !dualMode;
-    const showDualToggle = isPresetMode && (mode === 'add'
-        ? (protocolOpenAI && protocolAnthropic)
-        : (!isExistingDual && hasBothBaseUrls));
-    const showTopologyHint = isPresetMode && protocolOpenAI && protocolAnthropic && hasBothBaseUrls;
-    const willMergeBaseUrls = createDualProvider;
 
     return (
         <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth
@@ -727,188 +524,121 @@ const ProviderFormDialog = ({
                         {isFirstProvider && mode === 'add' && (
                             <Alert severity="info" sx={{mb: 1}}>
                                 <Typography variant="body2">
-                                    <strong>Getting Started</strong>
-                                    <br/>
+                                    <strong>Getting Started</strong><br/>
                                     Add your first API key to enable AI services. You can add more keys later.
                                 </Typography>
                             </Alert>
                         )}
 
-                        {dualMode ? (
-                            <DualUrlFields
-                                openAIUrl={fusOpenAIUrl}
-                                anthropicUrl={fusAnthropicUrl}
-                                onOpenAIChange={(v) => {
-                                    setFusOpenAIUrl(v);
-                                    if (v.trim()) setBaseUrlError(false);
-                                    setVerificationResult(null);
+                        {/* ── Provider bar: selected + URL-matched suggestions ── */}
+                        {(selectedProvider || urlCandidates.length > 0) && (
+                            <Box
+                                sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 0.75,
+                                    px: 1.5,
+                                    py: 1,
+                                    borderRadius: 1,
+                                    bgcolor: 'action.hover',
+                                    flexWrap: 'wrap',
                                 }}
-                                onAnthropicChange={(v) => {
-                                    setFusAnthropicUrl(v);
-                                    if (v.trim()) setBaseUrlError(false);
-                                    setVerificationResult(null);
-                                }}
-                                onOpenAIBlur={() => onChangeRef.current('apiBaseOpenAI', fusOpenAIUrl)}
-                                onAnthropicBlur={() => onChangeRef.current('apiBaseAnthropic', fusAnthropicUrl)}
-                                baseUrlError={baseUrlError}
-                                mode={mode}
-                                onConvertToSingle={onConvertToSingle}
-                            />
-                        ) : customMode ? (
-                            <CustomEndpointField
-                                value={providerInputValue}
-                                onChange={(val) => {
-                                    setProviderInputValue(val);
-                                    if (val.trim()) setBaseUrlError(false);
-                                }}
-                                onBlur={() => {
-                                    if (data.apiBase !== providerInputValue) {
-                                        onChangeRef.current('apiBase', providerInputValue);
-                                        onChangeRef.current('providerBaseUrls', undefined);
-                                    }
-                                }}
-                                error={baseUrlError}
-                                showV1Hint={showV1Hint}
-                                onApplyV1={applyV1Suffix}
-                            />
-                        ) : (
-                            <ProviderAutocomplete
-                                options={allProviders}
-                                value={selectedProvider}
-                                inputValue={providerInputValue}
-                                onChange={handleProviderSelect}
-                                onInputChange={handleProviderInputChange}
-                                onBlur={handleProviderInputBlur}
-                                required
-                                error={baseUrlError}
-                                helperText={baseUrlError ? t('providerDialog.provider.required', {defaultValue: 'Base URL is required'}) : undefined}
-                            />
+                            >
+                                {selectedProvider && (
+                                    <Chip
+                                        icon={<ProviderIcon identifier={selectedProvider.icon || selectedProvider.id} size={16}/>}
+                                        label={selectedProvider.alias || selectedProvider.name}
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => handleSelectProvider(selectedProvider)}
+                                        sx={{cursor: 'pointer'}}
+                                    />
+                                )}
+                                {urlCandidates
+                                    .filter(p => p.id !== selectedProvider?.id)
+                                    .map(p => (
+                                        <Chip
+                                            key={p.id}
+                                            icon={<ProviderIcon identifier={p.icon || p.id} size={14}/>}
+                                            label={p.alias || p.name}
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={() => handleSelectProvider(p)}
+                                            sx={{cursor: 'pointer'}}
+                                        />
+                                    ))}
+                            </Box>
                         )}
 
+                        {/* ── Protocol Slots ────────────────────── */}
+                        <Box>
+                            <Typography variant="caption" fontWeight={600} color="text.secondary" sx={{display: 'block', mb: 1.5}}>
+                                {t('providerDialog.protocol.label', {defaultValue: 'Protocols'})}
+                            </Typography>
+                            <Stack spacing={2}>
+                                <ProtocolSlot
+                                    kind="openai"
+                                    slot={slotOpenAI}
+                                    onToggle={() => toggleSlot('openai')}
+                                    onUrlChange={updateOpenAIUrl}
+                                    onUrlBlur={commitOpenAI}
+                                    urlError={baseUrlError && !slotOpenAI.url.trim() && !slotAnthropic.url.trim()}
+                                    v1Hint={{show: persistentV1Hint, onApply: handleApplyV1Suffix}}
+                                    helperText={selectedProvider
+                                        ? (slotOpenAI.enabled
+                                            ? t('providerDialog.protocol.helperOpenAI', {defaultValue: 'Supports models from OpenAI, Google and many other OpenAI-compatible providers'})
+                                            : undefined)
+                                        : undefined}
+                                />
+                                <ProtocolSlot
+                                    kind="anthropic"
+                                    slot={slotAnthropic}
+                                    onToggle={() => toggleSlot('anthropic')}
+                                    onUrlChange={updateAnthropicUrl}
+                                    onUrlBlur={commitAnthropic}
+                                    urlError={baseUrlError && !slotAnthropic.url.trim() && !slotOpenAI.url.trim()}
+                                    helperText={selectedProvider
+                                        ? (slotAnthropic.enabled
+                                            ? t('providerDialog.protocol.helperAnthropic', {defaultValue: 'For Anthropic-compatible AI providers, commonly used with Claude Code'})
+                                            : undefined)
+                                        : undefined}
+                                />
+                            </Stack>
+                        </Box>
+
+                        {/* ── API Key ─────────────────────────── */}
                         <ApiKeyField
                             mode={mode}
                             token={data.token}
-                            onTokenChange={(value) => {
-                                onChange('token', value);
-                                setVerificationResult(null);
-                            }}
+                            onTokenChange={(value) => { onChange('token', value); setVerificationResult(null); }}
                             noApiKey={noApiKey}
                             optionalEditable={optionalEditableToken}
                             onNoApiKeyChange={(checked) => {
                                 setNoApiKey(checked);
                                 onChange('noKeyRequired', checked);
                                 setVerificationResult(null);
-                                if (checked && !optionalEditableToken) {
-                                    onChange('token', '');
-                                }
+                                if (checked && !optionalEditableToken) onChange('token', '');
                             }}
                         />
 
-                        {!dualMode && (
-                            <ProtocolSelector
-                                selectedProvider={selectedProvider}
-                                protocolOpenAI={protocolOpenAI}
-                                protocolAnthropic={protocolAnthropic}
-                                dualLocked={effectiveLocked}
-                                singleSelect={customMode}
-                                openAICapabilities={openAICapabilities}
-                                onToggleOpenAI={toggleOpenAIProtocol}
-                                onToggleAnthropic={toggleAnthropicProtocol}
-                                recommendOpenAI={customMode}
-                            />
-                        )}
-
-                        {/* Edit-mode upgrade: turn a single endpoint into a dual one.
-                            Suppressed when the template-driven DualToggle is visible —
-                            one upgrade affordance per dialog, never two. */}
-                        {mode === 'edit' && !dualMode && !showDualToggle && data.authType !== 'oauth' && onConvertToDual && (
-                            <Link
-                                component="button"
-                                type="button"
-                                variant="caption"
-                                underline="hover"
-                                sx={{alignSelf: 'flex-start'}}
-                                onClick={onConvertToDual}
-                            >
-                                {t('providerDialog.providerSingle.convertToDual', {defaultValue: 'Add an Anthropic endpoint (make it a Dual provider)'})}
-                            </Link>
-                        )}
-
-                        {showDualToggle && (
-                            <DualToggle
-                                checked={createDualProvider}
-                                onChange={(checked) => {
-                                    setCreateDualProvider(checked);
-                                    onChange('createDualProvider', checked);
-                                    if (mode === 'edit' && selectedProvider) {
-                                        if (checked) {
-                                            // Upgrade: auto-select both protocols and populate URLs from template.
-                                            setProtocolOpenAI(true);
-                                            setProtocolAnthropic(true);
-                                            onChange('apiBaseOpenAI', selectedProvider.baseUrlOpenAI || '');
-                                            onChange('apiBaseAnthropic', selectedProvider.baseUrlAnthropic || '');
-                                            onChange('apiBase', selectedProvider.baseUrlOpenAI || data.apiBase);
-                                            onChange('apiStyle', 'openai');
-                                        } else {
-                                            // Revert: restore original single-protocol state.
-                                            const snap = initialDualRef.current;
-                                            setProtocolOpenAI(snap.apiStyle === 'openai');
-                                            setProtocolAnthropic(snap.apiStyle === 'anthropic');
-                                            onChange('apiBaseOpenAI', '');
-                                            onChange('apiBaseAnthropic', '');
-                                            onChange('apiBase', snap.apiBase);
-                                            onChange('apiStyle', snap.apiStyle as 'openai' | 'anthropic');
-                                        }
-                                    } else {
-                                        syncProtocolsToParent(protocolOpenAI, protocolAnthropic, selectedProvider);
-                                    }
-                                    setVerificationResult(null);
-                                }}
-                            />
-                        )}
-
-                        {showTopologyHint && (
-                            <Stack
-                                direction="row"
-                                spacing={1}
-                                alignItems="flex-start"
-                                sx={{
-                                    mt: -1,
-                                    px: 1.5,
-                                    py: 1,
-                                    borderRadius: 1,
-                                    bgcolor: 'action.hover',
-                                }}
-                            >
-                                <InfoOutlined sx={{fontSize: 16, mt: 0.2, color: 'text.secondary'}}/>
-                                <Typography variant="caption" color="text.secondary" sx={{lineHeight: 1.4}}>
-                                    {willMergeBaseUrls
-                                        ? t('providerDialog.dual.outcomeMerged')
-                                        : t('providerDialog.dual.outcomeSplit')}
-                                </Typography>
-                            </Stack>
-                        )}
-
+                        {/* ── Verification result ─────────────── */}
                         {verificationResult && (
                             <VerificationResultPanel
                                 result={verificationResult}
                                 onClose={() => setVerificationResult(null)}
                                 v1Hint={{
-                                    show: !verificationResult.success
-                                        && protocolOpenAI
-                                        && !(/\/v1\/?$/.test(data.apiBase || providerInputValue)),
+                                    show: !verificationResult.success && slotOpenAI.enabled && !(/\/v1\/?$/.test(slotOpenAI.url)),
                                     onApply: () => {
-                                        const base = (data.apiBase || providerInputValue).replace(/\/+$/, '');
+                                        const base = slotOpenAI.url.replace(/\/+$/, '');
                                         const newUrl = `${base}/v1`;
-                                        setProviderInputValue(newUrl);
-                                        onChangeRef.current('apiBase', newUrl);
-                                        setVerificationResult(null);
+                                        updateOpenAIUrl(newUrl);
+                                        commitProtocolState({...slotOpenAI, url: newUrl}, slotAnthropic);
                                     },
                                 }}
                             />
                         )}
 
-                        {/* Proxy URL — exposed at top level since it's a common requirement */}
+                        {/* ── Proxy URL ──────────────────────── */}
                         <ProxyUrlField
                             mode={mode}
                             proxyUrl={data.proxyUrl || ''}
@@ -924,27 +654,19 @@ const ProviderFormDialog = ({
                             onUseGlobalProxyChange={handleUseGlobalProxyChange}
                         />
 
-                        {/* Advanced accordion — user-agent, name, enabled */}
+                        {/* ── Advanced accordion ─────────────── */}
                         <Accordion
-                            disableGutters
-                            elevation={0}
+                            disableGutters elevation={0}
                             expanded={advancedOpen}
                             onChange={(_, expanded) => setAdvancedOpen(expanded)}
                             sx={{
-                                border: 0,
-                                borderTop: 1,
-                                borderColor: 'divider',
-                                '&:before': {display: 'none'},
-                                bgcolor: 'transparent',
+                                border: 0, borderTop: 1, borderColor: 'divider',
+                                '&:before': {display: 'none'}, bgcolor: 'transparent',
                             }}
                         >
                             <AccordionSummary
                                 expandIcon={<ExpandMore fontSize="small"/>}
-                                sx={{
-                                    px: 0,
-                                    minHeight: 40,
-                                    '& .MuiAccordionSummary-content': {my: 0.5},
-                                }}
+                                sx={{px: 0, minHeight: 40, '& .MuiAccordionSummary-content': {my: 0.5}}}
                             >
                                 <Typography variant="body2" color="text.secondary" fontWeight={600}>
                                     {t('providerDialog.advanced.label', {defaultValue: 'Advanced — user-agent, name'})}
@@ -955,41 +677,27 @@ const ProviderFormDialog = ({
                                     <KeyNameField
                                         showField={showNameField}
                                         onShowField={() => {
-                                            if (!data.name) {
-                                                onChangeRef.current('name', computeAutoName());
-                                            }
+                                            if (!data.name) onChangeRef.current('name', computeAutoName());
                                             setShowNameField(true);
                                         }}
                                         name={data.name}
                                         autoName={computeAutoName()}
                                         onNameChange={(value) => {
                                             onChange('name', value);
-                                            setVerificationResult(null);
                                             setNameIsAutoFilled(false);
                                         }}
                                     />
-
                                     <TextField
-                                        size="small"
-                                        fullWidth
+                                        size="small" fullWidth
                                         label={t('providerDialog.advanced.userAgent.label', {defaultValue: 'User-Agent'})}
                                         placeholder={t('providerDialog.advanced.userAgent.placeholder', {defaultValue: 'Leave empty to use built-in default'})}
                                         value={data.userAgent || ''}
                                         onChange={(e) => onChange('userAgent', e.target.value)}
-                                        helperText={t('providerDialog.advanced.userAgent.help', {
-                                            defaultValue: 'Custom outbound HTTP User-Agent. Empty falls back to the provider\'s built-in UA.',
-                                        })}
+                                        helperText={t('providerDialog.advanced.userAgent.help', {defaultValue: 'Custom outbound HTTP User-Agent. Empty falls back to the provider\'s built-in UA.'})}
                                     />
-
                                     {mode === 'edit' && (
                                         <FormControlLabel
-                                            control={
-                                                <Switch
-                                                    size="small"
-                                                    checked={data.enabled || false}
-                                                    onChange={(e) => onChange('enabled', e.target.checked)}
-                                                />
-                                            }
+                                            control={<Switch size="small" checked={data.enabled || false} onChange={(e) => onChange('enabled', e.target.checked)}/>}
                                             label={t('providerDialog.enabled')}
                                         />
                                     )}
@@ -1001,9 +709,7 @@ const ProviderFormDialog = ({
                 <DialogActions sx={{px: 3, pb: 2}}>
                     {onBack && (
                         <Button
-                            type="button"
-                            variant="text"
-                            size="small"
+                            type="button" variant="text" size="small"
                             startIcon={<ArrowBack fontSize="small"/>}
                             onClick={() => { onClose(); onBack(); }}
                         >
@@ -1012,43 +718,27 @@ const ProviderFormDialog = ({
                     )}
                     <Stack direction="row" spacing={1} sx={{ml: 'auto'}}>
                         <Button
-                            type="button"
-                            variant="outlined"
-                            size="small"
+                            type="button" variant="outlined" size="small"
                             disabled={!hasAnyProtocol || verifying || submitting}
                             onClick={handleVerify}
-                            title="Test connection using available endpoints (optional check)"
+                            title="Test connection using available endpoints"
                             sx={(theme) => ({
                                 '&.Mui-disabled': {
-                                    color: theme.palette.mode === 'dark'
-                                        ? 'rgba(255, 255, 255, 0.68)'
-                                        : theme.palette.text.secondary,
+                                    color: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.68)' : theme.palette.text.secondary,
                                 },
                             })}
                         >
-                            {verifying ? (
-                                <CircularProgress size={16} thickness={4}/>
-                            ) : (
-                                'Test Connection'
-                            )}
+                            {verifying ? <CircularProgress size={16} thickness={4}/> : 'Test Connection'}
                         </Button>
                         <Button
-                            type="submit"
-                            variant="contained"
-                            size="small"
+                            type="submit" variant="contained" size="small"
                             disabled={!hasAnyProtocol || verifying || submitting}
                             sx={(theme) => ({
                                 minWidth: verifying || submitting ? '80px' : 'auto',
-                                '&.Mui-disabled': {
-                                    color: theme.palette.primary.contrastText,
-                                },
+                                '&.Mui-disabled': {color: theme.palette.primary.contrastText},
                             })}
                         >
-                            {submitting ? (
-                                <CircularProgress size={20} thickness={4}/>
-                            ) : (
-                                submitText || defaultSubmitText
-                            )}
+                            {submitting ? <CircularProgress size={20} thickness={4}/> : (submitText || defaultSubmitText)}
                         </Button>
                     </Stack>
                 </DialogActions>

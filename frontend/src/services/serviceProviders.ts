@@ -181,10 +181,10 @@ function classifyRegion(sp: ServiceProvider): 'cn' | 'global' | 'self-hosted' {
 
 // Get all unique providers (not split by API style)
 export function getAllUniqueProviders(): UniqueProvider[] {
-    const providers: UniqueProvider[] = [];
+    const seen = new Map<string, UniqueProvider>();
     const serviceProviders = getServiceProvidersSync();
 
-    Object.entries(serviceProviders).forEach(([_key, provider]: [string, any]) => {
+    Object.entries(serviceProviders).forEach(([key, provider]: [string, any]) => {
         const sp = provider as ServiceProvider;
 
         // Skip OAuth providers - they should be added via the OAuth dialog, not API key dialog
@@ -192,7 +192,14 @@ export function getAllUniqueProviders(): UniqueProvider[] {
             return;
         }
 
-        providers.push({
+        // Use provider.id as the dedup key. When the source dictionary has
+        // two entries with the same id (e.g. a coding-plan variant keyed
+        // differently but sharing the logical id), the first one seen wins.
+        if (seen.has(sp.id)) {
+            return;
+        }
+
+        seen.set(sp.id, {
             id: sp.id,
             name: sp.name,
             alias: sp.alias,
@@ -209,14 +216,14 @@ export function getAllUniqueProviders(): UniqueProvider[] {
     });
 
     // Sort by display name
+    const providers = Array.from(seen.values());
     providers.sort((a, b) => (a.alias || a.name).localeCompare(b.alias || b.name));
-
     return providers;
 }
 
-// Unified search function for provider templates
-// Searches across: display name (alias/name), base URLs, website, and ID
-// This ensures consistent search behavior across all UI components
+// Unified search function for provider templates.
+// Searches across all user-searchable fields so providers are discoverable
+// by their common names, even when the display alias differs.
 export function searchProviders(providers: UniqueProvider[], query: string): UniqueProvider[] {
     const needle = query.trim().toLowerCase();
     if (!needle) {
@@ -225,13 +232,18 @@ export function searchProviders(providers: UniqueProvider[], query: string): Uni
 
     return providers.filter(provider => {
         const displayName = (provider.alias || provider.name).toLowerCase();
-        return (
-            displayName.includes(needle) ||
-            (provider.id || '').toLowerCase().includes(needle) ||
-            (provider.baseUrlOpenAI || '').toLowerCase().includes(needle) ||
-            (provider.baseUrlAnthropic || '').toLowerCase().includes(needle) ||
-            (provider.website || '').toLowerCase().includes(needle)
-        );
+        const fields = [
+            displayName,
+            provider.id || '',
+            provider.name || '',
+            provider.baseUrlOpenAI || '',
+            provider.baseUrlAnthropic || '',
+            provider.website || '',
+            // Additional discovery fields — users often search by these
+            provider.icon || '',
+            provider.type || '',
+        ];
+        return fields.some(f => f.toLowerCase().includes(needle));
     });
 }
 
