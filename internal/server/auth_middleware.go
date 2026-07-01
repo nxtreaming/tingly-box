@@ -35,3 +35,22 @@ func WithModelAuthMiddleware(modelAuth gin.HandlerFunc) ServerOption {
 		s.customModelAuthMiddleware = modelAuth
 	}
 }
+
+// Helper methods to get the appropriate auth middleware
+// These methods return custom middleware if provided by TBE, otherwise default middleware
+
+// getUserAuthMiddleware returns the user auth middleware to use
+func (s *Server) getUserAuthMiddleware() gin.HandlerFunc {
+	if s.customUserAuthMiddleware != nil {
+		return s.customUserAuthMiddleware
+	}
+	return s.authMW.UserAuthMiddleware()
+}
+
+// getModelAuthMiddleware returns the model auth middleware to use
+func (s *Server) getModelAuthMiddleware() gin.HandlerFunc {
+	if s.customModelAuthMiddleware != nil {
+		return s.customModelAuthMiddleware
+	}
+	return s.authMW.ModelAuthMiddleware()
+}
