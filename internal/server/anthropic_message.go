@@ -178,7 +178,7 @@ func (s *Server) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMess
 	// pristine request as received (post-vision-proxy, pre-pre-chain); the
 	// winning attempt's provider/model is re-bound per attempt via SetActiveService.
 	var recorder *ProtocolRecorder
-	if scenarioConfig.IsRecording() {
+	if scenarioConfig.IsRecordingEnable() {
 		bs, err := req.MarshalJSON()
 		if err != nil {
 			bs = []byte("{}")
@@ -308,7 +308,7 @@ func (s *Server) AnthropicMessagesV1Beta(c *gin.Context, req *protocol.Anthropic
 
 	// Get or create the recorder for dual-stage recording (pristine request body).
 	var recorder *ProtocolRecorder
-	if scenarioConfig.IsRecording() {
+	if scenarioConfig.IsRecordingEnable() {
 		bs, err := req.MarshalJSON()
 		if err != nil {
 			bs = []byte("{}")
