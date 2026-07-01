@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -208,7 +207,7 @@ func (s *Server) nonstreamOpenAIChat(c *gin.Context, provider *typ.Provider, ori
 		// Track error with no usage
 		usage := protocol.NewTokenUsageWithCache(0, 0, 0)
 		s.trackUsageWithTokenUsage(c, usage, err)
-		c.JSON(upstreamForwardStatus(err), ErrorResponse{
+		c.JSON(protocol.UpstreamStatus(err, http.StatusInternalServerError), ErrorResponse{
 			Error: ErrorDetail{
 				Message: "Failed to forward request: " + err.Error(),
 				Type:    "api_error",
@@ -295,7 +294,7 @@ func (s *Server) streamOpenAIChat(c *gin.Context, provider *typ.Provider, origin
 		// Track error with no usage
 		usage := protocol.NewTokenUsageWithCache(0, 0, 0)
 		s.trackUsageWithTokenUsage(c, usage, err)
-		c.JSON(upstreamForwardStatus(err), ErrorResponse{
+		c.JSON(protocol.UpstreamStatus(err, http.StatusInternalServerError), ErrorResponse{
 			Error: ErrorDetail{
 				Message: "Failed to create streaming request: " + err.Error(),
 				Type:    "api_error",
@@ -327,7 +326,7 @@ func (s *Server) nonstreamOpenAIResponses(c *gin.Context, reqCtx *transform.Tran
 	}
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to forward request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to forward request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}

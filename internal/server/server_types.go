@@ -2,11 +2,13 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tingly-dev/tingly-box/internal/probe"
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 )
 
 // Error Models
@@ -23,13 +25,22 @@ type ErrorDetail struct {
 	Code    string `json:"code,omitempty"`
 }
 
-// sendErrorResponse registers the error into gin context for logging middleware and sends JSON response.
-func SendErrorResponse(c *gin.Context, statusCode int, err error, errType string) {
-	c.Error(fmt.Errorf("%s: %w", errType, err)).SetType(gin.ErrorTypePublic) //nolint:errcheck
+// SendErrorResponse registers the error into gin context for logging middleware and sends JSON response.
+func SendErrorResponse(c *gin.Context, err error, desc string) {
+
+	// upstreamForwardStatus returns the status code to send to the client when a
+	// non-streaming forward fails. It propagates the upstream provider's HTTP status
+	// when the error carries one (so a 401/429/4xx is not flattened into a 500) and
+	// defaults to 500 Internal Server Error otherwise.
+	statusCode := protocol.UpstreamStatus(err, http.StatusInternalServerError)
+
+	asErr := fmt.Errorf("%s: %s", err.Error(), desc)
+	c.Error(asErr).SetType(gin.ErrorTypePublic) //nolint:errcheck
 	c.JSON(statusCode, ErrorResponse{
 		Error: ErrorDetail{
-			Message: err.Error(),
-			Type:    errType,
+			Message: asErr.Error(),
+			Type:    "protocol_error",
+			Code:    desc,
 		},
 	})
 }

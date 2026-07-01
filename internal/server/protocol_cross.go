@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/gin-gonic/gin"
@@ -185,7 +184,7 @@ func (s *Server) nonstreamOpenAIChatToResponses(c *gin.Context, reqCtx *transfor
 	chatResp, _, err := forwarding.ForwardOpenAIChat(fc, wrapper, chatReq)
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to forward request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to forward request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}
@@ -211,7 +210,7 @@ func (s *Server) streamOpenAIChatToResponses(c *gin.Context, reqCtx *transform.T
 	}
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to create streaming request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to create streaming request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}
@@ -237,7 +236,7 @@ func (s *Server) nonstreamAnthropicBetaToResponses(c *gin.Context, reqCtx *trans
 	}
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to forward request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to forward request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}
@@ -266,7 +265,7 @@ func (s *Server) streamAnthropicBetaToResponses(c *gin.Context, reqCtx *transfor
 	}
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to create streaming request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to create streaming request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}
@@ -321,7 +320,7 @@ func (s *Server) nonstreamResponsesToChat(c *gin.Context, reqCtx *transform.Tran
 	}
 	if err != nil {
 		s.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to forward request: : %w", err), "api_error")
+		SendErrorResponse(c, err, "Failed to forward request")
 		if recorder != nil {
 			recorder.RecordError(err)
 		}

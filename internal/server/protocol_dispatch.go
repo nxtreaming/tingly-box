@@ -281,7 +281,7 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 		}
 		if err != nil {
 			s.trackUsageFromContext(c, 0, 0, err)
-			SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to create streaming request: : %w", err), "api_error")
+			SendErrorResponse(c, err, "Failed to create streaming request")
 			if recorder != nil {
 				recorder.RecordError(err)
 			}
@@ -299,7 +299,7 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 					s.trackUsageFromContext(c, 0, 0, err)
 				}
 			}
-			SendErrorResponse(c, upstreamForwardStatus(err), fmt.Errorf("Failed to create streaming request: : %w", err), "api_error")
+			SendErrorResponse(c, err, "Failed to create streaming request")
 			if recorder != nil {
 				recorder.RecordError(err)
 			}
@@ -329,16 +329,16 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 			}
 		} else {
 			var cancel context.CancelFunc
-			var forwardErr error
-			anthropicResp, cancel, forwardErr = forwarding.ForwardAnthropicV1Beta(fc, wrapper, req)
+			var err error
+			anthropicResp, cancel, err = forwarding.ForwardAnthropicV1Beta(fc, wrapper, req)
 			if cancel != nil {
 				defer cancel()
 			}
-			if forwardErr != nil {
-				s.trackUsageFromContext(c, 0, 0, forwardErr)
-				SendErrorResponse(c, upstreamForwardStatus(forwardErr), fmt.Errorf("Failed to forward Anthropic request: : %w", forwardErr), "api_error")
+			if err != nil {
+				s.trackUsageFromContext(c, 0, 0, err)
+				SendErrorResponse(c, err, "Failed to forward Anthropic request")
 				if recorder != nil {
-					recorder.RecordError(forwardErr)
+					recorder.RecordError(err)
 				}
 				return
 			}
@@ -351,7 +351,7 @@ func (s *Server) dispatchAnthropicBetaToOpenAIChat(
 		if ShouldRoundtripResponse(c, "anthropic") {
 			roundtripped, err := RoundtripOpenAIMapViaAnthropic(openaiResp, responseModel, provider, actualModel)
 			if err != nil {
-				SendErrorResponse(c, http.StatusInternalServerError, fmt.Errorf("Failed to roundtrip response: : %w", err), "api_error")
+				SendErrorResponse(c, err, "Failed to roundtrip response")
 				return
 			}
 			openaiResp = roundtripped
