@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/tingly-dev/tingly-box/internal/client"
 	"github.com/tingly-dev/tingly-box/internal/server/middleware"
-	apitokenmodule "github.com/tingly-dev/tingly-box/internal/server/module/apitoken"
+	sharing "github.com/tingly-dev/tingly-box/internal/server/module/sharing"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
@@ -212,5 +212,5 @@ func (s *Server) UseTokenManagementEndpoints() {
 
 	api := s.engine.Group("/api/v1")
 	api.Use(s.getUserAuthMiddleware())
-	apitokenmodule.RegisterRoutes(api, apitokenmodule.NewHandler(store))
+	sharing.RegisterRoutes(api, sharing.NewHandler(store))
 }

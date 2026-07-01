@@ -1,7 +1,7 @@
 // Package apitoken implements CRUD HTTP endpoints for shared API tokens.
 // It is intentionally free of any internal/server import — all error
 // responses are written inline so the package has no circular dependency.
-package apitoken
+package sharing
 
 import (
 	"crypto/rand"

@@ -1,4 +1,4 @@
-package apitoken
+package sharing
 
 import "github.com/gin-gonic/gin"
 
