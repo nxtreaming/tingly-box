@@ -382,7 +382,13 @@ export async function exportRuleAsJsonlToClipboard(
 }
 
 /**
- * Exports a single provider to the specified format
+ * Exports a single provider to the specified format.
+ *
+ * Fetches the export payload from the backend (GET /provider-export) rather
+ * than building it client-side from the provider object already in memory:
+ * the provider list/table only ever holds the masked token (see
+ * maskForResponse on the backend), so a client-built export would embed a
+ * masked, unusable token. The backend resolves the real token server-side.
  */
 export async function exportProvider(
     provider: any,
@@ -390,12 +396,15 @@ export async function exportProvider(
     onNotification: (message: string, severity: 'success' | 'error') => void
 ): Promise<void> {
     try {
-        const jsonlContent = buildProviderJsonlExport(provider);
+        const content = await fetchProviderExportContent(provider.uuid, format);
         const filename = `${provider.name || 'provider'}-${provider.api_style}`;
+        const extension = format === 'jsonl' ? 'jsonl' : 'txt';
+        const mimeType = format === 'jsonl' ? 'application/jsonl' : 'text/plain';
         const message = format === 'jsonl'
             ? 'Provider exported successfully!'
             : 'Provider exported as Base64! You can copy and share this file.';
-        await exportData(jsonlContent, format, filename, message, onNotification);
+        downloadFile(content, `${filename}.${extension}`, mimeType);
+        onNotification(message, 'success');
     } catch (error) {
         console.error('Error exporting provider:', error);
         onNotification('Failed to export provider', 'error');
@@ -410,8 +419,9 @@ export async function exportProviderAsBase64ToClipboard(
     onNotification: (message: string, severity: 'success' | 'error') => void
 ): Promise<void> {
     try {
-        const jsonlContent = buildProviderJsonlExport(provider);
-        await exportToClipboard(jsonlContent, onNotification);
+        const content = await fetchProviderExportContent(provider.uuid, 'base64');
+        await copyToClipboard(content);
+        onNotification('Base64 export copied to clipboard! You can now paste it anywhere.', 'success');
     } catch (error) {
         console.error('Error exporting provider to clipboard:', error);
         onNotification('Failed to copy to clipboard', 'error');
@@ -426,12 +436,25 @@ export async function exportProviderAsJsonlToClipboard(
     onNotification: (message: string, severity: 'success' | 'error') => void
 ): Promise<void> {
     try {
-        const jsonlContent = buildProviderJsonlExport(provider);
-        await exportJsonlToClipboard(jsonlContent, onNotification);
+        const content = await fetchProviderExportContent(provider.uuid, 'jsonl');
+        await copyToClipboard(content);
+        onNotification('JSONL export copied to clipboard! You can now paste it anywhere.', 'success');
     } catch (error) {
         console.error('Error exporting provider to clipboard:', error);
         onNotification('Failed to copy to clipboard', 'error');
     }
+}
+
+/**
+ * Calls the backend provider-export endpoint and returns the encoded
+ * content, raising if the request failed.
+ */
+async function fetchProviderExportContent(uuid: string, format: ExportFormat): Promise<string> {
+    const result = await api.exportProvider(uuid, format);
+    if (!result?.success || !result?.data?.data) {
+        throw new Error(result?.error || 'Failed to export provider');
+    }
+    return result.data.data;
 }
 
 /**
@@ -459,16 +482,6 @@ async function buildJsonlExport(rule: Rule): Promise<string> {
         createMetadataLine(),
         createRuleLine(rule),
         ...providersData.map(createProviderLine)
-    ]);
-}
-
-/**
- * Builds the JSONL export content for a single provider
- */
-function buildProviderJsonlExport(provider: any): string {
-    return buildJsonlLines([
-        createMetadataLine(),
-        createProviderLine(provider)
     ]);
 }
 
