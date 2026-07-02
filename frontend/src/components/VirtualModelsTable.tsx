@@ -16,6 +16,10 @@ import {
 } from '@mui/material';
 import type { Provider } from '../types/provider';
 
+// Fixed chip width so rows form an aligned grid instead of ragged
+// flex-wrap lines whose chip widths vary with label length.
+const MODEL_CHIP_WIDTH = 132;
+
 interface VirtualModelsTableProps {
     providers: Provider[];
     onToggle?: (providerUuid: string) => void;
@@ -32,8 +36,8 @@ const VirtualModelsTable = ({ providers, onToggle }: VirtualModelsTableProps) =>
             <Table size="small">
                 <TableHead>
                     <TableRow>
-                        <TableCell sx={{ width: '30%' }}>Name</TableCell>
-                        <TableCell sx={{ width: '15%' }}>Protocol</TableCell>
+                        <TableCell sx={{ width: '18%' }}>Name</TableCell>
+                        <TableCell sx={{ width: '10%' }}>API Style</TableCell>
                         <TableCell>Models</TableCell>
                         <TableCell sx={{ width: '12%' }} align="center">Enabled</TableCell>
                     </TableRow>
@@ -65,15 +69,29 @@ const VirtualModelsTable = ({ providers, onToggle }: VirtualModelsTableProps) =>
                                             none registered
                                         </Typography>
                                     ) : (
-                                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                            {models.map((m) => (
-                                                <Chip
-                                                    key={m}
-                                                    label={m}
-                                                    size="small"
-                                                    variant="outlined"
-                                                    sx={{ height: 20 }}
-                                                />
+                                        <Box
+                                            sx={{
+                                                display: 'grid',
+                                                gridTemplateColumns: `repeat(auto-fill, ${MODEL_CHIP_WIDTH}px)`,
+                                                gap: 0.5,
+                                            }}
+                                        >
+                                            {models.map((m: string) => (
+                                                <Tooltip key={m} title={m}>
+                                                    <Chip
+                                                        label={m}
+                                                        size="small"
+                                                        variant="outlined"
+                                                        sx={{
+                                                            height: 20,
+                                                            width: MODEL_CHIP_WIDTH,
+                                                            '& .MuiChip-label': {
+                                                                overflow: 'hidden',
+                                                                textOverflow: 'ellipsis',
+                                                            },
+                                                        }}
+                                                    />
+                                                </Tooltip>
                                             ))}
                                         </Box>
                                     )}
