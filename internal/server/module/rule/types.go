@@ -51,34 +51,6 @@ type DeleteRuleResponse struct {
 	Message string `json:"message" example:"Rule deleted successfully"`
 }
 
-// ImportRuleRequest represents request to import providers from base64/JSONL encoded export data.
-// Despite the endpoint name, only providers are imported — no rule is created or updated.
-// See .design/ for background: dataio export/import is provider-only.
-type ImportRuleRequest struct {
-	Data string `json:"data" binding:"required" description:"Base64 encoded provider export data" example:"TGB64:1.0:..."`
-	// OnProviderConflict specifies what to do when a provider already exists.
-	// "use" - use existing provider, "skip" - skip this provider, "suffix" - create with suffixed name
-	OnProviderConflict string `json:"on_provider_conflict" description:"How to handle provider conflicts" example:"use"`
-}
-
-// ImportRuleResponse represents the response for importing providers
-type ImportRuleResponse struct {
-	Success bool   `json:"success" example:"true"`
-	Message string `json:"message" example:"Providers imported successfully"`
-	Data    struct {
-		ProvidersCreated int            `json:"providers_created" example:"1"`
-		ProvidersUsed    int            `json:"providers_used" example:"0"`
-		Providers        []ProviderInfo `json:"providers,omitempty"`
-	} `json:"data"`
-}
-
-// ProviderInfo contains basic information about an imported or used provider
-type ProviderInfo struct {
-	UUID   string `json:"uuid" example:"123e4567-e89b-12d3-a456-426614174000"`
-	Name   string `json:"name" example:"openai"`
-	Action string `json:"action" example:"created"` // "created", "used", "skipped"
-}
-
 // FlagRegistryResponse exposes the catalog of supported rule-level flags so the
 // UI can render an extension catalog without hard-coding the list.
 type FlagRegistryResponse struct {

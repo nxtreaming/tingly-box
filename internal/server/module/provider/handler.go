@@ -16,6 +16,7 @@ import (
 
 	"github.com/tingly-dev/tingly-box/internal/constant"
 	"github.com/tingly-dev/tingly-box/internal/data/db"
+	"github.com/tingly-dev/tingly-box/internal/dataio"
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
@@ -522,4 +523,143 @@ func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, ProviderModelsResponse{Success: true, Data: providerModels})
+}
+
+// ImportProviders imports providers from base64/JSONL encoded export data.
+// Registered at /provider-import (see routes.go); only providers are
+// imported — dataio export/import no longer carries rule data.
+func (h *Handler) ImportProviders(c *gin.Context) {
+	cfg := h.config
+	if cfg == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Global config not available",
+		})
+		return
+	}
+
+	var req ImportProvidersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Set default conflict handling
+	// OnProviderConflict: Only matters when the same provider UUID already exists
+	//   - "use": use the existing provider with the same UUID
+	//   - "skip": skip importing this provider
+	// Note: Provider names can be duplicated; if name exists, a suffix is added automatically
+	if req.OnProviderConflict == "" {
+		req.OnProviderConflict = "use" // Use existing if same UUID found
+	}
+
+	opts := dataio.ImportOptions{
+		OnProviderConflict: req.OnProviderConflict,
+		Quiet:              true,
+	}
+
+	result, err := dataio.Import(req.Data, cfg, dataio.FormatAuto, opts)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "Failed to import providers: " + err.Error(),
+		})
+		return
+	}
+
+	response := ImportProvidersResponse{
+		Success: true,
+		Message: "Providers imported successfully",
+	}
+	response.Data.ProvidersCreated = result.ProvidersCreated
+	response.Data.ProvidersUsed = result.ProvidersUsed
+
+	// Convert provider import info to response format
+	for _, providerInfo := range result.Providers {
+		response.Data.Providers = append(response.Data.Providers, ProviderImportInfo{
+			UUID:   providerInfo.UUID,
+			Name:   providerInfo.Name,
+			Action: providerInfo.Action,
+		})
+	}
+
+	// Log the action
+	logrus.WithFields(logrus.Fields{
+		"action":            obs.ActionUpdateProvider,
+		"providers_created": result.ProvidersCreated,
+	}).Info(
+		fmt.Sprintf(
+			"Provider import completed: created=%d, used=%d",
+			result.ProvidersCreated, result.ProvidersUsed,
+		),
+	)
+
+	c.JSON(http.StatusOK, response)
+}
+
+// ExportProvider exports a single provider (identified by the required
+// "uuid" query parameter) as base64/JSONL encoded data (see internal/dataio).
+// Format defaults to base64 and is selected via the "format" query
+// parameter ("base64" or "jsonl").
+func (h *Handler) ExportProvider(c *gin.Context) {
+	cfg := h.config
+	if cfg == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Global config not available",
+		})
+		return
+	}
+
+	uid := c.Query("uuid")
+	if uid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "uuid is required",
+		})
+		return
+	}
+
+	formatStr := c.DefaultQuery("format", string(dataio.FormatBase64))
+	format := dataio.Format(formatStr)
+	if format != dataio.FormatBase64 && format != dataio.FormatJSONL {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("invalid format %q: supported formats are base64 and jsonl", formatStr),
+		})
+		return
+	}
+
+	p, err := cfg.GetProviderByUUID(uid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "Provider not found"})
+		return
+	}
+
+	result, err := dataio.Export(&dataio.ExportRequest{Providers: []*typ.Provider{p}}, format)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "Failed to export provider: " + err.Error(),
+		})
+		return
+	}
+
+	response := ExportProviderResponse{
+		Success: true,
+		Message: "Provider exported successfully",
+	}
+	response.Data.Format = string(format)
+	response.Data.Data = result.Content
+
+	logrus.WithFields(logrus.Fields{
+		"action":   obs.ActionUpdateProvider,
+		"provider": uid,
+		"format":   format,
+	}).Info(fmt.Sprintf("Provider export completed: uuid=%s, format=%s", uid, format))
+
+	c.JSON(http.StatusOK, response)
 }
