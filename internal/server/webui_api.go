@@ -352,7 +352,7 @@ func (s *Server) useWebAPIEndpoints(manager *swagger.RouteManager) {
 	// - /openapi.json (OpenAPI 3.0)
 	manager.SetupOpenAPIEndpoints()
 
-	// Provider CRUD + model management
+	// Provider CRUD + model management + provider export / import
 	providerHandler := providermodule.NewHandler(s.config, s.quotaManager)
 	providermodule.RegisterRoutes(apiV2, providerHandler)
 

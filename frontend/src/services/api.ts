@@ -500,26 +500,38 @@ export const api = {
         return uiAPI('/rule/flags/registry', {method: 'GET'});
     },
 
-    importRule: async (data: string, onProviderConflict: string = 'use', onRuleConflict: string = 'new'): Promise<any> => {
-        return uiAPI('/rule/import', {
-            method: 'POST',
-            body: JSON.stringify({
-                data,
-                on_provider_conflict: onProviderConflict,
-                on_rule_conflict: onRuleConflict,
-            }),
-        });
+    // Imports providers from a base64/JSONL export bundle.
+    importProvider: async (data: string, onProviderConflict: string = 'use'): Promise<any> => {
+        try {
+            const client = await getClient();
+            const headers = await getAuthHeaders();
+            const response = await client.POST('/api/v2/provider-import', {
+                headers,
+                body: {
+                    data,
+                    on_provider_conflict: onProviderConflict,
+                },
+            });
+            return response.data;
+        } catch (error: any) {
+            return {success: false, error: error.message};
+        }
     },
 
-    importProvider: async (data: string, onProviderConflict: string = 'use'): Promise<any> => {
-        return uiAPI('/rule/import', {
-            method: 'POST',
-            body: JSON.stringify({
-                data,
-                on_provider_conflict: onProviderConflict,
-                on_rule_conflict: 'skip',
-            }),
-        });
+    // Exports a single provider (with its real, unmasked token) as a
+    // base64 (default) or JSONL bundle.
+    exportProvider: async (uuid: string, format: 'base64' | 'jsonl' = 'base64'): Promise<any> => {
+        try {
+            const client = await getClient();
+            const headers = await getAuthHeaders();
+            const response = await client.GET('/api/v2/provider-export', {
+                headers,
+                params: {query: {uuid, format}},
+            });
+            return response.data;
+        } catch (error: any) {
+            return {success: false, error: error.message};
+        }
     },
 
     // Scenario API

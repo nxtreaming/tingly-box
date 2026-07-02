@@ -56,4 +56,26 @@ func RegisterRoutes(api *swagger.RouteGroup, h *Handler) {
 		swagger.WithTags("models"),
 		swagger.WithResponseModel(ProviderModelsResponse{}),
 	)
+
+	// POST /provider-import - Import providers from base64/JSONL encoded
+	// export data. Renamed from the legacy /rule/import path now that
+	// dataio export/import is provider-only (this endpoint no longer
+	// touches rules).
+	api.POST("/provider-import", h.ImportProviders,
+		swagger.WithDescription("Import providers from base64/JSONL encoded export data"),
+		swagger.WithTags("providers"),
+		swagger.WithRequestModel(ImportProvidersRequest{}),
+		swagger.WithResponseModel(ImportProvidersResponse{}),
+	)
+
+	// GET /provider-export - Export a single provider (uuid required) as
+	// base64/JSONL encoded data. Registered alongside the import route for
+	// path symmetry.
+	api.GET("/provider-export", h.ExportProvider,
+		swagger.WithDescription("Export a single provider as base64/JSONL encoded data"),
+		swagger.WithTags("providers"),
+		swagger.WithQueryRequired("uuid", "string", "UUID of the provider to export"),
+		swagger.WithQuery("format", "string", "Export format: base64 (default) or jsonl"),
+		swagger.WithResponseModel(ExportProviderResponse{}),
+	)
 }
