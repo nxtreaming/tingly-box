@@ -500,24 +500,15 @@ export const api = {
         return uiAPI('/rule/flags/registry', {method: 'GET'});
     },
 
-    importRule: async (data: string, onProviderConflict: string = 'use', onRuleConflict: string = 'new'): Promise<any> => {
-        return uiAPI('/rule/import', {
-            method: 'POST',
-            body: JSON.stringify({
-                data,
-                on_provider_conflict: onProviderConflict,
-                on_rule_conflict: onRuleConflict,
-            }),
-        });
-    },
-
+    // Imports providers from a base64/JSONL export bundle. The backend route
+    // is still /rule/import for API compatibility, but only providers are
+    // imported — no rule is created or updated.
     importProvider: async (data: string, onProviderConflict: string = 'use'): Promise<any> => {
         return uiAPI('/rule/import', {
             method: 'POST',
             body: JSON.stringify({
                 data,
                 on_provider_conflict: onProviderConflict,
-                on_rule_conflict: 'skip',
             }),
         });
     },

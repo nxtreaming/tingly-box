@@ -306,39 +306,24 @@ const TemplatePage: React.FC<TemplatePageProps> = (props) => {
         setShowImportModal(true);
     }, []);
 
-    // Handle import data (from modal)
+    // Handle import data (from modal). Import is provider-only — no rule is
+    // created or updated, so only the provider list needs refreshing.
     const handleImportData = useCallback(async (data: string) => {
         setImporting(true);
         try {
-            const result = await api.importRule(data);
+            const result = await api.importProvider(data);
             if (result.success) {
-                // Refresh providers first to ensure newly imported providers are available
+                // Refresh providers so newly imported ones are available
                 if (onProvidersLoad) {
                     await onProvidersLoad();
                 }
-                // Then refresh rules by calling parent's onRulesChange
-                // Only refresh if scenario is available (required by backend API)
-                if (onRulesChange && scenario) {
-                    const updatedRules = await api.getRules(scenario);
-                    if (updatedRules.success) {
-                        onRulesChange(updatedRules.data);
-                    }
-                } else if (onRulesChange) {
-                    // If no scenario, trigger parent to refresh by calling without data
-                    onRulesChange([] as any);
-                }
 
-                const createdMsg = result.data?.rule_created ? 'Rule created.' : '';
-                const updatedMsg = result.data?.rule_updated ? 'Rule updated.' : '';
                 const providersMsg = result.data?.providers_created > 0
-                    ? ` ${result.data.providers_created} provider(s) imported.`
+                    ? `${result.data.providers_created} provider(s) imported.`
                     : result.data?.providers_used > 0
-                        ? ` ${result.data.providers_used} existing provider(s) used.`
-                        : '';
-                showNotification(
-                    `Rule imported successfully! ${createdMsg}${updatedMsg}${providersMsg}`,
-                    'success'
-                );
+                        ? `${result.data.providers_used} existing provider(s) used.`
+                        : 'No providers were imported.';
+                showNotification(providersMsg, 'success');
                 setShowImportModal(false);
             } else {
                 setImportError({open: true, message: result.error || 'Import failed'});
@@ -348,7 +333,7 @@ const TemplatePage: React.FC<TemplatePageProps> = (props) => {
         } finally {
             setImporting(false);
         }
-    }, [showNotification, scenario, onRulesChange, onProvidersLoad]);
+    }, [showNotification, onProvidersLoad]);
 
     // Generate unified rightAction if not provided
     const rightAction = customRightAction ?? (
