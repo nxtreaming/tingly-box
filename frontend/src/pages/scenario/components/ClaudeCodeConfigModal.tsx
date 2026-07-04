@@ -2,13 +2,14 @@ import { Alert, AlertTitle, Box, Button, Checkbox, CircularProgress, Dialog, Dia
 import { Close as CloseIcon } from '@/components/icons';
 import { InfoOutlined as InfoOutlinedIcon } from '@/components/icons';
 import { VisibilityOutlined as VisibilityOutlinedIcon } from '@/components/icons';
+import { RestartAlt as RestartAltIcon } from '@/components/icons';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import CodeBlock from '@/components/CodeBlock';
 import { isFullEdition } from '@/utils/edition';
 import { useScenarioPageModal } from '@/pages/scenario/context/ScenarioPageContext';
 import ClaudeCodeQuickConfig, { derivePrefsFromRules, prefsToEnvPreview } from './ClaudeCodeQuickConfig';
-import type { ClaudeCodePrefs } from './ClaudeCodeQuickConfig';
+import type { ClaudeCodeDefaultMode, ClaudeCodePrefs } from './ClaudeCodeQuickConfig';
 import type { AgentApplyResult } from './AgentSetupCard';
 import Context1MChangeBanner from './Context1MChangeBanner';
 
@@ -25,7 +26,7 @@ interface ClaudeCodeConfigModalProps {
     // this callback is what writes them to ~/.claude/settings.json. The
     // returned AgentApplyResult is rendered in-modal so the user sees
     // which files were touched and where the backup landed.
-    onApplyWithPrefs?: (prefs: ClaudeCodePrefs, installStatusLine: boolean) => Promise<AgentApplyResult>;
+    onApplyWithPrefs?: (prefs: ClaudeCodePrefs, installStatusLine: boolean, defaultMode: ClaudeCodeDefaultMode) => Promise<AgentApplyResult>;
     isApplyLoading?: boolean;
     // Pending 1M context change (scoped to the toggled rule) to preview in the modal
     pendingContext1MChange?: { enabled: boolean; ruleUuid?: string } | null;
@@ -42,6 +43,7 @@ const MODAL_TEXT = {
         tabQuick: '自动配置',
         tabManual: '手动',
         previewButton: '预览生成的 env',
+        resetTooltip: '重置为 tb 推荐默认值',
         previewTitle: '预览 — 将写入 ~/.claude/settings.json 的 env 段',
         applySuccess: '配置已写入',
         applyFailure: '应用失败',
@@ -53,6 +55,7 @@ const MODAL_TEXT = {
         tabQuick: 'Auto Config',
         tabManual: 'Manual',
         previewButton: 'Preview generated env',
+        resetTooltip: 'Reset to tb-recommended defaults',
         previewTitle: 'Preview — env block written to ~/.claude/settings.json',
         applySuccess: 'Configuration applied',
         applyFailure: 'Apply failed',
@@ -63,7 +66,7 @@ const MODAL_TEXT = {
 } as const;
 
 // Helper to generate common Node.js script for writing config files
-const generateNodeScript = (settingsPath: string, envConfig: Record<string, any>) => {
+const generateNodeScript = (settingsPath: string, configPayload: Record<string, any>) => {
     return `const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -77,7 +80,7 @@ if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
 }
 
-const config = ${JSON.stringify(envConfig, null, 4)};
+const config = ${JSON.stringify(configPayload, null, 4)};
 
 let existing = {};
 if (fs.existsSync(targetPath)) {
@@ -86,7 +89,7 @@ if (fs.existsSync(targetPath)) {
 }
 
 const merged = settingsPath.includes("settings.json")
-    ? { ...existing, env: config }
+    ? { ...existing, ...config }
     : { ...existing, ...config };
 
 fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2));
@@ -114,6 +117,7 @@ const ClaudeCodeConfigModal: React.FC<ClaudeCodeConfigModalProps> = ({
     const [previewOpen, setPreviewOpen] = React.useState(false);
     const [applyResult, setApplyResult] = React.useState<AgentApplyResult | null>(null);
     const [installStatusLine, setInstallStatusLine] = React.useState(true);
+    const [defaultMode, setDefaultMode] = React.useState<ClaudeCodeDefaultMode>('acceptEdits');
 
     // Prefs is the single source of truth for both tabs. Re-seed when the
     // modal isn't open so we never clobber the user's unsaved edits.
@@ -123,6 +127,7 @@ const ClaudeCodeConfigModal: React.FC<ClaudeCodeConfigModalProps> = ({
     React.useEffect(() => {
         if (!open) {
             setPrefs(derivePrefsFromRules({ rules, mode: configMode }));
+            setDefaultMode('acceptEdits');
             setApplyResult(null);
         }
     }, [open, configMode, rules]);
@@ -155,6 +160,11 @@ const ClaudeCodeConfigModal: React.FC<ClaudeCodeConfigModalProps> = ({
         setApplyResult(null);
     }, []);
 
+    const setDefaultModeAndClearResult = React.useCallback((next: ClaudeCodeDefaultMode) => {
+        setDefaultMode(next);
+        setApplyResult(null);
+    }, []);
+
     const claudeJsonConfig = { hasCompletedOnboarding: true };
 
     // Env map for both the manual tab (display/copy) and the preview dialog.
@@ -164,23 +174,28 @@ const ClaudeCodeConfigModal: React.FC<ClaudeCodeConfigModalProps> = ({
         [prefs, baseUrl, token],
     );
 
+    const settingsConfig = React.useMemo(
+        () => ({ env: envConfig, defaultMode }),
+        [envConfig, defaultMode],
+    );
+
     const generateSettingsConfig = React.useCallback(() => {
-        return JSON.stringify({ env: envConfig }, null, 2);
-    }, [envConfig]);
+        return JSON.stringify(settingsConfig, null, 2);
+    }, [settingsConfig]);
 
     const generateSettingsScriptWindows = React.useCallback(() => {
-        const nodeCode = generateNodeScript('.claude/settings.json', envConfig);
+        const nodeCode = generateNodeScript('.claude/settings.json', settingsConfig);
         return `# PowerShell - Run in PowerShell
 @"
 ${nodeCode}
 "@ | node`;
-    }, [envConfig]);
+    }, [settingsConfig]);
 
     const generateSettingsScriptUnix = React.useCallback(() => {
-        const nodeCode = generateNodeScript('.claude/settings.json', envConfig);
+        const nodeCode = generateNodeScript('.claude/settings.json', settingsConfig);
         return `# Bash - Run in terminal
 node -e '${nodeCode.replace(/'/g, "'\\''")}'`;
-    }, [envConfig]);
+    }, [settingsConfig]);
 
     const generateClaudeJsonConfig = React.useCallback(() => {
         return JSON.stringify(claudeJsonConfig, null, 2);
@@ -273,9 +288,14 @@ node -e '${nodeCode.replace(/'/g, "'\\''")}'`;
 
     const handleApply = async (installStatusLine: boolean) => {
         if (!onApplyWithPrefs) return;
-        const result = await onApplyWithPrefs(prefs, installStatusLine);
+        const result = await onApplyWithPrefs(prefs, installStatusLine, defaultMode);
         setApplyResult(result);
     };
+
+    const handleResetDefaults = React.useCallback(() => {
+        setPrefsAndClearResult(derivePrefsFromRules({ rules, mode: configMode }));
+        setDefaultModeAndClearResult('acceptEdits');
+    }, [configMode, rules, setDefaultModeAndClearResult, setPrefsAndClearResult]);
 
     const canApply = isFullEdition && !!onApplyWithPrefs;
 
@@ -293,12 +313,21 @@ node -e '${nodeCode.replace(/'/g, "'\\''")}'`;
                 PaperProps={{ sx: { borderRadius: 3, maxHeight: '90vh' } }}
             >
                 <DialogTitle sx={{ pb: 1, borderBottom: 1, borderColor: 'divider' }}>
-                    <Typography variant="h6" fontWeight={600}>
-                        {t('claudeCode.modal.title')}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                        {t('claudeCode.modal.subtitle')}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2 }}>
+                        <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="h6" fontWeight={600}>
+                                {t('claudeCode.modal.title')}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {t('claudeCode.modal.subtitle')}
+                            </Typography>
+                        </Box>
+                        <Tooltip title={modalText.resetTooltip} arrow>
+                            <IconButton size="small" onClick={handleResetDefaults} sx={{ mt: 0.25 }}>
+                                <RestartAltIcon fontSize="small" />
+                            </IconButton>
+                        </Tooltip>
+                    </Box>
                     <Tabs
                         value={mainTab}
                         onChange={(_, v) => setMainTab(v)}
@@ -364,7 +393,8 @@ node -e '${nodeCode.replace(/'/g, "'\\''")}'`;
                         <ClaudeCodeQuickConfig
                             prefs={prefs}
                             setPrefs={setPrefsAndClearResult}
-                            onResetDefaults={() => setPrefsAndClearResult(derivePrefsFromRules({ rules, mode: configMode }))}
+                            defaultMode={defaultMode}
+                            setDefaultMode={setDefaultModeAndClearResult}
                         />
                     )}
 
