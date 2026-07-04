@@ -1,4 +1,4 @@
-// Package server — failover_dispatch.go
+// Package aimodel — failover_dispatch.go
 //
 // Mid-request failover for the priority routing tactic, built as a
 // layered hand-off rather than a smart shim fused into the main path:
@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"github.com/tingly-dev/tingly-box/internal/server/recording"
 
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
@@ -43,8 +44,8 @@ type preStreamErrorRecorder interface {
 // pre-stream" response: status 500 + JSON error, captured by the
 // buffered failover writer so the orchestrator can retry the next
 // priority tier.
-func (s *Server) handlePreStreamFailure(c *gin.Context, err error, recorder preStreamErrorRecorder) {
-	s.trackUsageFromContext(c, 0, 0, err)
+func (ph *ProtocolHandler) handlePreStreamFailure(c *gin.Context, err error, recorder preStreamErrorRecorder) {
+	ph.trackUsageFromContext(c, 0, 0, err)
 	stream.SendStreamingError(c, err)
 	if recorder != nil {
 		recorder.RecordError(err)
@@ -59,7 +60,7 @@ func (s *Server) handlePreStreamFailure(c *gin.Context, err error, recorder preS
 // the whole request on one misconfigured provider. Genuine client errors are
 // rejected in the prologue, before the gate is installed, so they remain
 // non-retryable and reach the client unchanged.
-func (s *Server) failAttemptSetup(c *gin.Context, err error) {
+func (ph *ProtocolHandler) FailAttemptSetup(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, ErrorResponse{
 		Error: ErrorDetail{
 			Message: err.Error(),
@@ -208,6 +209,22 @@ func (g *firstChunkGate) CommitFirstChunk() {
 	g.commit()
 }
 
+// CommitFirstChunkIfGate signals "first real chunk arrived" if w is
+// currently a *firstChunkGate (installed by DispatchWithPriorityFailover
+// when a rule has more than one active service), no-op otherwise. Exported
+// so callers outside this package that simulate a streaming success (e.g.
+// the load-balance dry-run simulator) can commit the gate without needing
+// firstChunkGate itself exported. Returns whether a gate was found and
+// committed.
+func CommitFirstChunkIfGate(w gin.ResponseWriter) bool {
+	gate, ok := w.(*firstChunkGate)
+	if !ok {
+		return false
+	}
+	gate.CommitFirstChunk()
+	return true
+}
+
 // CommitIfBuffered is the orchestrator's deferred terminal flush of an
 // uncommitted buffered response (the last error after retries are
 // exhausted). No-op when already committed or never touched.
@@ -263,7 +280,7 @@ func (g *firstChunkGate) Discard() {
 // (Anthropic/OpenAI/Google) and failover can rotate freely across providers.
 //
 // Returns (nil, nil, nil) when no compatible candidate remains.
-func (s *Server) selectFallbackService(
+func (ph *ProtocolHandler) selectFallbackService(
 	rule *typ.Rule,
 	excluded map[string]bool,
 	requireAPIStyle protocol.APIStyle,
@@ -274,7 +291,7 @@ func (s *Server) selectFallbackService(
 		if excluded[svc.ServiceID()] {
 			continue
 		}
-		p, err := s.config.GetProviderByUUID(svc.Provider)
+		p, err := ph.deps.Config.GetProviderByUUID(svc.Provider)
 		if err != nil || p == nil {
 			continue
 		}
@@ -307,7 +324,7 @@ func (s *Server) selectFallbackService(
 	}
 
 	// For non-tier tactics, use the load balancer
-	svc, err := s.loadBalancer.SelectService(&tempRule)
+	svc, err := ph.deps.LoadBalancer.SelectService(&tempRule)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -329,7 +346,7 @@ type dispatchAttempt func(provider *typ.Provider, model string)
 //
 // Single-service requests bypass the gate entirely: with no fallback
 // tier, failover is impossible and there is no reason to buffer.
-func (s *Server) dispatchWithPriorityFailover(
+func (ph *ProtocolHandler) DispatchWithPriorityFailover(
 	c *gin.Context,
 	rule *typ.Rule,
 	initialProvider *typ.Provider,
@@ -356,7 +373,7 @@ func (s *Server) dispatchWithPriorityFailover(
 
 	// Keep the recorder's bound service in sync per attempt so the
 	// breaker store gets fed the right serviceID on failure.
-	rec, _ := getRecorderFromContext(c)
+	rec, _ := recording.GetRecorderFromContext(c)
 
 	for i := 0; i < len(activeServices); i++ {
 		serviceID := loadbalance.FormatServiceID(provider.UUID, model)
@@ -411,7 +428,7 @@ func (s *Server) dispatchWithPriorityFailover(
 		// Pass "" so the candidate pool spans all API styles: each attempt
 		// re-transforms the request for the selected provider's style, so
 		// heterogeneous failover (e.g. Anthropic → OpenAI) is supported.
-		nextProvider, nextService, err := s.selectFallbackService(rule, tried, "")
+		nextProvider, nextService, err := ph.selectFallbackService(rule, tried, "")
 		if err != nil {
 			logrus.WithContext(c.Request.Context()).WithFields(logrus.Fields{
 				"stage":          "failover_error",

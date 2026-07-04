@@ -12,21 +12,21 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/client"
 	mcpruntime "github.com/tingly-dev/tingly-box/internal/mcp/runtime"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
-	coretool "github.com/tingly-dev/tingly-box/internal/tool"
 	"github.com/tingly-dev/tingly-box/internal/server/advisortool"
 	"github.com/tingly-dev/tingly-box/internal/server/servertool"
+	coretool "github.com/tingly-dev/tingly-box/internal/tool"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
 func TestCallMCPToolWithGuard_DisabledToolReturnsCallingDisabledTools(t *testing.T) {
-	s := &Server{
-		mcpRuntime: mcpruntime.NewRuntime(func() *typ.MCPRuntimeConfig {
+	h := NewHandler(ProtocolHandlerDeps{
+		MCPRuntime: mcpruntime.NewRuntime(func() *typ.MCPRuntimeConfig {
 			// No enabled server tools => any MCP tool name should be treated as disabled.
 			return &typ.MCPRuntimeConfig{}
 		}),
-	}
+	})
 
-	_, result, err := s.callMCPToolWithHooks(context.Background(), "tingly_box_mcp__webtools__mcp_web_search", `{"query":"x"}`, nil)
+	_, result, err := h.CallMCPToolWithHooks(context.Background(), "tingly_box_mcp__webtools__mcp_web_search", `{"query":"x"}`, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "calling disabled tools")
 	require.Contains(t, result.FirstText(), `"error":"calling disabled tools: tingly_box_mcp__webtools__mcp_web_search"`)
@@ -102,10 +102,10 @@ func TestCallMCPToolWithHooks_AdvisorHookCreatesContextAndCallsBackend(t *testin
 
 	pipeline := servertool.NewPipeline()
 	pipeline.Register(advisortool.NewProvider(*cfg.Sources[0].Advisor, cp, rt.SessionStore()))
-	s := &Server{mcpRuntime: rt, servertoolPipeline: pipeline}
+	h := NewHandler(ProtocolHandlerDeps{MCPRuntime: rt, GetServertoolPipeline: func() *servertool.Pipeline { return pipeline }})
 	msgs := []map[string]any{{"role": "user", "content": "please advise"}}
 
-	_, result, err := s.callMCPToolWithHooks(context.Background(), "tingly_box_mcp__advisor__advisor", `{}`, msgs)
+	_, result, err := h.CallMCPToolWithHooks(context.Background(), "tingly_box_mcp__advisor__advisor", `{}`, msgs)
 	require.NoError(t, err)
 	require.Contains(t, result.FirstText(), "created-by-hook")
 	require.NotEmpty(t, capturedMessages)
@@ -169,7 +169,7 @@ func TestCallMCPToolWithHooks_AdvisorUsesDecrementAcrossCalls(t *testing.T) {
 
 	t.Cleanup(rt.Close)
 
-	s := &Server{mcpRuntime: rt}
+	h := NewHandler(ProtocolHandlerDeps{MCPRuntime: rt})
 
 	toolName := "tingly_box_mcp__advisor__advisor"
 	msgs := []map[string]any{{"role": "user", "content": "hello"}}
@@ -179,15 +179,15 @@ func TestCallMCPToolWithHooks_AdvisorUsesDecrementAcrossCalls(t *testing.T) {
 		UsesRemaining: &uses,
 	})
 
-	_, result1, err1 := s.callMCPToolWithHooks(ctx, toolName, `{}`, msgs)
+	_, result1, err1 := h.CallMCPToolWithHooks(ctx, toolName, `{}`, msgs)
 	require.NoError(t, err1)
 	require.Contains(t, result1.FirstText(), "plan")
 
-	ctx, result2, err2 := s.callMCPToolWithHooks(ctx, toolName, `{}`, msgs)
+	ctx, result2, err2 := h.CallMCPToolWithHooks(ctx, toolName, `{}`, msgs)
 	require.NoError(t, err2)
 	require.Contains(t, result2.FirstText(), "plan")
 
-	_, result3, err3 := s.callMCPToolWithHooks(ctx, toolName, `{}`, msgs)
+	_, result3, err3 := h.CallMCPToolWithHooks(ctx, toolName, `{}`, msgs)
 	require.NoError(t, err3)
 	require.Equal(t, "Advisor consultations exhausted for this request.", result3.FirstText())
 }
@@ -219,7 +219,7 @@ func TestCallMCPToolWithHooks_AdvisorLoopbackDepthGuard(t *testing.T) {
 	}
 	t.Cleanup(rt.Close)
 
-	s := &Server{mcpRuntime: rt}
+	h := NewHandler(ProtocolHandlerDeps{MCPRuntime: rt})
 
 	uses := 3
 	// Pre-set depth to 2 to simulate a loopback (advisor calling itself).
@@ -229,7 +229,7 @@ func TestCallMCPToolWithHooks_AdvisorLoopbackDepthGuard(t *testing.T) {
 		UsesRemaining: &uses,
 	})
 
-	_, result, err := s.callMCPToolWithHooks(ctx, "tingly_box_mcp__advisor__advisor", `{}`, nil)
+	_, result, err := h.CallMCPToolWithHooks(ctx, "tingly_box_mcp__advisor__advisor", `{}`, nil)
 	require.NoError(t, err)
 	require.Contains(t, result.FirstText(), "recursion limit reached")
 }

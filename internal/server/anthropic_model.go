@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
@@ -85,17 +86,17 @@ type (
 )
 
 // HandleAnthropicListModels handles Anthropic v1 models endpoint
-func (s *Server) HandleAnthropicListModels(c *gin.Context) {
-	s.anthropicListModelsWithScenario(c, nil)
+func (ph *ProtocolHandler) HandleAnthropicListModels(c *gin.Context) {
+	ph.anthropicListModelsWithScenario(c, nil)
 }
 
 // AnthropicListModelsForScenario handles scenario-scoped model listing for Anthropic format
-func (s *Server) AnthropicListModelsForScenario(c *gin.Context, scenario typ.RuleScenario) {
-	s.anthropicListModelsWithScenario(c, &scenario)
+func (ph *ProtocolHandler) AnthropicListModelsForScenario(c *gin.Context, scenario typ.RuleScenario) {
+	ph.anthropicListModelsWithScenario(c, &scenario)
 }
 
-func (s *Server) anthropicListModelsWithScenario(c *gin.Context, scenario *typ.RuleScenario) {
-	cfg := s.config
+func (ph *ProtocolHandler) anthropicListModelsWithScenario(c *gin.Context, scenario *typ.RuleScenario) {
+	cfg := ph.deps.Config
 	if cfg == nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{
 			Error: ErrorDetail{
@@ -114,7 +115,7 @@ func (s *Server) anthropicListModelsWithScenario(c *gin.Context, scenario *typ.R
 		if !rule.Active {
 			continue
 		}
-		if scenario != nil && !shouldIncludeRuleInModelList(*scenario, rule.GetScenario()) {
+		if scenario != nil && !ShouldIncludeRuleInModelList(*scenario, rule.GetScenario()) {
 			continue
 		}
 
@@ -213,13 +214,13 @@ func (s *Server) anthropicListModelsWithScenario(c *gin.Context, scenario *typ.R
 			MaxInputTokens: maxInputTokens,
 			MaxTokens:      maxTokens,
 			Description:    description,
-			AuthType:       string(primaryAuthTypeForRule(cfg, rule)),
+			AuthType:       string(PrimaryAuthTypeForRule(cfg, rule)),
 		})
 	}
 
 	sort.SliceStable(models, func(i, j int) bool {
-		return authTypeSortWeight(typ.AuthType(models[i].AuthType)) <
-			authTypeSortWeight(typ.AuthType(models[j].AuthType))
+		return AuthTypeSortWeight(typ.AuthType(models[i].AuthType)) <
+			AuthTypeSortWeight(typ.AuthType(models[j].AuthType))
 	})
 
 	firstID := ""

@@ -11,12 +11,13 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/constant"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
+	"github.com/tingly-dev/tingly-box/internal/server/recording"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
 // HandleAnthropicMessages handles Anthropic v1 messages API requests
 // This is the entry point that delegates to the appropriate implementation (v1 or beta)
-func (s *Server) HandleAnthropicMessages(c *gin.Context) {
+func (ph *ProtocolHandler) HandleAnthropicMessages(c *gin.Context) {
 	scenario := c.Param("scenario")
 	scenarioType := typ.RuleScenario(scenario)
 
@@ -25,7 +26,7 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 	logrus.Debugf("scenario: %s beta: %v", scenario, beta)
 
 	// Validate scenario
-	if !isValidRuleScenario(scenarioType) {
+	if !IsValidRuleScenario(scenarioType) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{
 			Error: ErrorDetail{
 				Message: fmt.Sprintf("invalid scenario: %s", scenario),
@@ -98,7 +99,7 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 	}
 
 	// Check if this is the request requestModel name first
-	rule, err = s.determineRuleWithScenario(c, scenarioType, requestModel)
+	rule, err = ph.determineRuleWithScenario(c, scenarioType, requestModel)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{
 			Error: ErrorDetail{
@@ -118,10 +119,10 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 		return
 	}
 
-	s.applyVisionProxy(c, scenarioType, rule, reqParams)
+	ph.applyVisionProxy(c, scenarioType, rule, reqParams)
 
 	// Select service using routing pipeline
-	provider, selectedService, err = s.routingSelector.SelectService(c, scenarioType, rule, reqParams)
+	provider, selectedService, err = ph.deps.RoutingSelector.SelectService(c, scenarioType, rule, reqParams)
 	if err != nil {
 		logrus.WithError(err).Errorf("Select service error")
 		c.AbortWithStatusJSON(http.StatusBadRequest, ErrorResponse{
@@ -141,10 +142,10 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 
 	// Delegate to the appropriate implementation based on beta parameter
 	if beta {
-		s.AnthropicMessagesV1Beta(c, betaMessages, actualModel, requestModel, rule, provider)
+		ph.AnthropicMessagesV1Beta(c, betaMessages, actualModel, requestModel, rule, provider)
 
 	} else {
-		s.AnthropicMessagesV1(c, messages, actualModel, requestModel, rule, provider)
+		ph.AnthropicMessagesV1(c, messages, actualModel, requestModel, rule, provider)
 	}
 }
 
@@ -155,16 +156,16 @@ func (s *Server) HandleAnthropicMessages(c *gin.Context) {
 // (pre-chain → guardrails → target resolution → transform → dispatch) against
 // the candidate selected for that attempt. Because the transform is re-run per
 // attempt, failover can rotate across heterogeneous API styles.
-func (s *Server) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMessagesRequest, requestModel string, responseModel string, rule *typ.Rule, provider *typ.Provider) {
+func (ph *ProtocolHandler) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMessagesRequest, requestModel string, responseModel string, rule *typ.Rule, provider *typ.Provider) {
 	// ── One-time prologue (provider-independent) ──
 
 	// Auto-detect context-1m from incoming beta header for Claude Code/Desktop/Codex.
 	// (Mutates the shared rule only, so it must run before any attempt.)
-	detectAndApplyContext1MFromIncomingRequest(c, rule)
+	applyContextOneM(c, rule)
 
 	scenarioType := rule.GetScenario()
 	isStreaming := req.Stream
-	scenarioConfig := s.config.GetScenarioConfig(scenarioType)
+	scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType)
 
 	// Inject session ID into request context so all downstream code can access it
 	sessionID := resolveSessionID(c, req.MessageNewParams)
@@ -177,13 +178,13 @@ func (s *Server) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMess
 	// Get or create the recorder for dual-stage recording. The body is the
 	// pristine request as received (post-vision-proxy, pre-pre-chain); the
 	// winning attempt's provider/model is re-bound per attempt via SetActiveService.
-	var recorder *ProtocolRecorder
+	var recorder *recording.ProtocolRecorder
 	if scenarioConfig.IsRecordingEnable() {
 		bs, err := req.MarshalJSON()
 		if err != nil {
 			bs = []byte("{}")
 		}
-		recorder = s.EnsureProtocolRecorder(c, string(scenarioType), provider, requestModel, s.GetScenarioRecordMode(scenarioType), bs)
+		recorder = ph.EnsureProtocolRecorder(c, string(scenarioType), provider, requestModel, ph.getScenarioRecordMode(scenarioType), bs)
 	}
 
 	// Snapshot a pristine template only when failover is possible; the single
@@ -200,18 +201,18 @@ func (s *Server) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMess
 	}
 
 	// ── Per-attempt pipeline (provider-dependent) ──
-	s.dispatchWithPriorityFailover(c, rule, provider, requestModel,
+	ph.DispatchWithPriorityFailover(c, rule, provider, requestModel,
 		func(p *typ.Provider, retryModel string) {
 			areq := req
 			if multi {
-				cloned, err := cloneAnthropicV1Request(template)
+				cloned, err := CloneAnthropicV1Request(template)
 				if err != nil {
-					s.failAttemptSetup(c, err)
+					ph.FailAttemptSetup(c, err)
 					return
 				}
 				areq = cloned
 			}
-			s.runAnthropicV1Attempt(c, areq, responseModel, p, retryModel, rule, isStreaming, scenarioType, scenarioConfig, recorder)
+			ph.runAnthropicV1Attempt(c, areq, responseModel, p, retryModel, rule, isStreaming, scenarioType, scenarioConfig, recorder)
 		})
 }
 
@@ -220,7 +221,7 @@ func (s *Server) AnthropicMessagesV1(c *gin.Context, req *protocol.AnthropicMess
 // pre-transform chain and guardrails, resolve the target API for this provider's
 // style, transform, and dispatch. Setup failures route through failAttemptSetup
 // so the orchestrator can advance to the next candidate.
-func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMessagesRequest, responseModel string, provider *typ.Provider, requestModel string, rule *typ.Rule, isStreaming bool, scenarioType typ.RuleScenario, scenarioConfig *typ.ScenarioConfig, recorder *ProtocolRecorder) {
+func (ph *ProtocolHandler) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMessagesRequest, responseModel string, provider *typ.Provider, requestModel string, rule *typ.Rule, isStreaming bool, scenarioType typ.RuleScenario, scenarioConfig *typ.ScenarioConfig, recorder *recording.ProtocolRecorder) {
 	// Resolve dual endpoint: when the provider has an Anthropic-compatible
 	// dual URL configured, route there natively to avoid a transform.
 	provider = provider.ResolveStyle(protocol.APIStyleAnthropic)
@@ -235,18 +236,18 @@ func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMe
 	c.Set("model", requestModel)
 
 	// Build and run server-side pre-transform chain (scenario-driven flags)
-	maxAllowed := s.templateManager.GetMaxTokensForModelByProvider(provider, requestModel)
-	if err := executeAnthropicV1PreChain(
+	maxAllowed := ph.deps.TemplateManager.GetMaxTokensForModelByProvider(provider, requestModel)
+	if err := ExecuteAnthropicV1PreChain(
 		req.MessageNewParams, scenarioConfig,
-		s.config.GetDefaultMaxTokens(), maxAllowed, isStreaming,
+		ph.deps.Config.GetDefaultMaxTokens(), maxAllowed, isStreaming,
 	); err != nil {
-		s.failAttemptSetup(c, err)
+		ph.FailAttemptSetup(c, err)
 		return
 	}
 
 	scenario := GetTrackingContextScenario(c)
-	if s.guardrailsEnabledForScenario(scenario) {
-		s.applyGuardrailsToAnthropicV1Request(c, req.MessageNewParams, requestModel, provider)
+	if ph.guardrailsEnabledForScenario(scenario) {
+		ApplyGuardrailsToAnthropicV1Request(c, ph.currentGuardrailsRuntime(), req.MessageNewParams, requestModel, provider)
 	}
 
 	// Determine target API type for protocol transformation detection
@@ -257,9 +258,9 @@ func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMe
 	case protocol.APIStyleGoogle:
 		target = protocol.TypeGoogle
 	case protocol.APIStyleOpenAI:
-		resolvedTarget, routeErr := ResolveOpenAIEndpoint(provider, resolveRuleFlags(c, rule), IncomingAPIResponses)
+		resolvedTarget, routeErr := ResolveOpenAIEndpoint(provider, ResolveRuleFlags(c, rule), IncomingAPIResponses)
 		if routeErr != nil {
-			s.failAttemptSetup(c, routeErr)
+			ph.FailAttemptSetup(c, routeErr)
 			return
 		}
 		target = resolvedTarget
@@ -267,11 +268,11 @@ func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMe
 
 	// Resolve flags with scenario injection and auto-apply for CleanHeader.
 	// (This also applies the custom User-Agent to the request context.)
-	ruleFlags := resolveRuleFlagsWithScenario(c, rule, scenarioType, scenarioConfig, protocol.TypeAnthropicV1, target, provider)
+	ruleFlags := ResolveRuleFlagsWithScenario(c, rule, scenarioType, scenarioConfig, protocol.TypeAnthropicV1, target, provider)
 
-	reqCtx, err := s.transformAnthropicV1(c, req, target, provider, isStreaming, recorder, scenarioType, rulePreBaseTransforms(ruleFlags), rulePreVendorTransforms(ruleFlags))
+	reqCtx, err := ph.TransformAnthropicV1(c, req, target, provider, isStreaming, recorder, scenarioType, RulePreBaseTransforms(ruleFlags), RulePreVendorTransforms(ruleFlags))
 	if err != nil {
-		s.failAttemptSetup(c, err)
+		ph.FailAttemptSetup(c, err)
 		return
 	}
 	defer reqCtx.Release()
@@ -279,7 +280,7 @@ func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMe
 	reqCtx.RequestModel = requestModel
 	reqCtx.ResponseModel = responseModel
 
-	s.dispatchChainResult(c, reqCtx, rule, provider, isStreaming, recorder)
+	ph.DispatchChainResult(c, reqCtx, rule, provider, isStreaming, recorder)
 }
 
 // AnthropicMessagesV1Beta implements beta messages API.
@@ -287,16 +288,16 @@ func (s *Server) runAnthropicV1Attempt(c *gin.Context, req *protocol.AnthropicMe
 // Like AnthropicMessagesV1, the provider-independent prologue runs once and the
 // per-attempt callback re-runs the provider-dependent pipeline so failover can
 // rotate across heterogeneous API styles.
-func (s *Server) AnthropicMessagesV1Beta(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, requestModel string, responseModel string, rule *typ.Rule, provider *typ.Provider) {
+func (ph *ProtocolHandler) AnthropicMessagesV1Beta(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, requestModel string, responseModel string, rule *typ.Rule, provider *typ.Provider) {
 	// ── One-time prologue (provider-independent) ──
 
 	// Auto-detect context-1m from incoming beta header for Claude Code/Desktop/Codex.
 	// (Mutates the shared rule only, so it must run before any attempt.)
-	detectAndApplyContext1MFromIncomingRequest(c, rule)
+	applyContextOneM(c, rule)
 
 	scenarioType := rule.GetScenario()
 	isStreaming := req.Stream
-	scenarioConfig := s.config.GetScenarioConfig(scenarioType)
+	scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType)
 
 	// Inject session ID into request context so all downstream code can access it
 	sessionID := resolveSessionID(c, req.BetaMessageNewParams)
@@ -307,13 +308,13 @@ func (s *Server) AnthropicMessagesV1Beta(c *gin.Context, req *protocol.Anthropic
 	SetTrackingContext(c, rule, provider, requestModel, responseModel, isStreaming)
 
 	// Get or create the recorder for dual-stage recording (pristine request body).
-	var recorder *ProtocolRecorder
+	var recorder *recording.ProtocolRecorder
 	if scenarioConfig.IsRecordingEnable() {
 		bs, err := req.MarshalJSON()
 		if err != nil {
 			bs = []byte("{}")
 		}
-		recorder = s.EnsureProtocolRecorder(c, string(scenarioType), provider, requestModel, s.GetScenarioRecordMode(scenarioType), bs)
+		recorder = ph.EnsureProtocolRecorder(c, string(scenarioType), provider, requestModel, ph.getScenarioRecordMode(scenarioType), bs)
 	}
 
 	// Snapshot a pristine template only when failover is possible.
@@ -329,24 +330,24 @@ func (s *Server) AnthropicMessagesV1Beta(c *gin.Context, req *protocol.Anthropic
 	}
 
 	// ── Per-attempt pipeline (provider-dependent) ──
-	s.dispatchWithPriorityFailover(c, rule, provider, requestModel,
+	ph.DispatchWithPriorityFailover(c, rule, provider, requestModel,
 		func(p *typ.Provider, retryModel string) {
 			areq := req
 			if multi {
-				cloned, err := cloneAnthropicBetaRequest(template)
+				cloned, err := CloneAnthropicBetaRequest(template)
 				if err != nil {
-					s.failAttemptSetup(c, err)
+					ph.FailAttemptSetup(c, err)
 					return
 				}
 				areq = cloned
 			}
-			s.runAnthropicBetaAttempt(c, areq, responseModel, p, retryModel, rule, isStreaming, scenarioType, scenarioConfig, recorder)
+			ph.runAnthropicBetaAttempt(c, areq, responseModel, p, retryModel, rule, isStreaming, scenarioType, scenarioConfig, recorder)
 		})
 }
 
 // runAnthropicBetaAttempt executes the provider-dependent half of an Anthropic
 // beta request for one failover attempt. See runAnthropicV1Attempt.
-func (s *Server) runAnthropicBetaAttempt(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, responseModel string, provider *typ.Provider, requestModel string, rule *typ.Rule, isStreaming bool, scenarioType typ.RuleScenario, scenarioConfig *typ.ScenarioConfig, recorder *ProtocolRecorder) {
+func (ph *ProtocolHandler) runAnthropicBetaAttempt(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, responseModel string, provider *typ.Provider, requestModel string, rule *typ.Rule, isStreaming bool, scenarioType typ.RuleScenario, scenarioConfig *typ.ScenarioConfig, recorder *recording.ProtocolRecorder) {
 	// Resolve dual endpoint: when the provider has an Anthropic-compatible
 	// dual URL configured, route there natively to avoid a transform.
 	provider = provider.ResolveStyle(protocol.APIStyleAnthropic)
@@ -361,19 +362,19 @@ func (s *Server) runAnthropicBetaAttempt(c *gin.Context, req *protocol.Anthropic
 	c.Set("model", requestModel)
 
 	// Build and run server-side pre-transform chain (scenario-driven flags)
-	maxAllowed := s.templateManager.GetMaxTokensForModelByProvider(provider, requestModel)
-	if err := executeAnthropicBetaPreChain(
+	maxAllowed := ph.deps.TemplateManager.GetMaxTokensForModelByProvider(provider, requestModel)
+	if err := ExecuteAnthropicBetaPreChain(
 		req.BetaMessageNewParams, scenarioConfig,
-		s.config.GetDefaultMaxTokens(), maxAllowed, isStreaming,
+		ph.deps.Config.GetDefaultMaxTokens(), maxAllowed, isStreaming,
 	); err != nil {
-		s.failAttemptSetup(c, err)
+		ph.FailAttemptSetup(c, err)
 		return
 	}
 
 	// request guardrails
 	scenario := GetTrackingContextScenario(c)
-	if s.guardrailsEnabledForScenario(scenario) {
-		s.applyGuardrailsToAnthropicV1BetaRequest(c, req.BetaMessageNewParams, requestModel, provider)
+	if ph.guardrailsEnabledForScenario(scenario) {
+		ApplyGuardrailsToAnthropicV1BetaRequest(c, ph.currentGuardrailsRuntime(), req.BetaMessageNewParams, requestModel, provider)
 	}
 
 	// Determine target API type for protocol transformation detection
@@ -384,9 +385,9 @@ func (s *Server) runAnthropicBetaAttempt(c *gin.Context, req *protocol.Anthropic
 	case protocol.APIStyleGoogle:
 		target = protocol.TypeGoogle
 	case protocol.APIStyleOpenAI:
-		resolvedTarget, routeErr := ResolveOpenAIEndpoint(provider, resolveRuleFlags(c, rule), IncomingAPIResponses)
+		resolvedTarget, routeErr := ResolveOpenAIEndpoint(provider, ResolveRuleFlags(c, rule), IncomingAPIResponses)
 		if routeErr != nil {
-			s.failAttemptSetup(c, routeErr)
+			ph.FailAttemptSetup(c, routeErr)
 			return
 		}
 		target = resolvedTarget
@@ -394,11 +395,11 @@ func (s *Server) runAnthropicBetaAttempt(c *gin.Context, req *protocol.Anthropic
 
 	// Resolve flags with scenario injection and auto-apply for CleanHeader.
 	// (This also applies the custom User-Agent to the request context.)
-	ruleFlags := resolveRuleFlagsWithScenario(c, rule, scenarioType, scenarioConfig, protocol.TypeAnthropicBeta, target, provider)
+	ruleFlags := ResolveRuleFlagsWithScenario(c, rule, scenarioType, scenarioConfig, protocol.TypeAnthropicBeta, target, provider)
 
-	reqCtx, err := s.transformAnthropicBeta(c, req, target, provider, isStreaming, recorder, scenarioType, rulePreBaseTransforms(ruleFlags), rulePreVendorTransforms(ruleFlags))
+	reqCtx, err := ph.TransformAnthropicBeta(c, req, target, provider, isStreaming, recorder, scenarioType, RulePreBaseTransforms(ruleFlags), RulePreVendorTransforms(ruleFlags))
 	if err != nil {
-		s.failAttemptSetup(c, err)
+		ph.FailAttemptSetup(c, err)
 		return
 	}
 	defer reqCtx.Release()
@@ -406,5 +407,5 @@ func (s *Server) runAnthropicBetaAttempt(c *gin.Context, req *protocol.Anthropic
 	reqCtx.RequestModel = requestModel
 	reqCtx.ResponseModel = responseModel
 
-	s.dispatchChainResult(c, reqCtx, rule, provider, isStreaming, recorder)
+	ph.DispatchChainResult(c, reqCtx, rule, provider, isStreaming, recorder)
 }

@@ -1,4 +1,4 @@
-package server
+package server_test
 
 import (
 	"net/http"
@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tingly-dev/tingly-box/internal/obs"
+	"github.com/tingly-dev/tingly-box/internal/server/recordingtest"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
@@ -24,6 +25,13 @@ import (
 // synthetic ssestream.Stream rather than spinning up the full gin router
 // + httptest upstream + routing pipeline. The wiring assertion is the
 // same and the test is ~150 lines lighter.
+//
+// Shared helpers (recordingtest.MemExporter, recordingtest.NewStreamableRecorder,
+// recordingtest.CtxWithTimeout, recordingtest.NewRecordingTestHandler) live in
+// internal/server/recordingtest — a plain package rather than a _test.go file,
+// since internal/server/recording's own tests (hook_external_test.go) need the
+// exact same helpers and Go test files (even in an external _test package)
+// are never importable from another package.
 
 // fakeDecoder implements ssestream.Decoder over a static event slice.
 type fakeDecoder struct {
@@ -46,27 +54,18 @@ func (f *fakeDecoder) Err() error             { return nil }
 func TestAnthropicV1BetaStream_Recorded(t *testing.T) {
 	const scenario = typ.RuleScenario("test")
 
-	// Wire an in-memory exporter so we can inspect what was recorded.
-	mem := &memExporter{}
-	sink := obs.NewSink("", obs.RecordModeStagedRequestResponse, obs.WithExporters(mem))
-	require.NotNil(t, sink)
-	t.Cleanup(func() { sink.Close() })
-
-	s := &Server{
-		scenarioRecordSinks: map[typ.RuleScenario]*obs.Sink{scenario: sink},
-		recordMode:          obs.RecordModeStagedRequestResponse,
-	}
+	h, sink, mem := recordingtest.NewRecordingTestHandler(t, scenario, obs.RecordModeStagedRequestResponse)
 
 	// Gin context with CloseNotify-capable writer (gin.Context.Stream needs it).
 	gin.SetMode(gin.TestMode)
-	w := newStreamableRecorder()
+	w := recordingtest.NewStreamableRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages?beta=true", nil)
 
 	provider := &typ.Provider{Name: "anthropic-test-prov"}
 
 	// Recorder built via the production entry point.
-	recorder := s.EnsureProtocolRecorder(c, string(scenario), provider, "actual-stream-model", obs.RecordModeStagedRequestResponse, nil)
+	recorder := h.EnsureProtocolRecorder(c, string(scenario), provider, "actual-stream-model", obs.RecordModeStagedRequestResponse, nil)
 	require.NotNil(t, recorder)
 
 	// Synthetic SSE event sequence. The Stream decoder will JSON-unmarshal
@@ -87,11 +86,11 @@ func TestAnthropicV1BetaStream_Recorded(t *testing.T) {
 	// Direct call into the inner streaming handler — the function under
 	// test. If AttachRecorderHooks were dropped, the assertion below
 	// (assembled body in FinalResponse) would fail.
-	s.streamAnthropicBeta(c, req, streamResp, string(req.Model), "proxy-stream-model", provider, recorder)
+	h.StreamAnthropicBeta(c, req, streamResp, string(req.Model), "proxy-stream-model", provider, recorder)
 
-	require.NoError(t, sink.ForceFlush(ctxWithTimeout(t)))
+	require.NoError(t, sink.ForceFlush(recordingtest.CtxWithTimeout(t)))
 
-	records := mem.snapshot()
+	records := mem.Snapshot()
 	require.Len(t, records, 1, "exactly one recording must be emitted by the streaming handler")
 
 	rec := records[0]

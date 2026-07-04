@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	affinity2 "github.com/tingly-dev/tingly-box/internal/server/affinity"
 
 	"github.com/tingly-dev/tingly-box/internal/clock"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
@@ -30,7 +31,7 @@ type LBSimulator struct {
 	mu       sync.Mutex
 	server   *Server
 	selector *routing.ServiceSelector
-	affinity *AffinityStore
+	affinity *affinity2.AffinityStore
 	health   *loadbalance.HealthMonitor
 	rule     *typ.Rule
 	scripts  map[string]*lbUpstreamScript
@@ -147,7 +148,7 @@ func NewLBSimulator(rule *typ.Rule, faults map[string][]int) (sim *LBSimulator, 
 	})
 	hf := typ.NewHealthFilter(hm)
 	lb := NewLoadBalancer(cfg, hf)
-	affinity := NewAffinityStore(0)
+	affinity := affinity2.NewAffinityStore(0)
 
 	scripts := make(map[string]*lbUpstreamScript, len(faults))
 	for id, seq := range faults {
@@ -167,8 +168,16 @@ func NewLBSimulator(rule *typ.Rule, faults map[string][]int) (sim *LBSimulator, 
 	restoreClock := clock.SetClock(fakeClock.now)
 	cleanups = append(cleanups, restoreClock)
 
+	simServer := &Server{config: cfg, loadBalancer: lb, healthMonitor: hm}
+	simServer.aiHandler = NewHandler(ProtocolHandlerDeps{
+		Config:                cfg,
+		LoadBalancer:          lb,
+		HealthMonitor:         hm,
+		TrackUsageFromContext: simServer.trackUsageFromContext,
+	})
+
 	sim = &LBSimulator{
-		server:   &Server{config: cfg, loadBalancer: lb, healthMonitor: hm},
+		server:   simServer,
 		selector: routing.NewServiceSelector(cfg, affinity, lb),
 		affinity: affinity,
 		health:   hm,
@@ -223,9 +232,7 @@ func (s *LBSimulator) Request(session string) (LBTrace, error) {
 		//     substring matcher exactly.
 		if status == http.StatusOK {
 			c.Writer.WriteHeader(http.StatusOK)
-			if gate, ok := c.Writer.(*firstChunkGate); ok {
-				gate.CommitFirstChunk() // simulate the stream's first real chunk
-			}
+			CommitFirstChunkIfGate(c.Writer) // simulate the stream's first real chunk
 			loadbalance.RecordServiceSuccess(sid)
 			s.server.reportHealthStatus(provider, model, nil, "")
 		} else {
@@ -235,7 +242,7 @@ func (s *LBSimulator) Request(session string) (LBTrace, error) {
 				fmt.Errorf("upstream returned HTTP %d", status), "")
 		}
 	}
-	s.server.dispatchWithPriorityFailover(c, s.rule, res.Provider, res.Service.Model, attempt)
+	s.server.aiHandler.DispatchWithPriorityFailover(c, s.rule, res.Provider, res.Service.Model, attempt)
 
 	tr.PinAfter = s.pinLocked(session)
 	tr.BreakerAfter = s.BreakerStates()

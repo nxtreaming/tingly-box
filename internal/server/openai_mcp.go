@@ -5,23 +5,25 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openai/openai-go/v3"
-	typ "github.com/tingly-dev/tingly-box/ai"
-	"github.com/tingly-dev/tingly-box/internal/mcp/runtime"
+	"github.com/tingly-dev/tingly-box/internal/server/recording"
+
+	mcpruntime "github.com/tingly-dev/tingly-box/internal/mcp/runtime"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/stream"
 	"github.com/tingly-dev/tingly-box/internal/server/forwarding"
+	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
-func (s *Server) streamOpenAIChatToAnthropicV1WithMCP(
+func (ph *ProtocolHandler) StreamOpenAIChatToAnthropicV1WithMCP(
 	c *gin.Context,
 	provider *typ.Provider,
 	req *openai.ChatCompletionNewParams,
 	actualModel string,
 	responseModel string,
-	recorder *ProtocolRecorder,
+	recorder *recording.ProtocolRecorder,
 ) {
 	for round := 0; round < 3; round++ {
-		wrapper := s.clientPool.GetOpenAIClient(c.Request.Context(), provider, req.Model)
+		wrapper := ph.deps.ClientPool.GetOpenAIClient(c.Request.Context(), provider, req.Model)
 		fc := forwarding.NewForwardContext(c.Request.Context(), provider)
 		streamResp, cancel, err := forwarding.ForwardOpenAIChatStream(fc, wrapper, req)
 		if cancel != nil {
@@ -36,8 +38,8 @@ func (s *Server) streamOpenAIChatToAnthropicV1WithMCP(
 		}
 
 		var hooks *stream.OpenAIToAnthropicMCPHooks
-		if hasDeclaredMCPTools(req) && s.mcpEnabled() {
-			hooks = s.buildOpenAIToAnthropicMCPHooks(c.Request.Context(), provider.UUID, req)
+		if HasDeclaredMCPTools(req) && ph.mcpEnabled() {
+			hooks = ph.buildOpenAIToAnthropicMCPHooks(c.Request.Context(), provider.UUID, req)
 		}
 		hc := protocol.NewHandleContext(c, responseModel)
 		usage, err := stream.HandleOpenAIToAnthropicStreamResponseWithMCPHooks(hc, req, streamResp, responseModel, hooks)
@@ -45,14 +47,14 @@ func (s *Server) streamOpenAIChatToAnthropicV1WithMCP(
 			continue
 		}
 		if err != nil {
-			s.trackUsageWithTokenUsage(c, usage, err)
+			ph.trackUsageWithTokenUsage(c, usage, err)
 			stream.SendInternalError(c, err.Error())
 			if recorder != nil {
 				recorder.RecordError(err)
 			}
 			return
 		}
-		s.trackUsageWithTokenUsage(c, usage, nil)
+		ph.trackUsageWithTokenUsage(c, usage, nil)
 		return
 	}
 	stream.SendInternalError(c, "MCP stream continuation exceeded max rounds")
@@ -61,21 +63,21 @@ func (s *Server) streamOpenAIChatToAnthropicV1WithMCP(
 	}
 }
 
-func (s *Server) streamOpenAIChatToAnthropicBetaWithMCP(
+func (ph *ProtocolHandler) StreamOpenAIChatToAnthropicBetaWithMCP(
 	c *gin.Context,
 	provider *typ.Provider,
 	req *openai.ChatCompletionNewParams,
 	actualModel string,
 	responseModel string,
-	recorder *ProtocolRecorder,
+	recorder *recording.ProtocolRecorder,
 ) {
-	streamRec := newStreamRecorder(recorder)
+	streamRec := recording.NewStreamRecorder(recorder)
 	if streamRec != nil {
 		streamRec.SetupStreamRecorderInContext(c)
 	}
 
 	for round := 0; round < 3; round++ {
-		wrapper := s.clientPool.GetOpenAIClient(c.Request.Context(), provider, req.Model)
+		wrapper := ph.deps.ClientPool.GetOpenAIClient(c.Request.Context(), provider, req.Model)
 		fc := forwarding.NewForwardContext(c.Request.Context(), provider)
 		streamResp, cancel, err := forwarding.ForwardOpenAIChatStream(fc, wrapper, req)
 		if cancel != nil {
@@ -90,8 +92,8 @@ func (s *Server) streamOpenAIChatToAnthropicBetaWithMCP(
 		}
 
 		var hooks *stream.OpenAIToAnthropicMCPHooks
-		if hasDeclaredMCPTools(req) && s.mcpEnabled() {
-			hooks = s.buildOpenAIToAnthropicMCPHooks(c.Request.Context(), provider.UUID, req)
+		if HasDeclaredMCPTools(req) && ph.mcpEnabled() {
+			hooks = ph.buildOpenAIToAnthropicMCPHooks(c.Request.Context(), provider.UUID, req)
 		}
 		hc := protocol.NewHandleContext(c, responseModel)
 		usage, err := stream.HandleOpenAIToAnthropicBetaStreamWithMCPHooks(hc, req, streamResp, responseModel, hooks)
@@ -99,14 +101,14 @@ func (s *Server) streamOpenAIChatToAnthropicBetaWithMCP(
 			continue
 		}
 		if err != nil {
-			s.trackUsageWithTokenUsage(c, usage, err)
+			ph.trackUsageWithTokenUsage(c, usage, err)
 			stream.SendInternalError(c, err.Error())
 			if streamRec != nil {
 				streamRec.RecordError(err)
 			}
 			return
 		}
-		s.trackUsageWithTokenUsage(c, usage, nil)
+		ph.trackUsageWithTokenUsage(c, usage, nil)
 		if streamRec != nil {
 			streamRec.Finish(responseModel, usage)
 			streamRec.RecordResponse(provider, actualModel)
@@ -124,14 +126,16 @@ func hasOnlyMCPToolCalls(toolCalls []openai.ChatCompletionMessageToolCallUnion) 
 		return false
 	}
 	for _, tc := range toolCalls {
-		if !runtime.IsMCPToolName(tc.Function.Name) {
+		if !mcpruntime.IsMCPToolName(tc.Function.Name) {
 			return false
 		}
 	}
 	return true
 }
 
-func hasDeclaredMCPTools(req *openai.ChatCompletionNewParams) bool {
+// HasDeclaredMCPTools reports whether req declares any MCP-named tool in its
+// OpenAI Chat tool list.
+func HasDeclaredMCPTools(req *openai.ChatCompletionNewParams) bool {
 	if req == nil || len(req.Tools) == 0 {
 		return false
 	}
@@ -140,7 +144,7 @@ func hasDeclaredMCPTools(req *openai.ChatCompletionNewParams) bool {
 		if fn == nil {
 			continue
 		}
-		if runtime.IsMCPToolName(fn.Name) {
+		if mcpruntime.IsMCPToolName(fn.Name) {
 			return true
 		}
 	}
