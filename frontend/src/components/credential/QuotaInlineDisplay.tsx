@@ -1,10 +1,12 @@
+import React from 'react';
 import { Box, Stack, IconButton, Typography, CircularProgress, Tooltip } from '@mui/material';
 import { AccessTime as AccessTimeIcon } from '@/components/icons';
 import { Refresh as RefreshIcon } from '@/components/icons';
 import { Info as InfoIcon } from '@/components/icons';
 import { QuotaBarItem } from './QuotaBarItem';
+import { QuotaBarRow, useQuotaBars } from './QuotaBarRow';
 import type { ProviderQuota } from '@/types/quota';
-import { formatQuotaUsage, quotaToWindows } from '@/types/quota';
+import { formatQuotaUsage } from '@/types/quota';
 
 interface QuotaInlineDisplayProps {
   quota: ProviderQuota | undefined;
@@ -20,7 +22,7 @@ interface QuotaInlineDisplayProps {
 
 /**
  * Horizontal inline display of quota information.
- * Shows quota items side by side with refresh button.
+ * Shows quota bars with refresh/info actions.
  * Hidden items accessible via info icon tooltip.
  */
 export function QuotaInlineDisplay({
@@ -29,15 +31,14 @@ export function QuotaInlineDisplay({
   onRefresh,
   maxInlineItems = 3,
 }: QuotaInlineDisplayProps) {
-  const windows = quotaToWindows(quota);
+  const { windows, resourceItems, hasAny } = useQuotaBars(quota);
 
-  const hasQuota = windows.length > 0;
   const hasHiddenItems = windows.length > maxInlineItems;
   const visibleWindows = windows.slice(0, maxInlineItems);
   const hiddenWindows = windows.slice(maxInlineItems);
 
-  // No quota available - don't show anything
-  if (!hasQuota) {
+  // Show nothing if there's no data at all
+  if (!hasAny) {
     return null;
   }
 
@@ -162,22 +163,13 @@ export function QuotaInlineDisplay({
         )}
       </Stack>
 
-      {/* Quota items */}
-      <Stack
-        direction="row"
-        spacing={2}
-        sx={{
-          overflowX: 'auto',
-          // Hide scrollbar but keep functionality
-          '&::-webkit-scrollbar': {
-            display: 'none',
-          },
-          msOverflowStyle: 'none',
-          scrollbarWidth: 'none',
-        }}
-      >
+      {/* Quota bar row — visible windows + resource items */}
+      <Stack direction="row" spacing={2} sx={{ overflowX: 'auto', '&::-webkit-scrollbar': { display: 'none' }, msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
         {visibleWindows.map(({ key, window }) => (
           <QuotaBarItem key={key} window={window} />
+        ))}
+        {resourceItems.map(item => (
+          <QuotaBarItem key={item.key} window={item.window} percentLabel={item.countLabel} barColor="#22c55e" tooltipContent={item.tooltipContent} />
         ))}
       </Stack>
     </Box>

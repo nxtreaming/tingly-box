@@ -19,7 +19,8 @@ import {
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Provider } from '@/types/provider';
 import type { ProviderQuota } from '@/types/quota';
-import { quotaToWindows } from '@/types/quota';
+import { QuotaBarItem } from '@/components/credential/QuotaBarItem';
+import { useQuotaBars } from '@/components/credential/QuotaBarRow';
 import { getModelTypeInfo } from '@/utils/modelUtils';
 import { useCustomModels } from '@/hooks/useCustomModels';
 import { useProviderModels } from '@/hooks/useProviderModels';
@@ -32,7 +33,6 @@ import CustomModelCard from './CustomModelCard';
 import ModelCard from './ModelCard';
 import RecentModelsSection from './RecentModelsSection';
 import NewModelsSection from './NewModelsSection';
-import { QuotaBar } from './QuotaBar';
 
 async function fetchUIAPI(url: string, options: RequestInit = {}): Promise<any> {
     const basePath = window.location.origin;
@@ -118,7 +118,7 @@ export function ModelsPanel({
         );
     }, [providerModels, provider.uuid, provider.name, provider.api_style]);
 
-    const quotaWindows = useMemo(() => quotaToWindows(providerQuota), [providerQuota]);
+    const { windows: quotaWindows, resourceItems } = useQuotaBars(providerQuota);
 
     // Re-fetch provider models when refresh trigger changes (e.g., after custom model deletion)
     useEffect(() => {
@@ -461,14 +461,12 @@ export function ModelsPanel({
                             />
                         </IconButton>
                     </Stack>
-                    <Stack spacing={1.5}>
-                        {quotaWindows.map(({ key, label, window }) => (
-                            <Box key={key}>
-                                <Typography variant="caption" sx={{ mb: 0.5, display: 'block', color: '#64748b' }}>
-                                    {label}
-                                </Typography>
-                                <QuotaBar quota={providerQuota!} window={window} />
-                            </Box>
+                    <Stack direction="row" spacing={2} sx={{ overflowX: 'auto', '&::-webkit-scrollbar': { display: 'none' }, msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+                        {quotaWindows.map(({ key, window }) => (
+                            <QuotaBarItem key={key} window={window} />
+                        ))}
+                        {resourceItems.map(item => (
+                            <QuotaBarItem key={item.key} window={item.window} percentLabel={item.countLabel} barColor="#22c55e" tooltipContent={item.tooltipContent} />
                         ))}
                     </Stack>
                 </Box>
