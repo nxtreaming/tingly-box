@@ -1,10 +1,12 @@
 package nonstream
 
 import (
+	"net/http"
 	"strings"
 
 	"github.com/openai/openai-go/v3/responses"
 
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 	usageconv "github.com/tingly-dev/tingly-box/internal/protocol/usage"
 )
 
@@ -14,23 +16,23 @@ type responsesToChatNonStreamState struct {
 	toolCalls []map[string]any
 }
 
-// OpenAIResponsesToChat converts a Responses API response to Chat Completions format.
-// This is used when the client expects Chat format but the provider uses Responses API.
-func OpenAIResponsesToChat(resp *responses.Response, responseModel string) map[string]any {
-	state := buildResponsesToChatNonStreamState(resp)
+// HandleResponsesToOpenAIChat writes a Responses API response as OpenAI Chat format.
+// Corresponds to stream.HandleResponsesToOpenAIChatStream.
+func HandleResponsesToOpenAIChat(hc *protocol.HandleContext, rs *responses.Response) (map[string]any, *protocol.TokenUsage, error) {
+	state := buildResponsesToChatNonStreamState(rs)
 	message := state.message()
 
 	choices := []map[string]any{
 		{
 			"index":         0,
 			"message":       message,
-			"finish_reason": mapResponsesFinishReason(resp, len(state.toolCalls) > 0),
+			"finish_reason": mapResponsesFinishReason(rs, len(state.toolCalls) > 0),
 		},
 	}
 
-	normalizedUsage := usageconv.FromOpenAIResponses(resp.Usage)
+	normalizedUsage := usageconv.FromOpenAIResponses(rs.Usage)
 	totalInputTokens := normalizedUsage.InputTokens + normalizedUsage.CacheInputTokens
-	totalTokens := int(resp.Usage.TotalTokens)
+	totalTokens := int(rs.Usage.TotalTokens)
 	if totalTokens == 0 {
 		totalTokens = totalInputTokens + normalizedUsage.OutputTokens
 	}
@@ -50,25 +52,27 @@ func OpenAIResponsesToChat(resp *responses.Response, responseModel string) map[s
 		}
 	}
 
-	return map[string]any{
-		"id":      resp.ID,
+	chatResp := map[string]any{
+		"id":      rs.ID,
 		"object":  "chat.completion",
-		"created": int64(resp.CreatedAt),
-		"model":   responseModel,
+		"created": int64(rs.CreatedAt),
+		"model":   hc.ResponseModel,
 		"choices": choices,
 		"usage":   usage,
 	}
+	hc.GinContext.JSON(http.StatusOK, chatResp)
+	return chatResp, usageconv.FromOpenAIResponses(rs.Usage), nil
 }
 
-func buildResponsesToChatNonStreamState(resp *responses.Response) *responsesToChatNonStreamState {
+func buildResponsesToChatNonStreamState(rs *responses.Response) *responsesToChatNonStreamState {
 	state := &responsesToChatNonStreamState{
 		toolCalls: make([]map[string]any, 0),
 	}
-	if resp == nil {
+	if rs == nil {
 		return state
 	}
 
-	for _, output := range resp.Output {
+	for _, output := range rs.Output {
 		switch output.Type {
 		case "message":
 			for _, contentItem := range output.Content {
@@ -115,13 +119,13 @@ func (s *responsesToChatNonStreamState) message() map[string]any {
 	return message
 }
 
-func mapResponsesFinishReason(resp *responses.Response, hasToolCalls bool) string {
+func mapResponsesFinishReason(rs *responses.Response, hasToolCalls bool) string {
 	if hasToolCalls {
 		return "tool_calls"
 	}
 
-	if resp != nil && resp.Status == "incomplete" {
-		switch resp.IncompleteDetails.Reason {
+	if rs != nil && rs.Status == "incomplete" {
+		switch rs.IncompleteDetails.Reason {
 		case "max_output_tokens":
 			return "length"
 		case "content_filter":
