@@ -63,7 +63,7 @@ flowchart TD
 type TokenUsage struct {
     InputTokens      int `json:"input_tokens"`                 // 输入/prompt，已扣除 cache
     OutputTokens     int `json:"output_tokens"`                // 输出/completion
-    CacheInputTokens int `json:"cache_input_tokens,omitempty"` // cache creation + cache read 合并
+    CacheInputTokens int `json:"cache_input_tokens,omitempty"` // cache read 命中（不含 write）
     ReasoningTokens  int `json:"reasoning_tokens,omitempty"`   // o1/o3 reasoning，是 OutputTokens 的子集
     SystemTokens     int `json:"system_tokens,omitempty"`      // 模板/系统指令/框架开销
 }
@@ -80,8 +80,10 @@ type TokenUsage struct {
 | `NewTokenUsageWithCache(in, out, cache)` | + cache |
 | `NewTokenUsageFull(in, out, cache, reasoning)` | + reasoning（OpenAI 路径用） |
 | `ZeroTokenUsage()` | 零值，用于「无 usage」回退 |
+| `ToAnthropicUsageMap()` / `ToAnthropicMessageDeltaUsageMap()` | 从 canonical usage 生成 Anthropic wire usage map |
+| `ToOpenAIChatUsageMap()` / `ToOpenAIResponsesUsageMap()` | 从 canonical usage 还原 OpenAI wire usage map（input/prompt 含 cache） |
 
-> ⚠️ 注意 `CacheInputTokens` 是 **creation + read 合并**后的单字段（见 §2 归一化）。早期版本曾分 `cache_creation` / `cache_read` 两列，已合并（DB 迁移见 §6.2）。
+> ⚠️ `CacheInputTokens` 仅代表 **cache read 命中**。Write（`cache_creation`）已并入 `InputTokens`（Anthropic 归一化）；OpenAI 无 write 概念。`CacheReadTokens` / `CacheWriteTokens` 为详情字段，两者之和 = 旧版 `CacheInputTokens`（合并期已过去，现以详情为准）。
 
 ---
 
@@ -199,6 +201,7 @@ Anthropic 把 usage 拆在两个事件里：
 
 - `message_start` → `input_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens`
 - `message_delta` → `output_tokens`（个别非标准 provider 也在这里塞 `input_tokens`）
+- **协议转换特例**：OpenAI → Anthropic 这类转换在流开始时拿不到权威 input usage，只能在上游终态事件拿到完整 usage；因此终态 `message_delta.usage` 可以携带完整 normalized usage（`input_tokens` / `output_tokens` / `cache_read_input_tokens`），这是为了保持对外 SSE、录制与计费同源一致。
 
 ```go
 acc := usage.NewAnthropicAccumulator()
