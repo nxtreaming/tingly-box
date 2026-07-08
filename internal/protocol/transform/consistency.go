@@ -496,50 +496,52 @@ func (t *ConsistencyTransform) normalizeAnthropicV1Messages(req *anthropic.Messa
 }
 
 // validateAnthropicV1 validates the Anthropic v1 request
-func (t *ConsistencyTransform) validateAnthropicV1(req *anthropic.MessageNewParams) error {
+// validateAnthropicCommon holds the shared scalar validation for Anthropic
+// v1 and beta requests; variant names the API flavour in error messages.
+func validateAnthropicCommon(variant string, maxTokens int64, model string, tempValid bool, temp float64, topPValid bool, topP float64) error {
 	// Validate max_tokens
-	if req.MaxTokens == 0 {
+	if maxTokens == 0 {
 		return &ValidationError{
 			Field:   "max_tokens",
-			Message: "max_tokens is required for Anthropic v1 Messages API",
-			Value:   req.MaxTokens,
+			Message: "max_tokens is required for Anthropic " + variant + " Messages API",
+			Value:   maxTokens,
 		}
 	}
 
 	// Validate model
-	if req.Model == "" {
+	if model == "" {
 		return &ValidationError{
 			Field:   "model",
 			Message: "model is required",
-			Value:   req.Model,
+			Value:   model,
 		}
 	}
 
 	// Validate temperature range (Anthropic: 0-1)
-	if req.Temperature.Valid() {
-		temp := req.Temperature.Value
-		if temp < 0 || temp > 1 {
-			return &ValidationError{
-				Field:   "temperature",
-				Message: "temperature must be between 0 and 1 for Anthropic v1",
-				Value:   temp,
-			}
+	if tempValid && (temp < 0 || temp > 1) {
+		return &ValidationError{
+			Field:   "temperature",
+			Message: "temperature must be between 0 and 1 for Anthropic " + variant,
+			Value:   temp,
 		}
 	}
 
 	// Validate top_p range (Anthropic: 0-1)
-	if req.TopP.Valid() {
-		topP := req.TopP.Value
-		if topP < 0 || topP > 1 {
-			return &ValidationError{
-				Field:   "top_p",
-				Message: "top_p must be between 0 and 1 for Anthropic v1",
-				Value:   topP,
-			}
+	if topPValid && (topP < 0 || topP > 1) {
+		return &ValidationError{
+			Field:   "top_p",
+			Message: "top_p must be between 0 and 1 for Anthropic " + variant,
+			Value:   topP,
 		}
 	}
 
 	return nil
+}
+
+func (t *ConsistencyTransform) validateAnthropicV1(req *anthropic.MessageNewParams) error {
+	return validateAnthropicCommon("v1", req.MaxTokens, string(req.Model),
+		req.Temperature.Valid(), req.Temperature.Value,
+		req.TopP.Valid(), req.TopP.Value)
 }
 
 // normalizeAnthropicBetaToolSchemas ensures tool schemas follow Anthropic beta's requirements
@@ -583,49 +585,9 @@ func (t *ConsistencyTransform) normalizeAnthropicBetaMessages(req *anthropic.Bet
 
 // validateAnthropicBeta validates the Anthropic beta request
 func (t *ConsistencyTransform) validateAnthropicBeta(req *anthropic.BetaMessageNewParams) error {
-	// Validate max_tokens
-	if req.MaxTokens == 0 {
-		return &ValidationError{
-			Field:   "max_tokens",
-			Message: "max_tokens is required for Anthropic beta Messages API",
-			Value:   req.MaxTokens,
-		}
-	}
-
-	// Validate model
-	if req.Model == "" {
-		return &ValidationError{
-			Field:   "model",
-			Message: "model is required",
-			Value:   req.Model,
-		}
-	}
-
-	// Validate temperature range (Anthropic: 0-1)
-	if req.Temperature.Valid() {
-		temp := req.Temperature.Value
-		if temp < 0 || temp > 1 {
-			return &ValidationError{
-				Field:   "temperature",
-				Message: "temperature must be between 0 and 1 for Anthropic beta",
-				Value:   temp,
-			}
-		}
-	}
-
-	// Validate top_p range (Anthropic: 0-1)
-	if req.TopP.Valid() {
-		topP := req.TopP.Value
-		if topP < 0 || topP > 1 {
-			return &ValidationError{
-				Field:   "top_p",
-				Message: "top_p must be between 0 and 1 for Anthropic beta",
-				Value:   topP,
-			}
-		}
-	}
-
-	return nil
+	return validateAnthropicCommon("beta", req.MaxTokens, string(req.Model),
+		req.Temperature.Valid(), req.Temperature.Value,
+		req.TopP.Valid(), req.TopP.Value)
 }
 
 // Constants
