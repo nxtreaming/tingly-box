@@ -58,6 +58,7 @@ type ProtocolRecorder struct {
 	providerBase  string // Base URL
 	model         string
 	mode          obs.RecordMode
+	ruleUUID      string // rule whose breaker to attribute success/failure to (rule-scoped breaker)
 }
 
 func NewProtocolRecorder(c *gin.Context, sink *obs.Sink, scenario string, mode obs.RecordMode, body []byte) (*ProtocolRecorder, error) {
@@ -92,12 +93,24 @@ func NewProtocolRecorder(c *gin.Context, sink *obs.Sink, scenario string, mode o
 // SetActiveService re-binds the recorder to a new provider/model. The
 // failover orchestrator calls this between attempts so a subsequent
 // RecordError attributes the failure to the right service rather than
-// to whichever service the recorder was last bound to.
+// to whichever service the recorder was last bound to. The rule does not
+// change across failover attempts, so SetActiveService does not touch ruleUUID.
 func (sr *ProtocolRecorder) SetActiveService(provider *typ.Provider, model string) {
 	if sr == nil {
 		return
 	}
 	sr.BindProvider(provider, model, "")
+}
+
+// BindRule binds the rule whose breaker should receive this recorder's
+// success/failure attributions. Called once at recorder creation
+// (EnsureProtocolRecorder); the rule is fixed for the whole request, including
+// across failover attempts.
+func (sr *ProtocolRecorder) BindRule(ruleUUID string) {
+	if sr == nil {
+		return
+	}
+	sr.ruleUUID = ruleUUID
 }
 
 // breakerServiceID returns the loadbalance service identifier for the
@@ -247,8 +260,8 @@ func (sr *ProtocolRecorder) RecordResponse(provider *typ.Provider, model string)
 	if sr.finalResponse == nil {
 		sr.finalResponse = sr.synthesizeFinalResponse()
 	}
-	if id := sr.breakerServiceID(); id != "" {
-		loadbalance.RecordServiceSuccess(id)
+	if id := sr.breakerServiceID(); id != "" && sr.ruleUUID != "" {
+		loadbalance.RecordServiceSuccess(sr.ruleUUID, id)
 	}
 	sr.emit(nil)
 }
@@ -259,8 +272,8 @@ func (sr *ProtocolRecorder) RecordError(err error) {
 		return
 	}
 	if err != nil {
-		if id := sr.breakerServiceID(); id != "" {
-			loadbalance.RecordServiceFailure(id)
+		if id := sr.breakerServiceID(); id != "" && sr.ruleUUID != "" {
+			loadbalance.RecordServiceFailure(sr.ruleUUID, id)
 		}
 	}
 	sr.emit(err)

@@ -19,10 +19,21 @@ func (id ServiceID) String() string {
 }
 
 // FormatServiceID formats a (providerUUID, model) pair into the canonical
-// "provider:model" string used as the breaker key and exclusion map key
-// throughout the gateway. Sites that don't have a full *Service in hand
-// (the failover orchestrator, the recorder, usage tracking) call this
-// directly so all paths agree on the same key shape.
+// "provider/model" string used as the exclusion map key and as the
+// service-scoped half of the breaker key. Sites that don't have a full
+// *Service in hand (the failover orchestrator, the recorder, usage tracking)
+// call this directly so all paths agree on the same key shape.
 func FormatServiceID(providerUUID, model string) string {
 	return fmt.Sprintf("%s/%s", providerUUID, model)
+}
+
+// FormatBreakerKey formats a (ruleUUID, serviceID) pair into the canonical
+// "ruleUUID/serviceID" string used as the breaker-store key. The breaker is
+// rule-scoped: each rule owns independent breaker state per service so a busy
+// rule's failing traffic cannot trip another rule's primary. The serviceID
+// half is FormatServiceID's "provider/model"; rule UUIDs are slash-free, so
+// the composite is unambiguous. Mirrors the affinity store's rule-scoped key
+// (internal/server/affinity/affinity.go makeKey).
+func FormatBreakerKey(ruleUUID, serviceID string) string {
+	return fmt.Sprintf("%s/%s", ruleUUID, serviceID)
 }

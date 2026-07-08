@@ -6,11 +6,17 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 )
 
+// tierTestRule is the ruleUUID for IsAffinityEligible shape tests. The breaker
+// store is rule-scoped; these tests exercise tier-shape logic (not rule
+// isolation), and their serviceIDs are already unique per test, so one shared
+// ruleUUID keeps them isolated.
+const tierTestRule = "tier-test-rule"
+
 // tripBreaker opens a service's breaker by recording the failure threshold.
-func tripBreaker(svc *loadbalance.Service) {
+func tripBreaker(ruleUUID string, svc *loadbalance.Service) {
 	store := loadbalance.DefaultBreakerStore()
 	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
-		store.RecordFailure(svc.ServiceID())
+		store.RecordFailure(ruleUUID, svc.ServiceID())
 	}
 }
 
@@ -20,10 +26,10 @@ func TestIsAffinityEligible_TopTierAvailable(t *testing.T) {
 	t1 := mkService("ita-a-p1", "m", 1)
 	svcs := []*loadbalance.Service{t0, t1}
 
-	if !IsAffinityEligible(svcs, t0) {
+	if !IsAffinityEligible(tierTestRule, svcs,t0) {
 		t.Fatal("t0 should be eligible when its breaker is closed")
 	}
-	if IsAffinityEligible(svcs, t1) {
+	if IsAffinityEligible(tierTestRule, svcs,t1) {
 		t.Fatal("t1 must NOT be eligible while t0 (higher priority) is available")
 	}
 }
@@ -33,13 +39,13 @@ func TestIsAffinityEligible_TopTierOpen_NextBecomesTop(t *testing.T) {
 	t1 := mkService("ita-b-p1", "m", 1)
 	svcs := []*loadbalance.Service{t0, t1}
 
-	tripBreaker(t0)
-	defer loadbalance.DefaultBreakerStore().RecordSuccess(t0.ServiceID())
+	tripBreaker(tierTestRule, t0)
+	defer loadbalance.DefaultBreakerStore().RecordSuccess(tierTestRule, t0.ServiceID())
 
-	if IsAffinityEligible(svcs, t0) {
+	if IsAffinityEligible(tierTestRule, svcs,t0) {
 		t.Fatal("t0 is open; it should not be eligible")
 	}
-	if !IsAffinityEligible(svcs, t1) {
+	if !IsAffinityEligible(tierTestRule, svcs,t1) {
 		t.Fatal("t1 should become eligible while t0 is open")
 	}
 }
@@ -51,13 +57,13 @@ func TestIsAffinityEligible_SameTierDeadPeerDropped(t *testing.T) {
 	b := mkService("ita-peer-b", "m", 0)
 	svcs := []*loadbalance.Service{a, b}
 
-	tripBreaker(a)
-	defer loadbalance.DefaultBreakerStore().RecordSuccess(a.ServiceID())
+	tripBreaker(tierTestRule, a)
+	defer loadbalance.DefaultBreakerStore().RecordSuccess(tierTestRule, a.ServiceID())
 
-	if IsAffinityEligible(svcs, a) {
+	if IsAffinityEligible(tierTestRule, svcs,a) {
 		t.Fatal("pin to a dead same-tier peer must be dropped when a healthy peer exists")
 	}
-	if !IsAffinityEligible(svcs, b) {
+	if !IsAffinityEligible(tierTestRule, svcs,b) {
 		t.Fatal("pin to a healthy same-tier peer must be honored")
 	}
 }
@@ -67,19 +73,19 @@ func TestIsAffinityEligible_AllOpen_FallsBackToLowestTier(t *testing.T) {
 	t1 := mkService("ita-c-p1", "m", 1)
 	svcs := []*loadbalance.Service{t0, t1}
 
-	tripBreaker(t0)
-	tripBreaker(t1)
+	tripBreaker(tierTestRule, t0)
+	tripBreaker(tierTestRule, t1)
 	defer func() {
 		store := loadbalance.DefaultBreakerStore()
-		store.RecordSuccess(t0.ServiceID())
-		store.RecordSuccess(t1.ServiceID())
+		store.RecordSuccess(tierTestRule, t0.ServiceID())
+		store.RecordSuccess(tierTestRule, t1.ServiceID())
 	}()
 
 	// Degrade-don't-disappear: the lowest-numbered tier is the fallback.
-	if !IsAffinityEligible(svcs, t0) {
+	if !IsAffinityEligible(tierTestRule, svcs,t0) {
 		t.Fatal("when everything is open, a pin to the lowest tier (t0) is honored")
 	}
-	if IsAffinityEligible(svcs, t1) {
+	if IsAffinityEligible(tierTestRule, svcs,t1) {
 		t.Fatal("t1 is not the fallback when everything is open")
 	}
 }
@@ -90,13 +96,13 @@ func TestIsAffinityEligible_SingleService(t *testing.T) {
 	only := mkService("ita-solo", "m", 0)
 	svcs := []*loadbalance.Service{only}
 
-	if !IsAffinityEligible(svcs, only) {
+	if !IsAffinityEligible(tierTestRule, svcs,only) {
 		t.Fatal("single healthy service must be eligible")
 	}
 
-	tripBreaker(only)
-	defer loadbalance.DefaultBreakerStore().RecordSuccess(only.ServiceID())
-	if !IsAffinityEligible(svcs, only) {
+	tripBreaker(tierTestRule, only)
+	defer loadbalance.DefaultBreakerStore().RecordSuccess(tierTestRule, only.ServiceID())
+	if !IsAffinityEligible(tierTestRule, svcs,only) {
 		t.Fatal("single service must stay eligible even when its breaker is open")
 	}
 }
@@ -110,7 +116,7 @@ func TestIsAffinityEligible_InactiveDoesNotMaskLowerTier(t *testing.T) {
 	svcs := []*loadbalance.Service{t0, t1}
 
 	// t0 is inactive → top active tier is t1 → a pin to t1 is eligible.
-	if !IsAffinityEligible(svcs, t1) {
+	if !IsAffinityEligible(tierTestRule, svcs,t1) {
 		t.Fatal("t1 should be eligible when the only higher tier is inactive")
 	}
 }
@@ -121,20 +127,20 @@ func TestIsAffinityEligible_InactiveTargetDeclined(t *testing.T) {
 	b := mkService("ita-inact-target-b", "m", 0)
 	svcs := []*loadbalance.Service{a, b}
 
-	if IsAffinityEligible(svcs, a) {
+	if IsAffinityEligible(tierTestRule, svcs,a) {
 		t.Fatal("an inactive pinned service must never be eligible")
 	}
-	if !IsAffinityEligible(svcs, b) {
+	if !IsAffinityEligible(tierTestRule, svcs,b) {
 		t.Fatal("the active peer should still be eligible")
 	}
 }
 
 func TestIsAffinityEligible_NilAndEmpty(t *testing.T) {
 	t0 := mkService("ita-d-p0", "m", 0)
-	if IsAffinityEligible([]*loadbalance.Service{t0}, nil) {
+	if IsAffinityEligible(tierTestRule, []*loadbalance.Service{t0}, nil) {
 		t.Fatal("nil target should be false")
 	}
-	if IsAffinityEligible(nil, t0) {
+	if IsAffinityEligible(tierTestRule, nil, t0) {
 		t.Fatal("empty service set should be false")
 	}
 }

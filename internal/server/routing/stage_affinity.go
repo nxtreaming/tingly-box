@@ -82,7 +82,7 @@ func (s *AffinityStage) Evaluate(ctx *SelectionContext, state *selectionState) (
 	// On decline the pipeline falls through to the strategy, which re-selects a
 	// currently-valid service, and postProcess re-pins the session there.
 	if state != nil && len(state.candidateServices) > 0 &&
-		!typ.IsAffinityEligible(state.candidateServices, entry.Service) {
+		!typ.IsAffinityEligible(rule.UUID, state.candidateServices, entry.Service) {
 		logrus.Infof("[affinity] locked service %s is not currently selectable for session %s; dropping pin so strategy re-selects",
 			entry.Service.ServiceID(), ctx.SessionID.String())
 		return nil, false

@@ -8,6 +8,11 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/clock"
 )
 
+// testRule is the ruleUUID used by store-level tests. The store is rule-scoped,
+// so every call needs a ruleUUID; a single constant keeps these tests isolated
+// (their serviceIDs are already unique per test).
+const testRule = "breaker-test-rule"
+
 func TestBreakerOpensAfterThreshold(t *testing.T) {
 	b := NewBreaker(3, time.Second)
 	if !b.Allow() {
@@ -79,12 +84,12 @@ func TestBreakerSuccessResetsCounter(t *testing.T) {
 
 func TestBreakerStoreLazyCreation(t *testing.T) {
 	store := NewBreakerStore(2, time.Second)
-	b1 := store.Get("svc:a")
-	b2 := store.Get("svc:a")
+	b1 := store.Get(testRule, "svc:a")
+	b2 := store.Get(testRule, "svc:a")
 	if b1 != b2 {
 		t.Fatal("store should return the same breaker for the same key")
 	}
-	if store.Get("svc:b") == b1 {
+	if store.Get(testRule, "svc:b") == b1 {
 		t.Fatal("store should return different breakers for different keys")
 	}
 }
@@ -93,28 +98,28 @@ func TestBreakerStoreIsAvailable(t *testing.T) {
 	store := NewBreakerStore(2, 20*time.Millisecond)
 
 	// Closed → available.
-	if !store.IsAvailable("svc:avail") {
+	if !store.IsAvailable(testRule, "svc:avail") {
 		t.Fatal("fresh (closed) breaker should be available")
 	}
 
 	// Open → not available.
-	store.RecordFailure("svc:avail")
-	store.RecordFailure("svc:avail")
-	if store.IsAvailable("svc:avail") {
+	store.RecordFailure(testRule, "svc:avail")
+	store.RecordFailure(testRule, "svc:avail")
+	if store.IsAvailable(testRule, "svc:avail") {
 		t.Fatal("open breaker should not be available")
 	}
 
 	// After the open window, HalfOpen → available, and the read must NOT
 	// consume the half-open probe: a following Allow() must still succeed.
 	time.Sleep(30 * time.Millisecond)
-	if !store.IsAvailable("svc:avail") {
+	if !store.IsAvailable(testRule, "svc:avail") {
 		t.Fatal("half-open breaker should report available")
 	}
-	if !store.Allow("svc:avail") {
+	if !store.Allow(testRule, "svc:avail") {
 		t.Fatal("IsAvailable must not consume the half-open probe; Allow() should still pass")
 	}
 	// The probe is now claimed, so a concurrent Allow() is rejected.
-	if store.Allow("svc:avail") {
+	if store.Allow(testRule, "svc:avail") {
 		t.Fatal("half-open should only admit a single probe")
 	}
 }
@@ -126,13 +131,13 @@ func TestBreakerStoreConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			store.Allow("svc:concurrent")
-			store.RecordFailure("svc:concurrent")
+			store.Allow(testRule, "svc:concurrent")
+			store.RecordFailure(testRule, "svc:concurrent")
 		}()
 	}
 	wg.Wait()
 	// Just need to ensure no panic / race; state is now Open.
-	if store.Get("svc:concurrent").State() != BreakerOpen {
+	if store.Get(testRule, "svc:concurrent").State() != BreakerOpen {
 		t.Fatal("after many failures the breaker should be open")
 	}
 }
@@ -282,31 +287,64 @@ func TestBreakerStoreWithinPromotionHold(t *testing.T) {
 	id := "svc:hold"
 
 	// Never tripped → not within hold (no recovery happened).
-	if store.WithinPromotionHold(id, 60*time.Second) {
+	if store.WithinPromotionHold(testRule, id, 60*time.Second) {
 		t.Fatal("never-tripped service should not be within promotion hold")
 	}
 
 	// Trip and recover. RecoveryThreshold defaults to 3, so drive a full
 	// 3-probe success streak to close the breaker.
-	store.RecordFailure(id) // → Open
+	store.RecordFailure(testRule, id) // → Open
 	fc.advance(time.Second)
 	for i := 0; i < 3; i++ {
-		store.Allow(id)         // first: Open → HalfOpen; later: next probe slot
-		store.RecordSuccess(id) // accumulate; 3rd closes the breaker
+		store.Allow(testRule, id)         // first: Open → HalfOpen; later: next probe slot
+		store.RecordSuccess(testRule, id) // accumulate; 3rd closes the breaker
 	}
 
 	// Right after recovery: within a 60s hold.
-	if !store.WithinPromotionHold(id, 60*time.Second) {
+	if !store.WithinPromotionHold(testRule, id, 60*time.Second) {
 		t.Fatal("freshly recovered service should be within 60s promotion hold")
 	}
 	// hold <= 0 disables the check entirely.
-	if store.WithinPromotionHold(id, 0) {
+	if store.WithinPromotionHold(testRule, id, 0) {
 		t.Fatal("hold<=0 should disable the check (always false)")
 	}
 
 	// 60s+ later: out of the hold.
 	fc.advance(61 * time.Second)
-	if store.WithinPromotionHold(id, 60*time.Second) {
+	if store.WithinPromotionHold(testRule, id, 60*time.Second) {
 		t.Fatal("service recovered >60s ago should be out of the hold")
+	}
+}
+
+// TestBreakerStoreIsRuleScoped is the regression guard for rule-scoped breakers:
+// tripping a service under one rule must NOT trip the same serviceID under
+// another rule. This is the whole point of the re-keying — a busy rule's
+// failing traffic cannot fail over a different rule that uses the same
+// provider:model as its primary.
+func TestBreakerStoreIsRuleScoped(t *testing.T) {
+	store := NewBreakerStore(3, time.Second)
+	const (
+		ruleA = "rule-a"
+		ruleB = "rule-b"
+		sid   = "provider-x/model-y"
+	)
+
+	// Trip the service under ruleA only.
+	for i := 0; i < DefaultBreakerFailureThreshold; i++ {
+		store.RecordFailure(ruleA, sid)
+	}
+
+	if store.Get(ruleA, sid).State() != BreakerOpen {
+		t.Fatal("ruleA's breaker for the shared service should be open after tripping")
+	}
+	if store.Get(ruleB, sid).State() != BreakerClosed {
+		t.Fatal("ruleB's breaker for the SAME service must stay closed (rule-scoped isolation)")
+	}
+	// Concretely: ruleB still admits the service, ruleA does not.
+	if !store.Allow(ruleB, sid) {
+		t.Fatal("ruleB should still allow the service")
+	}
+	if store.Allow(ruleA, sid) {
+		t.Fatal("ruleA should reject the service while its breaker is open")
 	}
 }

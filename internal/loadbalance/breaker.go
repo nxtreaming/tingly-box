@@ -194,12 +194,15 @@ func (s BreakerState) String() string {
 	return "unknown"
 }
 
-// BreakerStore is a concurrent-safe registry of breakers keyed by service
-// identifier. Breakers are created lazily on first access.
+// BreakerStore is a concurrent-safe registry of breakers keyed by
+// (ruleUUID, serviceID). Breakers are created lazily on first access.
 //
-// The store is process-wide: two rules that reference the same
-// provider:model share breaker state. This is intentional — if a service
-// is failing, it is generally failing for every rule that uses it.
+// Breakers are rule-scoped: each rule owns independent breaker state per
+// service. A service failing for one rule does NOT fail it for another rule
+// that uses the same provider:model — each rule's failover decisions are
+// driven only by the traffic it observes. This mirrors the rule-scoped
+// affinity store (internal/server/affinity/affinity.go). Key composition lives
+// in FormatBreakerKey.
 type BreakerStore struct {
 	mu       sync.RWMutex
 	breakers map[string]*Breaker
@@ -223,11 +226,12 @@ func NewBreakerStore(failureThreshold int, openDuration time.Duration) *BreakerS
 	}
 }
 
-// Get returns the breaker for the given serviceID, creating one with the
-// store's default thresholds if needed.
-func (s *BreakerStore) Get(serviceID string) *Breaker {
+// Get returns the breaker for the given (ruleUUID, serviceID), creating one
+// with the store's default thresholds if needed.
+func (s *BreakerStore) Get(ruleUUID, serviceID string) *Breaker {
+	key := FormatBreakerKey(ruleUUID, serviceID)
 	s.mu.RLock()
-	if b, ok := s.breakers[serviceID]; ok {
+	if b, ok := s.breakers[key]; ok {
 		s.mu.RUnlock()
 		return b
 	}
@@ -235,17 +239,17 @@ func (s *BreakerStore) Get(serviceID string) *Breaker {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b, ok := s.breakers[serviceID]; ok {
+	if b, ok := s.breakers[key]; ok {
 		return b
 	}
 	b := NewBreaker(s.failures, s.openFor)
-	s.breakers[serviceID] = b
+	s.breakers[key] = b
 	return b
 }
 
-// Allow is a convenience over Get(serviceID).Allow().
-func (s *BreakerStore) Allow(serviceID string) bool {
-	return s.Get(serviceID).Allow()
+// Allow is a convenience over Get(ruleUUID, serviceID).Allow().
+func (s *BreakerStore) Allow(ruleUUID, serviceID string) bool {
+	return s.Get(ruleUUID, serviceID).Allow()
 }
 
 // IsAvailable reports whether the service's breaker currently permits traffic,
@@ -254,8 +258,8 @@ func (s *BreakerStore) Allow(serviceID string) bool {
 // only need to know "is this service usable right now" (e.g. affinity scoping)
 // should use it so they don't steal the single half-open probe from the
 // selection path.
-func (s *BreakerStore) IsAvailable(serviceID string) bool {
-	return s.Get(serviceID).State() != BreakerOpen
+func (s *BreakerStore) IsAvailable(ruleUUID, serviceID string) bool {
+	return s.Get(ruleUUID, serviceID).State() != BreakerOpen
 }
 
 // WithinPromotionHold reports whether the service recovered (entered Closed
@@ -264,11 +268,11 @@ func (s *BreakerStore) IsAvailable(serviceID string) bool {
 // freshly-recovered primary until it has proven stable for the hold. A service
 // that is Open, HalfOpen, never-tripped, or recovered longer ago than hold is
 // NOT within the hold. hold <= 0 disables the check (always false).
-func (s *BreakerStore) WithinPromotionHold(serviceID string, hold time.Duration) bool {
+func (s *BreakerStore) WithinPromotionHold(ruleUUID, serviceID string, hold time.Duration) bool {
 	if hold <= 0 {
 		return false
 	}
-	b := s.Get(serviceID)
+	b := s.Get(ruleUUID, serviceID)
 	since := b.ClosedSince()
 	if since.IsZero() {
 		return false
@@ -276,25 +280,14 @@ func (s *BreakerStore) WithinPromotionHold(serviceID string, hold time.Duration)
 	return clock.Now().Sub(since) < hold
 }
 
-// RecordSuccess is a convenience over Get(serviceID).RecordSuccess().
-func (s *BreakerStore) RecordSuccess(serviceID string) {
-	s.Get(serviceID).RecordSuccess()
+// RecordSuccess is a convenience over Get(ruleUUID, serviceID).RecordSuccess().
+func (s *BreakerStore) RecordSuccess(ruleUUID, serviceID string) {
+	s.Get(ruleUUID, serviceID).RecordSuccess()
 }
 
-// RecordFailure is a convenience over Get(serviceID).RecordFailure().
-func (s *BreakerStore) RecordFailure(serviceID string) {
-	s.Get(serviceID).RecordFailure()
-}
-
-// Snapshot returns a copy of current breaker states for introspection.
-func (s *BreakerStore) Snapshot() map[string]BreakerState {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make(map[string]BreakerState, len(s.breakers))
-	for id, b := range s.breakers {
-		out[id] = b.State()
-	}
-	return out
+// RecordFailure is a convenience over Get(ruleUUID, serviceID).RecordFailure().
+func (s *BreakerStore) RecordFailure(ruleUUID, serviceID string) {
+	s.Get(ruleUUID, serviceID).RecordFailure()
 }
 
 // Reset clears all breaker entries. Useful for tests/harness to avoid state leakage
@@ -316,16 +309,16 @@ func DefaultBreakerStore() *BreakerStore {
 }
 
 // AllowService is a package-level convenience used by selection logic.
-func AllowService(serviceID string) bool {
-	return defaultStore.Allow(serviceID)
+func AllowService(ruleUUID, serviceID string) bool {
+	return defaultStore.Allow(ruleUUID, serviceID)
 }
 
 // RecordServiceSuccess is a package-level convenience used by dispatch.
-func RecordServiceSuccess(serviceID string) {
-	defaultStore.RecordSuccess(serviceID)
+func RecordServiceSuccess(ruleUUID, serviceID string) {
+	defaultStore.RecordSuccess(ruleUUID, serviceID)
 }
 
 // RecordServiceFailure is a package-level convenience used by dispatch.
-func RecordServiceFailure(serviceID string) {
-	defaultStore.RecordFailure(serviceID)
+func RecordServiceFailure(ruleUUID, serviceID string) {
+	defaultStore.RecordFailure(ruleUUID, serviceID)
 }

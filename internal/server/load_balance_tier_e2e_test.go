@@ -83,10 +83,10 @@ func TestTierRouting_EndToEnd(t *testing.T) {
 	defer restoreClock()
 
 	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
-		store.RecordFailure(primaryID)
+		store.RecordFailure(rule.UUID, primaryID)
 	}
-	defer store.RecordSuccess(primaryID)
-	defer store.RecordSuccess(fallbackID)
+	defer store.RecordSuccess(rule.UUID, primaryID)
+	defer store.RecordSuccess(rule.UUID, fallbackID)
 
 	got, err = lb.SelectService(&rule)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestTierRouting_EndToEnd(t *testing.T) {
 	//    RecordServiceSuccess on a good request). RecoveryThreshold is set
 	//    to 1 so this test stays focused on the tier-return contract; the
 	//    multi-success streak is covered in breaker_test.go.
-	pb := store.Get(primaryID)
+	pb := store.Get(rule.UUID, primaryID)
 	prevThreshold := pb.RecoveryThreshold
 	pb.RecoveryThreshold = 1
 	defer func() { pb.RecoveryThreshold = prevThreshold }()
@@ -117,7 +117,7 @@ func TestTierRouting_EndToEnd(t *testing.T) {
 	if got.ServiceID() != primaryID {
 		t.Fatalf("half-open pick = %s, want primary %s", got.ServiceID(), primaryID)
 	}
-	store.RecordSuccess(primaryID) // HalfOpen → Closed
+	store.RecordSuccess(rule.UUID, primaryID) // HalfOpen → Closed
 
 	got, err = lb.SelectService(&rule)
 	if err != nil {

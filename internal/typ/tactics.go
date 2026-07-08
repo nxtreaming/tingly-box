@@ -1169,7 +1169,7 @@ func (pt *TierTactic) SelectService(rule *Rule) *loadbalance.Service {
 		}
 		allowed := make([]*loadbalance.Service, 0, len(group.services))
 		for _, svc := range group.services {
-			if store.Allow(svc.ServiceID()) {
+			if store.Allow(rule.UUID, svc.ServiceID()) {
 				allowed = append(allowed, svc)
 			}
 		}
@@ -1247,7 +1247,10 @@ func groupServicesByTier(services []*loadbalance.Service) []tierBucket {
 
 // IsAffinityEligible reports whether target is a service the routing strategy
 // would actually select right now, so session affinity can decide whether a
-// pin is still valid. It is config-shape driven rather than tactic-label
+// pin is still valid. ruleUUID scopes the breaker store: each rule has
+// independent breaker state per service, so eligibility reflects only the
+// traffic this rule observes (a service failing under another rule does not
+// demote a pin here). It is config-shape driven rather than tactic-label
 // driven — "tier" is just the emergent shape of a multi-layer rule, so this
 // answers the same question for every shape:
 //
@@ -1271,7 +1274,7 @@ func groupServicesByTier(services []*loadbalance.Service) []tierBucket {
 // every service is tripped it falls back to "target is in the lowest-numbered
 // tier" (matching TierTactic's degrade-don't-disappear behavior) so a pin is
 // honored rather than wedging.
-func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Service) bool {
+func IsAffinityEligible(ruleUUID string, services []*loadbalance.Service, target *loadbalance.Service) bool {
 	if target == nil || !target.Active {
 		return false
 	}
@@ -1296,7 +1299,7 @@ func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Ser
 		available := false
 		targetAvailableHere := false
 		for _, svc := range group.services {
-			if store.IsAvailable(svc.ServiceID()) {
+			if store.IsAvailable(ruleUUID, svc.ServiceID()) {
 				available = true
 				if svc.ServiceID() == target.ServiceID() {
 					targetAvailableHere = true
@@ -1315,7 +1318,7 @@ func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Ser
 		// available. Default to returning to the primary, UNLESS the primary
 		// just recovered and is still within PromotionHold — then keep the
 		// low-tier pin a little longer to avoid a batch flip-flop.
-		if tierWithinPromotionHold(store, group.services, hold) {
+		if tierWithinPromotionHold(ruleUUID, store, group.services, hold) {
 			return true
 		}
 		return false
@@ -1330,9 +1333,9 @@ func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Ser
 // recovered within the hold window. A tier counts as "freshly recovered" if at
 // least one of its available services is within PromotionHold; services that
 // never tripped or recovered long ago do not trigger the hold.
-func tierWithinPromotionHold(store *loadbalance.BreakerStore, services []*loadbalance.Service, hold time.Duration) bool {
+func tierWithinPromotionHold(ruleUUID string, store *loadbalance.BreakerStore, services []*loadbalance.Service, hold time.Duration) bool {
 	for _, svc := range services {
-		if store.WithinPromotionHold(svc.ServiceID(), hold) {
+		if store.WithinPromotionHold(ruleUUID, svc.ServiceID(), hold) {
 			return true
 		}
 	}
