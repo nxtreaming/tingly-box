@@ -1,6 +1,6 @@
 # Tier-Based Service Routing
 
-Status: shipped (v1) on branch `claude/priority-service-routing-dIQfX`. Tracking commits: `a362ca3`, `5221109`. UX redesign on PR #1096 (`claude/dreamy-hawking-DQaYY`).
+Status: shipped (v1) on branch `claude/priority-service-routing-dIQfX`. Tracking commits: `a362ca3`, `5221109`. UX redesign on PR #1096 (`claude/dreamy-hawking-DQaYY`). Oscillation hardening (recovery hysteresis, PromotionHold, rule-scoped breaker) on branch `bugfix/tier` — commits `58508a25` (hysteresis), `9fe19215` (PromotionHold), `483aec74` (rule-scoped breaker); see "Recovery" below.
 
 ## Why
 
@@ -23,7 +23,7 @@ A second, related gap: when an upstream service starts failing, nothing in the b
 
 - **Not** a cross-request load balancer rebalance — existing tactics stay intact and remain the default.
 - **Not** a request-level retry loop. When a request fails mid-flight, the client still sees the error. Failover happens on the **next** request after the breaker trips. (Mid-request retry is parked as v2 — see "Future work".)
-- **Not** a global health system. The breaker is process-local and rule- scoped through the service-id key; we deliberately avoided Redis-level shared state to keep the deployment story simple.
+- **Not** a global health system. The breaker is process-local and **rule-scoped**: keyed by `(ruleUUID, provider:model)` so each rule owns independent breaker state per service (a service failing under one rule does not fail it for another). We deliberately avoided Redis-level shared state to keep the deployment story simple.
 
 ## How
 
@@ -59,9 +59,17 @@ The breaker is a three-state machine (`Closed → Open → HalfOpen`):
 
 - **Closed** — normal. `Allow()` returns true, failures are counted.
 - **Open** — too many consecutive failures (`FailureThreshold`, default 3). `Allow()` returns false. After `OpenDuration` (default 30 s) the next `Allow()` call lazily flips to HalfOpen.
-- **HalfOpen** — exactly one probe is permitted. Success → Closed, failure → Open with a fresh timer.
+- **HalfOpen** — exactly one probe is permitted at a time. Recovery requires **`RecoveryThreshold` (default 3) consecutive probe successes** to close; a single success just releases the probe slot so the next probe can go through. Any probe failure re-opens with a fresh timer.
 
 Recovery requires **no separate scheduler**. Selection re-evaluates the tier list every request, and the breaker's lazy state transition admits one probe naturally. Active probing was considered and rejected for v1 — for hot rules it's redundant, and for cold rules there is no one to serve anyway.
+
+#### Hysteresis on recovery (why `RecoveryThreshold = 3`)
+
+Recovery is deliberately **harder than tripping** (`down = 3`, `up = 3`, symmetric). A single lucky probe no longer promotes a still-flaky primary: a half-sick T0 that trips → fails over to T1 → recovers on one probe → takes full traffic → trips again would oscillate on a ~30 s loop. Requiring a streak means a flapping upstream has to prove itself across multiple probes before it reclaims traffic. See `internal/loadbalance/breaker.go` (`RecordSuccess` accumulates `halfOpenSuccess`).
+
+#### PromotionHold — gradual return-to-primary
+
+Even with hysteresis, the instant T0 closes, every session pinned to T1 becomes affinity-ineligible at once and migrates back — a batch flip that can re-trip T0 under full load. **PromotionHold** (default 60 s) de-jitters this: a freshly-recovered primary only takes **new** sessions during the hold; sessions already pinned to a lower tier stay there until the primary has stayed recovered past the hold. The breaker stamps `closedSince` on recovery; `IsAffinityEligible` keeps a low-tier pin valid while a higher-priority tier is within its hold. Set `PromotionHold <= 0` to disable.
 
 ### Breaker threshold — why 3
 
@@ -92,11 +100,11 @@ Session affinity (`Flags.SessionAffinity`) pins a session to the service it firs
 
 For tier rules this was buggy: `AffinityStage` ran **before** the tier strategy and honored the pin **without consulting the breaker**. So a session pinned to a fallback tier during a brief primary outage stuck there forever — the primary could recover and the session never came back ("configured t1 but auto-jumps to t2"; or a pinned-but-failing t2 that keeps 500ing instead of failing over).
 
-Fix: the pin is honored only while the pinned service is one the strategy would pick *right now* — `typ.IsAffinityEligible`. It keys off **config shape, not tactic label** ("tier" is just the emergent shape of a multi-layer rule), so one check covers every shape:
+Fix: the pin is honored only while the pinned service is one the strategy would pick *right now* — `typ.IsAffinityEligible(ruleUUID, services, target)`. It is rule-scoped (the breaker read keys on `ruleUUID`) and keys off **config shape, not tactic label** ("tier" is just the emergent shape of a multi-layer rule), so one check covers every shape:
 
 - **one service** — always eligible (nothing else to pick).
 - **one layer, many services** — eligible iff the pinned service's own breaker is available; a pin to a *dead peer* is dropped while healthy peers exist.
-- **many layers** — eligible iff the pinned service is breaker-available *and* in the highest-priority tier that currently has any available service; a pin to a fallback tier is dropped once the primary recovers.
+- **many layers** — eligible iff the pinned service is breaker-available *and* in the highest-priority tier that currently has any available service; a pin to a fallback tier is dropped once the primary recovers — **unless** the primary just recovered and is still within `PromotionHold` (see Recovery), in which case the low-tier pin is kept a little longer to avoid a batch flip-flop.
 
 Decision flow (pinned service = `P`):
 
@@ -186,11 +194,12 @@ The "user moves a service card to a different tier" event has to cross five laye
 └──────────────────────────────────────────────────────────────────────┘
                                   ↓
 ┌─ Per-request feedback into the breaker ──────────────────────────────┐
-│  Dispatch finishes → ProtocolRecorder:                                │
-│       RecordResponse → loadbalance.RecordServiceSuccess(serviceID)    │
-│       RecordError    → loadbalance.RecordServiceFailure(serviceID)    │
+│  Dispatch finishes → ProtocolRecorder (bound to ruleUUID):            │
+│       RecordResponse → loadbalance.RecordServiceSuccess(ruleUUID, sid)│
+│       RecordError    → loadbalance.RecordServiceFailure(ruleUUID, sid)│
 │  Same DefaultBreakerStore the selection logic consulted, so the next  │
-│  request's TierTactic sees the updated state.                         │
+│  request's TierTactic sees the updated state. State is keyed per rule │
+│  — other rules using the same provider:model are unaffected.          │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -201,18 +210,18 @@ This is pinned down by `TestTierRouting_EndToEnd` in `internal/server/priority_r
 1. Unmarshals a Rule JSON with `lb_tactic.type = "tier"`,
 2. Asserts `LBTactic.Params` is a `*TierParams` after decode,
 3. Calls `LoadBalancer.SelectService` and asserts the T0 service is picked,
-4. Trips the breaker via `DefaultBreakerStore.RecordFailure` exactly as the recorder does,
+4. Trips the breaker via `DefaultBreakerStore.RecordFailure(ruleUUID, …)` exactly as the recorder does,
 5. Asserts the next pick falls back to T1,
 6. Records a success and asserts the pick returns to T0.
 
 ### Wiring failures to the breaker
 
-`ProtocolRecorder` already sees every success and failure of every upstream call. We added two lines:
+`ProtocolRecorder` already sees every success and failure of every upstream call. We added the bridge:
 
-- `RecordResponse(provider, model)` → `RecordServiceSuccess(serviceID)`
-- `RecordError(err)` → `RecordServiceFailure(serviceID)`
+- `RecordResponse(provider, model)` → `RecordServiceSuccess(ruleUUID, serviceID)`
+- `RecordError(err)` → `RecordServiceFailure(ruleUUID, serviceID)`
 
-The `serviceID` is computed from `provider.UUID + ":" + model`, matching the format `Service.ServiceID()` produces, so the breaker registry's keys line up exactly with the selection pool. **Zero changes** to the dispatch hot path were required.
+The recorder binds `ruleUUID` once at creation (`EnsureProtocolRecorder` reads the rule already on the gin context via `ContextKeyRule`); the rule is fixed across failover attempts so per-attempt `SetActiveService` doesn't touch it. The `serviceID` is `FormatServiceID(provider.UUID, model)` = `"provider/model"`, and the breaker key is `FormatBreakerKey(ruleUUID, serviceID)` = `"ruleUUID/provider/model"` — matching `Service.ServiceID()` for the service half, so the breaker registry's keys line up exactly with the selection pool. **Zero changes** to the dispatch hot path were required.
 
 ### Frontend UX
 
@@ -253,13 +262,13 @@ There is **no independent "tier mode"** in tingly-box — every routing behavior
 
 Config shape sets the *space* of choices; runtime state picks within it:
 
-- **Breaker** per service (closed / open / half-open, process-wide `DefaultBreakerStore`) — drives tier demotion, the half-open recovery probe, and affinity eligibility. It is the authoritative signal for 5xx failures.
+- **Breaker** per (rule, service) (closed / open / half-open, process-wide `DefaultBreakerStore` keyed by `(ruleUUID, provider:model)`) — drives tier demotion, the half-open recovery probe, and affinity eligibility. It is the authoritative signal for 5xx failures. Each rule has independent state per service, so traffic under one rule cannot trip another rule's primary.
 - **Active** flag — inactive services are excluded everywhere (`GetActiveServices`); `IsAffinityEligible` mirrors this (an inactive service must not make its tier look "available").
 - **Health** (429 / auth) via `HealthFilter`/`HealthMonitor` — a *separate* signal from the breaker (5xx feed only the breaker), applied by the `HealthStage` filter.
 
 ### Affinity-eligibility truth table
 
-What `typ.IsAffinityEligible(activeServices, P)` encodes for a pinned service `P` (it mirrors `TierTactic`'s bucket walk using the non-consuming `BreakerStore.IsAvailable`, so it never steals the half-open probe):
+What `typ.IsAffinityEligible(ruleUUID, activeServices, P)` encodes for a pinned service `P` (it mirrors `TierTactic`'s bucket walk using the non-consuming `BreakerStore.IsAvailable`, so it never steals the half-open probe; the breaker read is rule-scoped via `ruleUUID`):
 
 | Situation | Honor pin to P? |
 |---|---|
@@ -267,7 +276,8 @@ What `typ.IsAffinityEligible(activeServices, P)` encodes for a pinned service `P
 | Flat, P breaker available | yes |
 | Flat, P breaker open, a peer available | no → re-pin to a healthy peer |
 | Cascade/Grid, P available **and** P.tier == top available tier | yes |
-| Cascade/Grid, a higher tier has recovered (P sits below it) | no → re-pin up to the recovered tier |
+| Cascade/Grid, a higher tier recovered **and** still within `PromotionHold` | yes (keep low-tier pin — gradual return) |
+| Cascade/Grid, a higher tier has recovered (P sits below it, past hold) | no → re-pin up to the recovered tier |
 | Every breaker open | yes iff P is in the lowest tier (degrade-don't-disappear) |
 | P inactive | no (declined) |
 
@@ -290,7 +300,7 @@ On a decline the pipeline falls through to the strategy, which re-selects a curr
 | Users with multiple equivalent accounts | First-class failover. Put the main account at T0, the backup at T1, walk away. |
 | Users running cost-tiered providers | Same model with a cheap-then-expensive cascade. |
 | Operators of any production rule | Free circuit breaking. Even users on the existing tactics get failure isolation as soon as they assign a single tier. |
-| Anyone debugging | The recorder now reports per-service success/failure into the breaker, and the breaker state is exposed via `BreakerStore.Snapshot()` for future surfacing. |
+| Anyone debugging | The recorder now reports per-service success/failure into the (rule-scoped) breaker, so a flapping service's state is visible per rule without cross-rule confusion. |
 
 The feature is **additive**: rules without explicit tiers behave exactly as before; the new tactic is opt-in via the UI.
 
@@ -368,7 +378,7 @@ Verified by: cross-style e2e tests in `internal/protocoltest/failover_test.go` (
 1. **Mid-stream failover (v4)** — pre-content retry is in place on every streaming path; the remaining gap is reconnecting to the next tier after content has already started flowing. Needs response reassembly or protocol-aware "rewind" semantics; out of scope until users actually hit it.
 2. ~~**Heterogeneous fallback**~~ — **Done (v3).** The transform chain re-runs per attempt, lifting the "same-style only" v2 constraint and carrying each tier's own model. See "Heterogeneous (cross-style) failover" above.
 3. **Active half-open probing** — opt-in goroutine that probes Open breakers on a cadence, useful for cold rules.
-4. **Per-rule breaker thresholds** — currently process-wide defaults. Could be surfaced as a Rule-level config block.
+4. **Per-rule breaker thresholds** — breaker *state* is already rule-scoped (each rule has independent state per service), but the tunables (`FailureThreshold`, `OpenDuration`, `RecoveryThreshold`, `PromotionHold`) are still process-wide defaults. Could be surfaced as a Rule-level config block.
 5. **Failover decision log + UI** — the recorder already sees every success/failure attribution; surface "request X went to service A → fell back to B" in the system log page.
 6. **Dispatch simulator** — read-only "explain plan" that shows which service a hypothetical request would land on. Particularly useful in combination with smart routing.
 
@@ -376,11 +386,13 @@ Verified by: cross-style e2e tests in `internal/protocoltest/failover_test.go` (
 
 Backend
 - `internal/loadbalance/load_balancing.go` — `Service.Tier`, `TacticTier` enum.
-- `internal/loadbalance/breaker.go` — three-state breaker + store.
+- `internal/loadbalance/breaker.go` — three-state breaker + rule-scoped store (keyed `(ruleUUID, serviceID)`), recovery hysteresis (`RecoveryThreshold`), PromotionHold (`closedSince`).
+- `internal/loadbalance/service_id.go` — `FormatServiceID`, `FormatBreakerKey`.
 - `internal/loadbalance/breaker_test.go`
-- `internal/typ/tactics.go` — `TierParams`, `TierTactic`, `groupServicesByTier`.
+- `internal/typ/tactics.go` — `TierParams`, `TierTactic`, `groupServicesByTier`, `IsAffinityEligible` (rule-scoped, PromotionHold-aware).
 - `internal/typ/priority_tactic_test.go`
-- `internal/server/protocol_recording.go` — recorder → breaker bridge.
+- `internal/server/recording/recorder.go` — recorder → (rule-scoped) breaker bridge (`BindRule`, `RecordResponse`/`RecordError`).
+- `internal/server/protocol_handler.go` — `EnsureProtocolRecorder` binds `ruleUUID` from the gin context.
 
 Frontend
 - `frontend/src/components/RoutingGraphTypes.ts` — `ConfigProvider.tier`, `ConfigRecord.lbTactic`.

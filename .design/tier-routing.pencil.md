@@ -75,10 +75,10 @@ groupServicesByTier(active)         ← ascending; tier 0 is highest priority, t
 
 ## Cross-request — circuit breaker state machine
 
-Per-service three-state breaker (`internal/loadbalance/breaker.go`), keyed by `serviceID = provider.UUID + ":" + model`. No scheduler — the Open→HalfOpen flip is lazy, evaluated on the next `Allow()`.
+Three-state breaker (`internal/loadbalance/breaker.go`), **rule-scoped**: keyed by `FormatBreakerKey(ruleUUID, serviceID)` = `"ruleUUID/provider/model"` (serviceID = `FormatServiceID(provider.UUID, model)` = `"provider/model"`). Each rule owns independent state per service — a service failing under one rule does not trip another. No scheduler — the Open→HalfOpen flip is lazy, evaluated on the next `Allow()`. Recovery uses **hysteresis**: `RecoveryThreshold` (default 3) consecutive probe successes are required to close (a single success just frees the probe slot).
 
 ```
-                         RecordSuccess()
+                         RecordSuccess() × RecoveryThreshold (default 3)
             ┌──────────────────────────────────────────┐
             │                                           │
             ▼                                           │
@@ -86,22 +86,25 @@ Per-service three-state breaker (`internal/loadbalance/breaker.go`), keyed by `s
    │     CLOSED      │  (default 3)                     │
    │ Allow() = true  │ ───────────────────────────────►│
    │ count failures  │                                  ▼
-   └─────────────────┘                        ┌──────────────────┐
-            ▲                                  │      OPEN        │
-            │ RecordSuccess()                  │ Allow() = false  │
-            │ (probe ok)                       │ openedAt = now   │
-            │                                  └────────┬─────────┘
+   │ closedSince=now │                        ┌──────────────────┐
+   └─────────────────┘                        │      OPEN        │
+            ▲                                  │ Allow() = false  │
+            │ 3 consecutive                    │ openedAt = now   │
+            │ probe successes                  └────────┬─────────┘
+            │ (each frees slot)                         │
    ┌─────────────────┐                                  │
    │    HALF-OPEN    │  time.Since(openedAt) ≥           │
    │ Allow():        │  OpenDuration (default 30s)      │
    │  1st caller=true│ ◄────────────────────────────────┘
    │  others = false │      (lazy flip on next Allow())
+   │ halfOpenSuccess │
    └────────┬────────┘
             │ RecordFailure()  → back to OPEN, openedAt reset, probe slot freed
             └────────────────────────────────────────────────────────┘
 
-State() applies the same lazy Open→HalfOpen flip for read-consistent
-introspection (BreakerStore.Snapshot() for future UI surfacing).
+closedSince drives PromotionHold (default 60s): a freshly-recovered primary
+only takes NEW sessions; existing low-tier pins stay until the primary has
+stayed recovered past the hold (de-jitters batch return-to-primary).
 ```
 
 ## Cross-request — recorder → breaker feedback loop
@@ -115,12 +118,12 @@ The dispatch hot path needs **zero** changes: `ProtocolRecorder` already observe
   dispatch attempt on serviceID                       │
        │                                              │
        ├─ success → recorder.RecordResponse           │
-       │              └─ RecordServiceSuccess(id) ──┐  │
-       │                                            ▼  │
+       │              └─ RecordServiceSuccess(ruleUUID, id) ──┐  │
+       │                                            ▼           │
        └─ failure → recorder.RecordError            DefaultBreakerStore
-                      └─ RecordServiceFailure(id) ─►  (same keys: UUID:model)
+                      └─ RecordServiceFailure(ruleUUID, id) ─►  (key: ruleUUID/provider/model)
                                                      │
-                                                     └─ store.Allow(id) consulted
+                                                     └─ store.Allow(ruleUUID, id) consulted
                                                         by TierTactic above
    In-request failover re-binds the recorder per attempt
    (rec.SetActiveService) so a 2nd-attempt failure trips the
