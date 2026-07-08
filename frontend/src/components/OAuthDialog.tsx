@@ -892,7 +892,7 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
             <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
                 <DialogTitle>
                     <Stack direction="row" alignItems="center" justifyContent="space-between">
-                        <Typography variant="h6">Add OAuth Provider</Typography>
+                        <Typography variant="h6">Connect AI</Typography>
                         <IconButton onClick={handleClose} size="small">
                             <Close/>
                         </IconButton>

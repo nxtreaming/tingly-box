@@ -81,11 +81,6 @@ const CredentialPage = () => {
         setApiKeyDialogOpen(true);
     };
 
-    const handleAddOAuth = () => {
-        setOAuthAutoStartId(null);
-        setOAuthDialogOpen(true);
-    };
-
     const handleConnectSelect = (selection: ConnectSelection) => {
         setConnectOpen(false);
 
@@ -335,7 +330,7 @@ const CredentialPage = () => {
                     {credentialCounts.oauth > 0 ? (
                         <OAuthTable providers={oauthProviders} onEdit={handleEditProvider} onToggle={handleToggleProvider} onDelete={handleDeleteProvider} onRefreshToken={handleRefreshToken} onReauthorize={handleReauthorize} onNotification={showNotification} providerQuotas={quotaData} refreshingQuotas={refreshing} onQuotaRefresh={refreshQuota}/>
                     ) : (
-                        <EmptyStateGuide title="No OAuth Providers Configured" description="Configure OAuth providers like Claude Code, Gemini CLI, Qwen, etc." showOAuthButton={false} showHeroIcon={false} primaryButtonLabel="Add OAuth Provider" onAddApiKeyClick={handleAddOAuth}/>
+                        <EmptyStateGuide title="No OAuth Providers Configured" description="Connect AI providers like Claude Code, Gemini CLI, Qwen, etc. via OAuth sign-in." showHeroIcon={false} primaryButtonLabel="Connect AI" onAddApiKeyClick={() => setConnectOpen(true)}/>
                     )}
                 </Surface>
 
@@ -348,7 +343,7 @@ const CredentialPage = () => {
                     {credentialCounts.apiKeys > 0 ? (
                         <ApiKeyTable providers={apiKeyProviders} onEdit={handleEditProvider} onToggle={handleToggleProvider} onDelete={handleDeleteProvider} onNotification={showNotification} providerQuotas={quotaData} refreshingQuotas={refreshing} onQuotaRefresh={refreshQuota}/>
                     ) : (
-                        <EmptyStateGuide title="No API Keys Configured" description="Configure API keys to access AI services like OpenAI, Anthropic, etc." showOAuthButton={false} showHeroIcon={false} primaryButtonLabel="Connect AI" onAddApiKeyClick={handleAddApiKey}/>
+                        <EmptyStateGuide title="No API Keys Configured" description="Configure API keys to access AI services like OpenAI, Anthropic, etc." showHeroIcon={false} primaryButtonLabel="Connect AI" onAddApiKeyClick={handleAddApiKey}/>
                     )}
                 </Surface>
             </Stack>
