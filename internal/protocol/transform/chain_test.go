@@ -11,6 +11,7 @@ import (
 	shared "github.com/openai/openai-go/v3/shared"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tingly-dev/tingly-box/ai"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
@@ -166,15 +167,25 @@ func TestTransformChain_ContextPreservation(t *testing.T) {
 		wantEmptySteps bool
 	}{
 		{
-			name: "ProviderURL preserved",
+			name: "Provider option preserves canonical provider context",
 			setupCtx: func() *TransformContext {
-				return &TransformContext{
-					Request:     &openai.ChatCompletionNewParams{},
-					ProviderURL: "api.deepseek.com",
-				}
+				return NewTransformContext(
+					&openai.ChatCompletionNewParams{},
+					WithProvider(&typ.Provider{
+						APIBase:  "https://chatgpt.com/backend-api",
+						AuthType: typ.AuthTypeOAuth,
+						OAuthDetail: &typ.OAuthDetail{
+							Issuer: ai.IssuerCodex,
+							UserID: "user-123",
+						},
+					}),
+				)
 			},
 			verifyCtx: func(t *testing.T, result *TransformContext) {
-				assert.Equal(t, "api.deepseek.com", result.ProviderURL)
+				require.NotNil(t, result.Provider)
+				assert.Equal(t, "https://chatgpt.com/backend-api", result.Provider.APIBase)
+				assert.True(t, result.Provider.IsCodexProvider())
+				assert.Equal(t, "user-123", result.Config.UserID)
 			},
 		},
 		{
@@ -280,13 +291,12 @@ func TestTransformChain_Length(t *testing.T) {
 // Integration tests with real transforms
 func TestTransformChain_Integration_RealTransforms(t *testing.T) {
 	baseTransform := NewBaseTransform(protocol.TypeOpenAIChat)
-	vendorTransform := NewVendorTransform("api.openai.com")
+	vendorTransform := NewVendorTransform()
 
 	chain := NewTransformChain([]Transform{baseTransform, vendorTransform})
 
 	ctx := &TransformContext{
 		Request:        newOpenAIRequest("gpt-4", 1024),
-		ProviderURL:    "api.openai.com",
 		ScenarioFlags:  &typ.ScenarioFlags{},
 		IsStreaming:    false,
 		TransformSteps: []string{},
@@ -333,7 +343,7 @@ func TestTransformChain_Integration_WithScenarioFlags(t *testing.T) {
 func TestTransformChain_Integration_FullChain(t *testing.T) {
 	baseTransform := NewBaseTransform(protocol.TypeOpenAIChat)
 	consistencyTransform := NewConsistencyTransform(protocol.TypeOpenAIChat)
-	vendorTransform := NewVendorTransform("api.openai.com")
+	vendorTransform := NewVendorTransform()
 
 	chain := NewTransformChain([]Transform{
 		baseTransform,
@@ -346,7 +356,6 @@ func TestTransformChain_Integration_FullChain(t *testing.T) {
 
 	ctx := &TransformContext{
 		Request:        req,
-		ProviderURL:    "api.openai.com",
 		IsStreaming:    false,
 		ScenarioFlags:  &typ.ScenarioFlags{},
 		TransformSteps: []string{},
@@ -365,7 +374,7 @@ func TestTransformChain_Integration_FullChain(t *testing.T) {
 func TestTransformChain_Integration_WithTools(t *testing.T) {
 	baseTransform := NewBaseTransform(protocol.TypeOpenAIChat)
 	consistencyTransform := NewConsistencyTransform(protocol.TypeOpenAIChat)
-	vendorTransform := NewVendorTransform("api.openai.com")
+	vendorTransform := NewVendorTransform()
 
 	chain := NewTransformChain([]Transform{baseTransform, consistencyTransform, vendorTransform})
 
@@ -385,7 +394,6 @@ func TestTransformChain_Integration_WithTools(t *testing.T) {
 
 	ctx := &TransformContext{
 		Request:        req,
-		ProviderURL:    "api.openai.com",
 		IsStreaming:    false,
 		ScenarioFlags:  &typ.ScenarioFlags{},
 		TransformSteps: []string{},
@@ -402,7 +410,7 @@ func TestTransformChain_Integration_WithTools(t *testing.T) {
 
 func TestTransformChain_Integration_ResponsesAPI(t *testing.T) {
 	baseTransform := NewBaseTransform(protocol.TypeOpenAIResponses)
-	vendorTransform := NewVendorTransform("api.openai.com")
+	vendorTransform := NewVendorTransform()
 
 	chain := NewTransformChain([]Transform{baseTransform, vendorTransform})
 
@@ -414,7 +422,6 @@ func TestTransformChain_Integration_ResponsesAPI(t *testing.T) {
 
 	ctx := &TransformContext{
 		Request:        &responsesReq,
-		ProviderURL:    "api.openai.com",
 		IsStreaming:    false,
 		ScenarioFlags:  &typ.ScenarioFlags{},
 		TransformSteps: []string{},
