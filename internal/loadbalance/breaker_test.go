@@ -234,3 +234,79 @@ func TestBreakerHysteresisResetsOnFailure(t *testing.T) {
 		t.Fatalf("state = %v, want half_open (streak was reset)", b.State())
 	}
 }
+
+// TestBreakerClosedSince verifies the recovery timestamp that drives tier
+// affinity's PromotionHold: it is stamped when recovery completes and cleared
+// on any subsequent open.
+func TestBreakerClosedSince(t *testing.T) {
+	fc, restore := withFakeClock(t)
+	defer restore()
+
+	b := NewBreaker(2, time.Second)
+	b.RecoveryThreshold = 1
+
+	if !b.ClosedSince().IsZero() {
+		t.Fatal("ClosedSince should be zero on a fresh breaker")
+	}
+
+	// Trip, then recover.
+	b.RecordFailure()
+	b.RecordFailure() // → Open
+	if !b.ClosedSince().IsZero() {
+		t.Fatal("ClosedSince should be zero while open")
+	}
+	fc.advance(time.Second)
+	b.Allow() // Open → HalfOpen
+	recoverAt := fc.now
+	b.RecordSuccess() // HalfOpen → Closed
+	if got := b.ClosedSince(); !got.Equal(recoverAt) {
+		t.Fatalf("ClosedSince = %v, want %v", got, recoverAt)
+	}
+
+	// A new failure trips again and clears ClosedSince.
+	b.RecordFailure()
+	b.RecordFailure() // → Open
+	if !b.ClosedSince().IsZero() {
+		t.Fatalf("ClosedSince = %v, want zero after re-open", b.ClosedSince())
+	}
+}
+
+// TestBreakerStoreWithinPromotionHold verifies the store helper that tier
+// affinity reads: a freshly-recovered service is within the hold, and leaves
+// it once the hold window elapses (or if it never tripped / re-opened).
+func TestBreakerStoreWithinPromotionHold(t *testing.T) {
+	fc, restore := withFakeClock(t)
+	defer restore()
+
+	store := NewBreakerStore(1, time.Second)
+	id := "svc:hold"
+
+	// Never tripped → not within hold (no recovery happened).
+	if store.WithinPromotionHold(id, 60*time.Second) {
+		t.Fatal("never-tripped service should not be within promotion hold")
+	}
+
+	// Trip and recover. RecoveryThreshold defaults to 3, so drive a full
+	// 3-probe success streak to close the breaker.
+	store.RecordFailure(id) // → Open
+	fc.advance(time.Second)
+	for i := 0; i < 3; i++ {
+		store.Allow(id)         // first: Open → HalfOpen; later: next probe slot
+		store.RecordSuccess(id) // accumulate; 3rd closes the breaker
+	}
+
+	// Right after recovery: within a 60s hold.
+	if !store.WithinPromotionHold(id, 60*time.Second) {
+		t.Fatal("freshly recovered service should be within 60s promotion hold")
+	}
+	// hold <= 0 disables the check entirely.
+	if store.WithinPromotionHold(id, 0) {
+		t.Fatal("hold<=0 should disable the check (always false)")
+	}
+
+	// 60s+ later: out of the hold.
+	fc.advance(61 * time.Second)
+	if store.WithinPromotionHold(id, 60*time.Second) {
+		t.Fatal("service recovered >60s ago should be out of the hold")
+	}
+}

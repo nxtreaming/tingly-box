@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/tingly-dev/tingly-box/internal/constant"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
@@ -1257,6 +1258,14 @@ func groupServicesByTier(services []*loadbalance.Service) []tierBucket {
 //     tier is the highest-priority tier that currently has any available
 //     service (don't stay on a fallback tier after the primary recovers).
 //
+// PromotionHold de-jitters batch return-to-primary: when a higher-priority tier
+// has just recovered (within DefaultPromotionHold), it only takes NEW sessions.
+// A session already pinned to a lower tier is kept there until the recovered
+// primary has stayed healthy past the hold — so a freshly-recovered primary
+// doesn't vacuum all fallback-tier sessions back at once and re-trip under
+// full load. This mirrors the "low tier has an inherent, lower-priority
+// stickiness" intent: the primary must prove stable to outweigh it.
+//
 // It mirrors TierTactic.SelectService's bucket walk but uses the non-consuming
 // breaker read (IsAvailable) so it never steals the half-open probe. When
 // every service is tripped it falls back to "target is in the lowest-numbered
@@ -1282,6 +1291,7 @@ func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Ser
 	}
 
 	store := loadbalance.DefaultBreakerStore()
+	hold := loadbalance.DefaultPromotionHold
 	for _, group := range buckets {
 		available := false
 		targetAvailableHere := false
@@ -1293,16 +1303,40 @@ func IsAffinityEligible(services []*loadbalance.Service, target *loadbalance.Ser
 				}
 			}
 		}
-		if available {
-			// This is the top available tier. The pin is valid only if the
-			// target itself is the (or an) available service in it.
-			return targetAvailableHere
+		if !available {
+			continue
 		}
+		// This is the top available tier.
+		if targetAvailableHere {
+			// The pin is already on the best tier — always eligible.
+			return true
+		}
+		// The pin is on a lower tier while a higher-priority tier is
+		// available. Default to returning to the primary, UNLESS the primary
+		// just recovered and is still within PromotionHold — then keep the
+		// low-tier pin a little longer to avoid a batch flip-flop.
+		if tierWithinPromotionHold(store, group.services, hold) {
+			return true
+		}
+		return false
 	}
 	// Every service is tripped — honor a pin to the lowest-numbered (highest
 	// priority) tier, which groupServicesByTier returns first, so the request
 	// still surfaces a real upstream error instead of wedging.
 	return target.Tier == buckets[0].tier
+}
+
+// tierWithinPromotionHold reports whether any available service in the tier
+// recovered within the hold window. A tier counts as "freshly recovered" if at
+// least one of its available services is within PromotionHold; services that
+// never tripped or recovered long ago do not trigger the hold.
+func tierWithinPromotionHold(store *loadbalance.BreakerStore, services []*loadbalance.Service, hold time.Duration) bool {
+	for _, svc := range services {
+		if store.WithinPromotionHold(svc.ServiceID(), hold) {
+			return true
+		}
+	}
+	return false
 }
 
 // Pre-created singleton priority tactic for the default-tactic registry.

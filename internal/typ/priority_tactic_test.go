@@ -160,3 +160,93 @@ func TestTierAllBreakersOpenReturnsLowestTier(t *testing.T) {
 		t.Fatalf("want T0 fallback when all open, got tier=%d", got.Tier)
 	}
 }
+
+// recoverPrimary trips the primary's breaker, then drives a full
+// RecoveryThreshold-probe success streak to close it. The fake clock is
+// advanced past OpenDuration between trips and probes. It returns the time
+// recovery completed (ClosedSince) for hold assertions.
+func recoverPrimary(t *testing.T, store *loadbalance.BreakerStore, id string, now func() time.Time, advance func(time.Duration)) time.Time {
+	t.Helper()
+	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
+		store.RecordFailure(id)
+	}
+	advance(loadbalance.DefaultBreakerOpenDuration + time.Second)
+	for i := 0; i < loadbalance.DefaultBreakerRecoveryThreshold; i++ {
+		store.Allow(id)         // first: Open → HalfOpen; later: next probe slot
+		store.RecordSuccess(id) // 3rd closes the breaker
+	}
+	since := store.Get(id).ClosedSince()
+	if since.IsZero() {
+		t.Fatal("expected primary to have recovered (ClosedSince set)")
+	}
+	return since
+}
+
+// TestPromotionHoldKeepsFallbackPin verifies the core of plan B: a session
+// pinned to a fallback tier (T1) is NOT vacuumed back to a freshly-recovered
+// primary (T0) while T0 is within its PromotionHold. Only NEW sessions adopt
+// T0 during the hold. After the hold elapses, the T1 pin becomes ineligible
+// and the session migrates back.
+func TestPromotionHoldKeepsFallbackPin(t *testing.T) {
+	base := time.Unix(2_000_000_000, 0)
+	now := base
+	restore := clock.SetClock(func() time.Time { return now })
+	defer restore()
+	advance := func(d time.Duration) { now = now.Add(d) }
+
+	primary := mkService("hold-p1", "m1", 0)
+	backup := mkService("hold-p2", "m1", 1)
+	rule := mkTierRule(primary, backup)
+	store := loadbalance.DefaultBreakerStore()
+	defer func() {
+		// Reset primary for other tests sharing the global store.
+		for i := 0; i < loadbalance.DefaultBreakerRecoveryThreshold; i++ {
+			store.RecordSuccess(primary.ServiceID())
+		}
+	}()
+
+	// T0 trips, T1 takes over; the session is pinned to T1.
+	recoverAt := recoverPrimary(t, store, primary.ServiceID(), func() time.Time { return now }, advance)
+
+	// T0 just recovered — within PromotionHold. A pin to T1 stays eligible.
+	if !IsAffinityEligible(rule.GetActiveServices(), backup) {
+		t.Fatal("T1 pin should stay eligible while T0 is within PromotionHold")
+	}
+	// A pin to T0 is of course still eligible (it's the top tier).
+	if !IsAffinityEligible(rule.GetActiveServices(), primary) {
+		t.Fatal("T0 pin should always be eligible when T0 is available")
+	}
+
+	// Advance past PromotionHold. Now the recovered primary has proven stable
+	// and reclaims fallback-tier sessions.
+	now = recoverAt.Add(loadbalance.DefaultPromotionHold + time.Second)
+	if IsAffinityEligible(rule.GetActiveServices(), backup) {
+		t.Fatal("T1 pin should become ineligible after PromotionHold elapses (return to T0)")
+	}
+}
+
+// TestPromotionHoldNewSessionGoesToPrimary verifies the other half: during the
+// hold, NEW sessions (no pin) still adopt the recovered primary — the hold
+// only retains EXISTING fallback pins, it never blocks new traffic from T0.
+func TestPromotionHoldNewSessionGoesToPrimary(t *testing.T) {
+	base := time.Unix(2_000_000_000, 0)
+	now := base
+	restore := clock.SetClock(func() time.Time { return now })
+	defer restore()
+	advance := func(d time.Duration) { now = now.Add(d) }
+
+	primary := mkService("new-p1", "m1", 0)
+	backup := mkService("new-p2", "m1", 1)
+	rule := mkTierRule(primary, backup)
+	tactic := NewTierTactic(loadbalance.TacticRandom)
+	store := loadbalance.DefaultBreakerStore()
+
+	recoverPrimary(t, store, primary.ServiceID(), func() time.Time { return now }, advance)
+
+	// New session: SelectService (no pin consulted) picks the recovered T0
+	// even though we are inside PromotionHold.
+	got := tactic.SelectService(rule)
+	if got != primary {
+		t.Fatalf("new session should adopt recovered T0 during hold, got %v", got)
+	}
+}

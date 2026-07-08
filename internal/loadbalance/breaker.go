@@ -21,6 +21,13 @@ const (
 	DefaultBreakerFailureThreshold  = 3
 	DefaultBreakerOpenDuration      = 30 * time.Second
 	DefaultBreakerRecoveryThreshold = 3 // consecutive half-open successes required to close
+
+	// DefaultPromotionHold is how long a recovered (Closed) primary tier must
+	// stay recovered before it can reclaim sessions pinned to a lower tier.
+	// It de-jitters batch return-to-primary: a freshly-recovered primary only
+	// takes NEW sessions during the hold; existing fallback-tier pins migrate
+	// back once the primary has proven stable. Zero disables the hold.
+	DefaultPromotionHold = 60 * time.Second
 )
 
 // Breaker is a three-state circuit breaker for a single service, with
@@ -42,6 +49,7 @@ type Breaker struct {
 	openedAt         time.Time
 	halfOpenInFlight bool
 	halfOpenSuccess  int // consecutive successes in the current HalfOpen run
+	closedSince      time.Time // when recovery completed (HalfOpen→Closed); zero while never recovered or currently open
 
 	FailureThreshold  int
 	OpenDuration      time.Duration
@@ -117,6 +125,7 @@ func (b *Breaker) RecordSuccess() {
 			b.state = BreakerClosed
 			b.consecFails = 0
 			b.halfOpenSuccess = 0
+			b.closedSince = clock.Now()
 		}
 		return
 	}
@@ -146,6 +155,19 @@ func (b *Breaker) openLocked() {
 	b.state = BreakerOpen
 	b.openedAt = clock.Now()
 	b.halfOpenSuccess = 0
+	b.closedSince = time.Time{}
+}
+
+// ClosedSince returns when recovery last completed (the HalfOpen→Closed
+// transition after RecoveryThreshold successes). It is zero while the service
+// has never recovered or is currently open/tripping. Tier affinity uses it for
+// PromotionHold: a primary tier must stay recovered for a hold period before
+// it can reclaim sessions pinned to a lower tier, so a freshly-recovered
+// primary doesn't vacuum all fallback-tier sessions back at once.
+func (b *Breaker) ClosedSince() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closedSince
 }
 
 // State returns the current breaker state. Intended for introspection / UI.
@@ -234,6 +256,24 @@ func (s *BreakerStore) Allow(serviceID string) bool {
 // selection path.
 func (s *BreakerStore) IsAvailable(serviceID string) bool {
 	return s.Get(serviceID).State() != BreakerOpen
+}
+
+// WithinPromotionHold reports whether the service recovered (entered Closed
+// from a HalfOpen recovery) within the given hold window. Tier affinity uses
+// this to keep sessions pinned to a lower tier from being vacuumed back to a
+// freshly-recovered primary until it has proven stable for the hold. A service
+// that is Open, HalfOpen, never-tripped, or recovered longer ago than hold is
+// NOT within the hold. hold <= 0 disables the check (always false).
+func (s *BreakerStore) WithinPromotionHold(serviceID string, hold time.Duration) bool {
+	if hold <= 0 {
+		return false
+	}
+	b := s.Get(serviceID)
+	since := b.ClosedSince()
+	if since.IsZero() {
+		return false
+	}
+	return clock.Now().Sub(since) < hold
 }
 
 // RecordSuccess is a convenience over Get(serviceID).RecordSuccess().
