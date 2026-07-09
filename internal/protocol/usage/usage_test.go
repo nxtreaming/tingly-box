@@ -359,3 +359,27 @@ func TestAnthropicAccumulator_NoUsage(t *testing.T) {
 	assert.Equal(t, 0, got.InputTokens)
 	assert.Equal(t, 0, got.OutputTokens)
 }
+
+// TestAnthropicAccumulator_UsageOnNonStandardEventType verifies the gjson
+// fallback still catches usage attached to event types outside the standard
+// message_start/message_delta pair (e.g. a non-compliant provider putting
+// final usage on message_stop).
+func TestAnthropicAccumulator_UsageOnNonStandardEventType(t *testing.T) {
+	events := []string{
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
+		`{"type":"message_stop","usage":{"input_tokens":40,"output_tokens":423}}`,
+	}
+	dec := newFakeDecoder(events)
+	stream := anthropicstream.NewStream[anthropic.MessageStreamEventUnion](dec, nil)
+
+	acc := usage.NewAnthropicAccumulator()
+	for stream.Next() {
+		evt := stream.Current()
+		acc.Consume(&evt)
+	}
+
+	got := acc.Result()
+	assert.Equal(t, 40, got.InputTokens)
+	assert.Equal(t, 423, got.OutputTokens)
+	assert.True(t, acc.HasUsage())
+}

@@ -31,10 +31,13 @@ func NewAnthropicAccumulator() *AnthropicAccumulator {
 // It is safe to call on every event in the stream; only usage-carrying
 // events (message_start, message_delta) have any effect.
 func (a *AnthropicAccumulator) Consume(evt *anthropic.MessageStreamEventUnion) {
-	// Only message_start and message_delta carry usage. Returning early keeps
-	// the per-event cost of the high-frequency content_block_delta events at a
-	// single string comparison instead of a raw-JSON clone plus re-parse.
-	if evt.Type != "message_start" && evt.Type != "message_delta" {
+	// Only message_start and message_delta carry usage in the standard
+	// protocol. For other event types a cheap substring probe preserves the
+	// fallback for non-standard providers that attach usage elsewhere (e.g.
+	// on message_stop), while the high-frequency content_block_delta events
+	// still skip the raw-JSON clone plus re-parse below.
+	if evt.Type != "message_start" && evt.Type != "message_delta" &&
+		!strings.Contains(evt.RawJSON(), `"usage"`) {
 		return
 	}
 	// Parse the event once; the gjson fallback covers providers whose

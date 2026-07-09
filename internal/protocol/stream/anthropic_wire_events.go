@@ -122,6 +122,11 @@ func anthropicToolUseBlockStart(id, name string) anthropicWireContentBlock {
 // via input_json_delta events. A nil input marshals as "input": null, which
 // matches the previous map-based emitter.
 func anthropicToolUseBlockStartWithInput(id, name string, input any) anthropicWireContentBlock {
+	if input == nil {
+		// Coerce an untyped nil so omitempty doesn't drop the key: the
+		// Anthropic wire shape keeps "input": null for absent call args.
+		input = json.RawMessage("null")
+	}
 	return anthropicWireContentBlock{
 		Type:  blockTypeToolUse,
 		ID:    wireStr(id),

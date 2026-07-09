@@ -99,6 +99,12 @@ func (a *AnthropicStreamAssembler) RecordV1BetaEvent(event *anthropic.BetaRawMes
 
 // handleContentBlockStart handles content_block_start for v1 events
 func (a *AnthropicStreamAssembler) handleContentBlockStart(blockIndex int, block anthropic.ContentBlockStartEventContentBlockUnion) {
+	// A re-emitted start for the same index replaces the block, so any
+	// previously accumulated delta buffers must restart from scratch.
+	delete(a.textBuf, blockIndex)
+	delete(a.thinkingBuf, blockIndex)
+	delete(a.toolInputBuf, blockIndex)
+
 	union := anthropic.ContentBlockUnion{
 		Type: block.Type,
 	}
@@ -124,6 +130,12 @@ func (a *AnthropicStreamAssembler) handleContentBlockStart(blockIndex int, block
 
 // handleContentBlockStartBeta handles content_block_start for v1beta events
 func (a *AnthropicStreamAssembler) handleContentBlockStartBeta(blockIndex int, block anthropic.BetaRawContentBlockStartEventContentBlockUnion) {
+	// A re-emitted start for the same index replaces the block, so any
+	// previously accumulated delta buffers must restart from scratch.
+	delete(a.textBuf, blockIndex)
+	delete(a.thinkingBuf, blockIndex)
+	delete(a.toolInputBuf, blockIndex)
+
 	union := anthropic.ContentBlockUnion{
 		Type: block.Type,
 	}

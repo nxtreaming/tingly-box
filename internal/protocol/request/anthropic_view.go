@@ -146,6 +146,9 @@ func viewAnthropicV1Message(msg anthropic.MessageParam) anthropicMessageView {
 }
 
 func viewAnthropicV1Tools(tools []anthropic.ToolUnionParam) []anthropicToolView {
+	if len(tools) == 0 {
+		return nil
+	}
 	out := make([]anthropicToolView, 0, len(tools))
 	for _, t := range tools {
 		tool := t.OfTool
@@ -240,6 +243,9 @@ func viewAnthropicBetaMessage(msg anthropic.BetaMessageParam) anthropicMessageVi
 }
 
 func viewAnthropicBetaTools(tools []anthropic.BetaToolUnionParam) []anthropicToolView {
+	if len(tools) == 0 {
+		return nil
+	}
 	out := make([]anthropicToolView, 0, len(tools))
 	for _, t := range tools {
 		tool := t.OfTool
@@ -475,7 +481,10 @@ func imageViewToOpenAIURL(block anthropicBlockView) string {
 // convertAnthropicToolViewsToOpenAI converts normalized tool definitions to
 // OpenAI function tools.
 func convertAnthropicToolViewsToOpenAI(tools []anthropicToolView) []openai.ChatCompletionToolUnionParam {
-	if len(tools) == 0 {
+	// nil means the request declared no tools at all; a non-nil empty view
+	// slice (tools declared, none convertible — e.g. only server tools)
+	// must keep producing "tools": [] on the wire, exactly as before.
+	if tools == nil {
 		return nil
 	}
 
@@ -647,7 +656,9 @@ func convertAnthropicViewMessageToGoogle(msg anthropicMessageView) *genai.Conten
 // convertAnthropicToolViewsToGoogle converts normalized tool definitions to
 // Google function declarations.
 func convertAnthropicToolViewsToGoogle(tools []anthropicToolView) []*genai.FunctionDeclaration {
-	if len(tools) == 0 {
+	// nil means no tools declared; non-nil empty keeps the previous
+	// empty-declarations shape for requests whose tools were all filtered.
+	if tools == nil {
 		return nil
 	}
 
