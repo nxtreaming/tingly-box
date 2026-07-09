@@ -185,10 +185,7 @@ func (sm *StoreManager) initStatsStore() error {
 
 // initUsageStore initializes the UsageStore.
 func (sm *StoreManager) initUsageStore() error {
-	if err := ensureUsageDailySchema(sm.db); err != nil {
-		return err
-	}
-	if err := sm.db.AutoMigrate(&UsageRecord{}, &UsageDailyRecord{}, &UsageMonthlyRecord{}); err != nil {
+	if err := migrateUsageTables(sm.db); err != nil {
 		return err
 	}
 	sm.usageStore = &UsageStore{

@@ -25,10 +25,13 @@ The previously dormant `usage_daily` table is now populated and queried:
   Old-layout tables (no `user_id` column) are dropped and rebuilt on startup;
   the table holds only derived data, so this is safe.
 - **Lazy backfill**: the first query needing a completed day triggers
-  `aggregateDay` (DELETE + INSERT…SELECT in a transaction). Aggregated days are
-  tracked in memory (`aggregatedDays`) and persist in the table itself. A day is
-  only aggregated once it is ≥1h past UTC midnight (`dailyAggGrace`) so requests
-  recorded shortly after midnight are not missed.
+  `aggregateDay` (DELETE + INSERT…SELECT in a transaction). Which days are
+  already aggregated is read directly from `usage_daily` on each call
+  (`missingAggregatedDays`, an indexed range query on `date`) rather than
+  cached in memory — the table is the source of truth, so there's no shadow
+  state to keep in sync or lose across a restart. A day is only aggregated
+  once it is ≥1h past UTC midnight (`dailyAggGrace`) so requests recorded
+  shortly after midnight are not missed.
 - **Query routing**: `GetAggregatedStats` (group_by ∈ model/provider/user/daily,
   no scenario/rule/status filter) and `GetTimeSeries` (interval=day, filters ⊆
   provider/model/user) spanning ≥2 complete days split the range into:
@@ -37,8 +40,8 @@ The previously dormant `usage_daily` table is now populated and queried:
   (latency) recompute from sums. Anything else falls back to the raw scan, as
   does any aggregation error (logged at Warn).
 - **Deletion consistency**: `DeleteOlderThan` also purges `usage_daily` rows up
-  to and including the cutoff day and resets the in-memory day cache, so the
-  boundary day re-aggregates from the remaining raw rows.
+  to and including the cutoff day, so the boundary day re-aggregates from the
+  remaining raw rows on the next query.
 
 Measured on ~200k records / 90 days (SQLite, in-repo test): stats 300ms → 12ms,
 timeseries 227ms → 6ms steady-state; one-time backfill ≈ one raw scan. Raw-path
@@ -52,9 +55,12 @@ or behind proxy usage writes.
 
 ### 3. gzip on usage endpoints (`internal/server/middleware/gzip.go`)
 
-`GzipHandler` wraps the three usage GET handlers (JSON-only; never use it on
-streaming/SSE routes). Compresses when the client sends `Accept-Encoding: gzip`;
-typical usage JSON shrinks ~10x.
+`middleware.Gzip()` is real gin middleware (calls `c.Next()`), registered
+per-route via `swagger.WithMiddleware(middleware.Gzip())` on the three usage
+GET routes (JSON-only; never use it on streaming/SSE routes) so it composes
+through the normal middleware chain instead of wrapping the handler directly.
+Compresses when the client sends `Accept-Encoding: gzip`; typical usage JSON
+shrinks ~10x.
 
 ### 4. Frontend fetch discipline (`DashboardPage.tsx`)
 

@@ -8,7 +8,8 @@ import (
 // RegisterRoutes registers the usage API routes with swagger documentation
 func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 	// GET /api/v1/usage/stats - Get aggregated usage statistics
-	router.GET("/usage/stats", middleware.GzipHandler(handler.GetStats),
+	router.GET("/usage/stats", handler.GetStats,
+		swagger.WithMiddleware(middleware.Gzip()),
 		swagger.WithTags("usage"),
 		swagger.WithDescription("Returns aggregated usage statistics with flexible grouping and filtering"),
 		swagger.WithQueryConfig("group_by", swagger.QueryParamConfig{
@@ -101,7 +102,8 @@ func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 	)
 
 	// GET /api/v1/usage/timeseries - Get time-series usage data
-	router.GET("/usage/timeseries", middleware.GzipHandler(handler.GetTimeSeries),
+	router.GET("/usage/timeseries", handler.GetTimeSeries,
+		swagger.WithMiddleware(middleware.Gzip()),
 		swagger.WithTags("usage"),
 		swagger.WithDescription("Returns time-series data for usage with configurable intervals"),
 		swagger.WithQueryConfig("interval", swagger.QueryParamConfig{
@@ -149,7 +151,8 @@ func RegisterRoutes(router *swagger.RouteGroup, handler *Handler) {
 	)
 
 	// GET /api/v1/usage/records - Get individual usage records
-	router.GET("/usage/records", middleware.GzipHandler(handler.GetRecords),
+	router.GET("/usage/records", handler.GetRecords,
+		swagger.WithMiddleware(middleware.Gzip()),
 		swagger.WithTags("usage"),
 		swagger.WithDescription("Returns individual usage records (for debugging/audit)"),
 		swagger.WithQueryConfig("start_time", swagger.QueryParamConfig{

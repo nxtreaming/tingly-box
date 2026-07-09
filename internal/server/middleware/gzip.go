@@ -35,15 +35,16 @@ func (g *gzipResponseWriter) WriteString(s string) (int, error) {
 	return g.gz.Write([]byte(s))
 }
 
-// GzipHandler wraps a JSON-producing handler so its response body is
-// gzip-compressed when the client accepts it. Intended for endpoints that can
-// return large payloads (usage stats, time series, records). Do not use it on
-// streaming/SSE endpoints. The unnamed signature keeps it assignable to both
-// gin.HandlerFunc and swagger.Handler.
-func GzipHandler(handler func(c *gin.Context)) func(c *gin.Context) {
+// Gzip returns gin middleware that gzip-compresses the response body when
+// the client accepts it. Intended for endpoints that can return large JSON
+// payloads (usage stats, time series, records) — register it per-route via
+// swagger.WithMiddleware(middleware.Gzip()) rather than wrapping the handler
+// directly, so it composes through the normal auth/CORS middleware chain
+// instead of bypassing it. Do not use it on streaming/SSE endpoints.
+func Gzip() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !strings.Contains(c.GetHeader("Accept-Encoding"), "gzip") {
-			handler(c)
+			c.Next()
 			return
 		}
 
@@ -56,7 +57,7 @@ func GzipHandler(handler func(c *gin.Context)) func(c *gin.Context) {
 		c.Header("Vary", "Accept-Encoding")
 		c.Writer = writer
 
-		handler(c)
+		c.Next()
 
 		c.Writer = writer.ResponseWriter
 		if writer.wrote {

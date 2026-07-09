@@ -113,11 +113,6 @@ type UsageStore struct {
 	// lock (WAL mode supports concurrent readers), so dashboard queries do
 	// not serialize behind proxy usage writes or each other.
 	mu sync.RWMutex
-
-	// Daily pre-aggregation bookkeeping (see usage_daily.go)
-	aggMu          sync.Mutex
-	aggregatedDays map[string]bool
-	aggLoaded      bool
 }
 
 // NewUsageStore creates or loads a usage store using SQLite database.
@@ -143,12 +138,8 @@ func NewUsageStore(baseDir string) (*UsageStore, error) {
 		dbPath: dbPath,
 	}
 
-	// Auto-migrate schema for all usage-related tables
-	if err := ensureUsageDailySchema(db); err != nil {
-		return nil, fmt.Errorf("failed to align usage daily schema: %w", err)
-	}
-	if err := db.AutoMigrate(&UsageRecord{}, &UsageDailyRecord{}, &UsageMonthlyRecord{}); err != nil {
-		return nil, fmt.Errorf("failed to migrate usage database: %w", err)
+	if err := migrateUsageTables(db); err != nil {
+		return nil, err
 	}
 	if err := ensureUsageRecordSchema(db); err != nil {
 		return nil, fmt.Errorf("failed to align usage schema: %w", err)
@@ -156,6 +147,19 @@ func NewUsageStore(baseDir string) (*UsageStore, error) {
 	logrus.Debugf("Usage store initialization completed")
 
 	return store, nil
+}
+
+// migrateUsageTables aligns and auto-migrates usage_records, usage_daily, and
+// usage_monthly. Shared by NewUsageStore and StoreManager.initUsageStore so
+// the two initialization paths can't drift apart.
+func migrateUsageTables(db *gorm.DB) error {
+	if err := ensureUsageDailySchema(db); err != nil {
+		return fmt.Errorf("failed to align usage daily schema: %w", err)
+	}
+	if err := db.AutoMigrate(&UsageRecord{}, &UsageDailyRecord{}, &UsageMonthlyRecord{}); err != nil {
+		return fmt.Errorf("failed to migrate usage database: %w", err)
+	}
+	return nil
 }
 
 func ensureUsageRecordSchema(db *gorm.DB) error {
@@ -630,6 +634,8 @@ func (us *UsageStore) GetRecordsAfterID(lastID uint, startTime time.Time, limit 
 // with the daily aggregates derived from them so both views stay consistent.
 func (us *UsageStore) DeleteOlderThan(cutoffDate time.Time) (int64, error) {
 	us.mu.Lock()
+	defer us.mu.Unlock()
+
 	result := us.db.Where("timestamp < ?", cutoffDate).Delete(&UsageRecord{})
 	if result.Error == nil {
 		// Include the boundary day: its aggregate now over-counts deleted
@@ -637,14 +643,6 @@ func (us *UsageStore) DeleteOlderThan(cutoffDate time.Time) (int64, error) {
 		// next query.
 		us.db.Where("date <= ?", cutoffDate.UTC().Format(dailyDateLayout)).Delete(&UsageDailyRecord{})
 	}
-	us.mu.Unlock()
-
-	// Aggregates for deleted days must be recomputed if queried again.
-	us.aggMu.Lock()
-	us.aggLoaded = false
-	us.aggregatedDays = nil
-	us.aggMu.Unlock()
-
 	return result.RowsAffected, result.Error
 }
 

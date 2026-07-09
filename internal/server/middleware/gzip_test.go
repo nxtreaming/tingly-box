@@ -16,9 +16,9 @@ func TestGzipHandlerCompressesWhenAccepted(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
 	payload := strings.Repeat(`{"key":"value"},`, 500)
-	engine.GET("/data", GzipHandler(func(c *gin.Context) {
+	engine.GET("/data", Gzip(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"data": payload})
-	}))
+	})
 
 	req, _ := http.NewRequest("GET", "/data", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
@@ -57,9 +57,9 @@ func TestGzipHandlerCompressesWhenAccepted(t *testing.T) {
 func TestGzipHandlerPassthroughWithoutAcceptEncoding(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.GET("/data", GzipHandler(func(c *gin.Context) {
+	engine.GET("/data", Gzip(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true})
-	}))
+	})
 
 	req, _ := http.NewRequest("GET", "/data", nil)
 	w := httptest.NewRecorder()
@@ -79,9 +79,9 @@ func TestGzipHandlerPassthroughWithoutAcceptEncoding(t *testing.T) {
 func TestGzipHandlerEmptyBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.GET("/empty", GzipHandler(func(c *gin.Context) {
+	engine.GET("/empty", Gzip(), func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
-	}))
+	})
 
 	req, _ := http.NewRequest("GET", "/empty", nil)
 	req.Header.Set("Accept-Encoding", "gzip")

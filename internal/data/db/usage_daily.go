@@ -61,37 +61,51 @@ func dailyWindow(start, end, now time.Time) (time.Time, time.Time) {
 }
 
 // ensureDailyAggregates lazily builds usage_daily rows for every day in
-// [firstDay, lastDayEx) that has not been aggregated yet.
+// [firstDay, lastDayEx) that has not been aggregated yet. Which days are
+// already aggregated is read directly from usage_daily (an indexed range
+// query, scoped to the requested window) rather than cached in memory — the
+// table itself is the source of truth, so concurrent stats/timeseries
+// requests never contend on a lock just to check it, and the answer can't go
+// stale across a restart.
 func (us *UsageStore) ensureDailyAggregates(firstDay, lastDayEx time.Time) error {
-	us.aggMu.Lock()
-	defer us.aggMu.Unlock()
-
-	if !us.aggLoaded {
-		var days []string
-		us.mu.RLock()
-		err := us.db.Model(&UsageDailyRecord{}).Distinct("date").Pluck("date", &days).Error
-		us.mu.RUnlock()
-		if err != nil {
-			return err
-		}
-		us.aggregatedDays = make(map[string]bool, len(days))
-		for _, d := range days {
-			us.aggregatedDays[d] = true
-		}
-		us.aggLoaded = true
+	missing, err := us.missingAggregatedDays(firstDay, lastDayEx)
+	if err != nil {
+		return err
 	}
-
-	for day := firstDay; day.Before(lastDayEx); day = day.Add(24 * time.Hour) {
-		key := day.Format(dailyDateLayout)
-		if us.aggregatedDays[key] {
-			continue
-		}
-		if _, err := us.aggregateDay(key, day); err != nil {
+	for _, day := range missing {
+		if _, err := us.aggregateDay(day.Format(dailyDateLayout), day); err != nil {
 			return err
 		}
-		us.aggregatedDays[key] = true
 	}
 	return nil
+}
+
+// missingAggregatedDays returns the UTC days in [firstDay, lastDayEx) that
+// have no usage_daily rows yet.
+func (us *UsageStore) missingAggregatedDays(firstDay, lastDayEx time.Time) ([]time.Time, error) {
+	us.mu.RLock()
+	var have []string
+	err := us.db.Model(&UsageDailyRecord{}).
+		Where("date >= ? AND date < ?", firstDay.Format(dailyDateLayout), lastDayEx.Format(dailyDateLayout)).
+		Distinct("date").
+		Pluck("date", &have).Error
+	us.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+
+	haveSet := make(map[string]bool, len(have))
+	for _, d := range have {
+		haveSet[d] = true
+	}
+
+	var missing []time.Time
+	for day := firstDay; day.Before(lastDayEx); day = day.Add(24 * time.Hour) {
+		if !haveSet[day.Format(dailyDateLayout)] {
+			missing = append(missing, day)
+		}
+	}
+	return missing, nil
 }
 
 // aggregateDay (re)builds the usage_daily rows for one UTC day.
@@ -295,19 +309,19 @@ func statsMergeKey(groupBy string, b aggBucket) string {
 }
 
 // normalizeStatBucket clears fields that are not dimensions of the grouping,
-// so merged results don't leak arbitrary per-row values.
+// so merged results don't leak arbitrary per-row values. Key is already set
+// correctly by the SQL aliasing in both source paths (rawAggBuckets and
+// dailyStatBuckets) and preserved by mergeInto, so it only needs clearing the
+// non-dimension fields here.
 func normalizeStatBucket(groupBy string, b *aggBucket) {
 	switch groupBy {
 	case "provider":
-		b.Key = b.ProviderUUID
 		b.Model, b.Scenario, b.UserID = "", "", ""
 	case "user":
-		b.Key = b.UserID
 		b.ProviderUUID, b.ProviderName, b.Model, b.Scenario = "", "", "", ""
 	case "daily":
 		b.ProviderUUID, b.ProviderName, b.Model, b.Scenario, b.UserID = "", "", "", "", ""
 	default: // model
-		b.Key = b.Model
 		b.Scenario, b.UserID = "", ""
 	}
 }
