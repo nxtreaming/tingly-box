@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -156,18 +155,6 @@ func GenerateObfuscationString() string {
 		return base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))[:6]
 	}
 	return base64.URLEncoding.EncodeToString(b)[:6]
-}
-
-// responsesAPIEventSenders defines callbacks for sending Anthropic events in a specific format (v1 or beta)
-type responsesAPIEventSenders struct {
-	SendMessageStart      func(event map[string]interface{}, flusher http.Flusher)
-	SendContentBlockStart func(index int, blockType string, content map[string]interface{}, flusher http.Flusher)
-	SendContentBlockDelta func(index int, content map[string]interface{}, flusher http.Flusher)
-	SendContentBlockStop  func(state *streamState, index int, flusher http.Flusher)
-	SendStopEvents        func(state *streamState, flusher http.Flusher)
-	SendMessageDelta      func(state *streamState, stopReason string, flusher http.Flusher)
-	SendMessageStop       func(messageID, model string, state *streamState, stopReason string, flusher http.Flusher)
-	SendErrorEvent        func(event map[string]interface{}, flusher http.Flusher)
 }
 
 // parseRawJSON parses raw JSON string into map[string]interface{}

@@ -1,6 +1,7 @@
 package assembler
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -211,4 +212,32 @@ func TestAnthropicStreamAssembler_Finish_WithBlockGaps(t *testing.T) {
 	assert.Equal(t, "Block 0", result.Content[0].Text)
 	assert.Equal(t, "Block 1", result.Content[1].Text)
 	assert.Equal(t, "Block 2", result.Content[2].Thinking)
+}
+
+// TestAnthropicStreamAssembler_BlockRestartResetsAccumulation verifies that a
+// re-emitted content_block_start for the same index restarts text
+// accumulation (replacing the block) rather than concatenating deltas from
+// before and after the restart.
+func TestAnthropicStreamAssembler_BlockRestartResetsAccumulation(t *testing.T) {
+	assembler := NewAnthropicStreamAssembler()
+
+	events := []string{
+		`{"type":"message_start","message":{"id":"msg_r","type":"message","role":"assistant"}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OLD"}}`,
+		// provider restarts the same block index
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"NEW"}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":2}}`,
+	}
+	for _, raw := range events {
+		var evt anthropic.MessageStreamEventUnion
+		require.NoError(t, json.Unmarshal([]byte(raw), &evt))
+		assembler.RecordV1Event(&evt)
+	}
+
+	result := assembler.Finish("m", 0, 0)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+	assert.Equal(t, "NEW", result.Content[0].Text)
 }

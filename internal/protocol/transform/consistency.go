@@ -1,7 +1,6 @@
 package transform
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -161,57 +160,10 @@ func (t *ConsistencyTransform) normalizeMessages(req *openai.ChatCompletionNewPa
 	t.alignToolMessages(req)
 
 	for i := range req.Messages {
-		// Check if this is a tool message
-		if req.Messages[i].OfTool != nil {
-			// Convert to map to access tool_call_id
-			msgMap := req.Messages[i].ExtraFields()
-			if msgMap == nil {
-				// Try to unmarshal the message to get tool_call_id
-				if msgBytes, err := json.Marshal(req.Messages[i]); err == nil {
-					var toolMsg map[string]interface{}
-					if err := json.Unmarshal(msgBytes, &toolMsg); err == nil {
-						if toolCallID, ok := toolMsg["tool_call_id"].(string); ok {
-							// Truncate tool_call_id if needed
-							if len(toolCallID) > maxToolCallIDLength {
-								truncatedID := toolCallID[:maxToolCallIDLength]
-								toolMsg["tool_call_id"] = truncatedID
-
-								// Re-marshal and unmarshal to update message
-								if newBytes, err := json.Marshal(toolMsg); err == nil {
-									var updatedMsg openai.ChatCompletionMessageParamUnion
-									if err := json.Unmarshal(newBytes, &updatedMsg); err == nil {
-										req.Messages[i] = updatedMsg
-									}
-								}
-							}
-						}
-					}
-				}
-			} else {
-				// tool_call_id should be in the message structure, not ExtraFields
-				// For OpenAI ChatCompletionMessageParamUnion.OfTool, tool_call_id is a direct field
-				// We need to handle this differently - let's check the actual structure
-
-				// Re-marshal and inspect the message
-				if msgBytes, err := json.Marshal(req.Messages[i]); err == nil {
-					var toolMsg map[string]interface{}
-					if err := json.Unmarshal(msgBytes, &toolMsg); err == nil {
-						if toolCallID, ok := toolMsg["tool_call_id"].(string); ok {
-							if len(toolCallID) > maxToolCallIDLength {
-								truncatedID := toolCallID[:maxToolCallIDLength]
-								toolMsg["tool_call_id"] = truncatedID
-
-								if newBytes, err := json.Marshal(toolMsg); err == nil {
-									var updatedMsg openai.ChatCompletionMessageParamUnion
-									if err := json.Unmarshal(newBytes, &updatedMsg); err == nil {
-										req.Messages[i] = updatedMsg
-									}
-								}
-							}
-						}
-					}
-				}
-			}
+		// tool_call_id is a direct struct field on tool messages; truncate it
+		// in place without any JSON round-trip.
+		if tool := req.Messages[i].OfTool; tool != nil && len(tool.ToolCallID) > maxToolCallIDLength {
+			tool.ToolCallID = tool.ToolCallID[:maxToolCallIDLength]
 		}
 	}
 }
@@ -544,50 +496,52 @@ func (t *ConsistencyTransform) normalizeAnthropicV1Messages(req *anthropic.Messa
 }
 
 // validateAnthropicV1 validates the Anthropic v1 request
-func (t *ConsistencyTransform) validateAnthropicV1(req *anthropic.MessageNewParams) error {
+// validateAnthropicCommon holds the shared scalar validation for Anthropic
+// v1 and beta requests; variant names the API flavour in error messages.
+func validateAnthropicCommon(variant string, maxTokens int64, model string, tempValid bool, temp float64, topPValid bool, topP float64) error {
 	// Validate max_tokens
-	if req.MaxTokens == 0 {
+	if maxTokens == 0 {
 		return &ValidationError{
 			Field:   "max_tokens",
-			Message: "max_tokens is required for Anthropic v1 Messages API",
-			Value:   req.MaxTokens,
+			Message: "max_tokens is required for Anthropic " + variant + " Messages API",
+			Value:   maxTokens,
 		}
 	}
 
 	// Validate model
-	if req.Model == "" {
+	if model == "" {
 		return &ValidationError{
 			Field:   "model",
 			Message: "model is required",
-			Value:   req.Model,
+			Value:   model,
 		}
 	}
 
 	// Validate temperature range (Anthropic: 0-1)
-	if req.Temperature.Valid() {
-		temp := req.Temperature.Value
-		if temp < 0 || temp > 1 {
-			return &ValidationError{
-				Field:   "temperature",
-				Message: "temperature must be between 0 and 1 for Anthropic v1",
-				Value:   temp,
-			}
+	if tempValid && (temp < 0 || temp > 1) {
+		return &ValidationError{
+			Field:   "temperature",
+			Message: "temperature must be between 0 and 1 for Anthropic " + variant,
+			Value:   temp,
 		}
 	}
 
 	// Validate top_p range (Anthropic: 0-1)
-	if req.TopP.Valid() {
-		topP := req.TopP.Value
-		if topP < 0 || topP > 1 {
-			return &ValidationError{
-				Field:   "top_p",
-				Message: "top_p must be between 0 and 1 for Anthropic v1",
-				Value:   topP,
-			}
+	if topPValid && (topP < 0 || topP > 1) {
+		return &ValidationError{
+			Field:   "top_p",
+			Message: "top_p must be between 0 and 1 for Anthropic " + variant,
+			Value:   topP,
 		}
 	}
 
 	return nil
+}
+
+func (t *ConsistencyTransform) validateAnthropicV1(req *anthropic.MessageNewParams) error {
+	return validateAnthropicCommon("v1", req.MaxTokens, string(req.Model),
+		req.Temperature.Valid(), req.Temperature.Value,
+		req.TopP.Valid(), req.TopP.Value)
 }
 
 // normalizeAnthropicBetaToolSchemas ensures tool schemas follow Anthropic beta's requirements
@@ -631,49 +585,9 @@ func (t *ConsistencyTransform) normalizeAnthropicBetaMessages(req *anthropic.Bet
 
 // validateAnthropicBeta validates the Anthropic beta request
 func (t *ConsistencyTransform) validateAnthropicBeta(req *anthropic.BetaMessageNewParams) error {
-	// Validate max_tokens
-	if req.MaxTokens == 0 {
-		return &ValidationError{
-			Field:   "max_tokens",
-			Message: "max_tokens is required for Anthropic beta Messages API",
-			Value:   req.MaxTokens,
-		}
-	}
-
-	// Validate model
-	if req.Model == "" {
-		return &ValidationError{
-			Field:   "model",
-			Message: "model is required",
-			Value:   req.Model,
-		}
-	}
-
-	// Validate temperature range (Anthropic: 0-1)
-	if req.Temperature.Valid() {
-		temp := req.Temperature.Value
-		if temp < 0 || temp > 1 {
-			return &ValidationError{
-				Field:   "temperature",
-				Message: "temperature must be between 0 and 1 for Anthropic beta",
-				Value:   temp,
-			}
-		}
-	}
-
-	// Validate top_p range (Anthropic: 0-1)
-	if req.TopP.Valid() {
-		topP := req.TopP.Value
-		if topP < 0 || topP > 1 {
-			return &ValidationError{
-				Field:   "top_p",
-				Message: "top_p must be between 0 and 1 for Anthropic beta",
-				Value:   topP,
-			}
-		}
-	}
-
-	return nil
+	return validateAnthropicCommon("beta", req.MaxTokens, string(req.Model),
+		req.Temperature.Valid(), req.Temperature.Value,
+		req.TopP.Valid(), req.TopP.Value)
 }
 
 // Constants

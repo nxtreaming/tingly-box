@@ -1,108 +1,28 @@
 package request
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/packages/param"
-	"github.com/openai/openai-go/v3/shared"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 )
 
-// ConvertAnthropicBetaToOpenAIRequest converts Anthropic beta request to OpenAI format
-// Returns the OpenAI request and a config object with metadata for provider transforms
+// ConvertAnthropicBetaToOpenAIRequest converts Anthropic beta request to
+// OpenAI format. Returns the OpenAI request and a config object with metadata
+// for provider transforms. The conversion itself is shared with the v1
+// variant via the normalized request view (see anthropic_view.go).
 func ConvertAnthropicBetaToOpenAIRequest(anthropicReq *anthropic.BetaMessageNewParams, compatible bool, isStreaming bool, disableStreamUsage bool) (*openai.ChatCompletionNewParams, *protocol.OpenAIConfig) {
-	openaiReq := &openai.ChatCompletionNewParams{
-		Model: openai.ChatModel(anthropicReq.Model),
-	}
-
-	isThinking := IsThinkingEnabledBeta(anthropicReq)
-
-	// Set MaxTokens
-	openaiReq.MaxTokens = openai.Opt(anthropicReq.MaxTokens)
-
-	// Convert messages
-	for _, msg := range anthropicReq.Messages {
-		if string(msg.Role) == "user" {
-			// User messages may contain tool_result blocks - need special handling
-			messages := convertAnthropicBetaUserMessageToOpenAI(msg)
-			openaiReq.Messages = append(openaiReq.Messages, messages...)
-		} else if string(msg.Role) == "assistant" {
-			// Convert assistant message with potential tool_use blocks
-			openaiMsg := convertAnthropicBetaAssistantMessageToOpenAI(msg)
-			openaiReq.Messages = append(openaiReq.Messages, openaiMsg)
-		}
-	}
-
-	// Convert system message
-	if len(anthropicReq.System) > 0 {
-		systemStr := ConvertBetaTextBlocksToString(anthropicReq.System)
-		systemMsg := openai.SystemMessage(systemStr)
-		// Add system message at the beginning
-		openaiReq.Messages = append([]openai.ChatCompletionMessageParamUnion{systemMsg}, openaiReq.Messages...)
-	}
-
-	// Convert tools from Anthropic format to OpenAI format
-	if len(anthropicReq.Tools) > 0 {
-		if compatible {
-			openaiReq.Tools = ConvertAnthropicBetaToolsToOpenAIWithTransformedSchema(anthropicReq.Tools)
-		} else {
-			openaiReq.Tools = ConvertAnthropicBetaToolsToOpenAI(anthropicReq.Tools)
-		}
-		// Convert tool choice
-		openaiReq.ToolChoice = ConvertAnthropicBetaToolChoiceToOpenAI(&anthropicReq.ToolChoice)
-	}
-
-	// thinking
-	config := &protocol.OpenAIConfig{
-		HasThinking:     false,
-		ReasoningEffort: "medium", // Default to "medium" for OpenAI-compatible APIs
-	}
-	if anthropicReq.Thinking.OfEnabled != nil || anthropicReq.Thinking.OfAdaptive != nil || isThinking {
-		config.HasThinking = true
-		config.ReasoningEffort = "medium"
-	}
-	if anthropicReq.OutputConfig.Effort != "" {
-		config.ReasoningEffort = shared.ReasoningEffort(anthropicReq.OutputConfig.Effort)
-	}
-
-	// Only set stream_options for streaming requests (per OpenAI API spec)
-	if isStreaming && !disableStreamUsage {
-		openaiReq.StreamOptions.IncludeUsage = param.Opt[bool]{Value: true}
-	}
-	return openaiReq, config
+	// compatible historically selected a schema-transforming tool converter,
+	// which is now an alias of the plain one (provider transforms own schema
+	// rewrites), so it no longer affects the conversion.
+	_ = compatible
+	return convertAnthropicViewToOpenAIRequest(viewAnthropicBetaRequest(anthropicReq), isStreaming, disableStreamUsage)
 }
 
 // ConvertAnthropicBetaToolsToOpenAI converts Anthropic beta tools to OpenAI format
 func ConvertAnthropicBetaToolsToOpenAI(tools []anthropic.BetaToolUnionParam) []openai.ChatCompletionToolUnionParam {
-	if len(tools) == 0 {
-		return nil
-	}
-
-	out := make([]openai.ChatCompletionToolUnionParam, 0, len(tools))
-
-	for _, t := range tools {
-		tool := t.OfTool
-		if tool == nil {
-			continue
-		}
-
-		// Convert Anthropic input schema to OpenAI function parameters
-		parameters := convertAnthropicInputSchemaToOpenAIParameters(tool.InputSchema.Properties, tool.InputSchema.Required)
-
-		// Create function with parameters
-		fn := shared.FunctionDefinitionParam{
-			Name:        tool.Name,
-			Description: param.Opt[string]{Value: tool.Description.Value},
-			Parameters:  parameters,
-		}
-
-		out = append(out, openai.ChatCompletionFunctionTool(fn))
-	}
-
-	return out
+	return convertAnthropicToolViewsToOpenAI(viewAnthropicBetaTools(tools))
 }
 
 // ConvertAnthropicBetaToolsToOpenAIWithTransformedSchema is an alias for ConvertAnthropicBetaToolsToOpenAI
@@ -113,32 +33,7 @@ func ConvertAnthropicBetaToolsToOpenAIWithTransformedSchema(tools []anthropic.Be
 
 // ConvertAnthropicBetaToolChoiceToOpenAI converts Anthropic beta tool_choice to OpenAI format
 func ConvertAnthropicBetaToolChoiceToOpenAI(tc *anthropic.BetaToolChoiceUnionParam) openai.ChatCompletionToolChoiceOptionUnionParam {
-	if tc.OfAuto != nil {
-		return openai.ChatCompletionToolChoiceOptionUnionParam{
-			OfAuto: openai.Opt("auto"),
-		}
-	}
-
-	if tc.OfTool != nil {
-		return openai.ToolChoiceOptionFunctionToolChoice(
-			openai.ChatCompletionNamedToolChoiceFunctionParam{
-				Name: tc.OfTool.Name,
-			},
-		)
-	}
-
-	// OfAny (Anthropic's "required") - map to auto as OpenAI doesn't have direct equivalent
-	// In the future, we could use OfAllowedTools with all tools listed to achieve similar behavior
-	if tc.OfAny != nil {
-		return openai.ChatCompletionToolChoiceOptionUnionParam{
-			OfAuto: openai.Opt("auto"),
-		}
-	}
-
-	// Default to auto
-	return openai.ChatCompletionToolChoiceOptionUnionParam{
-		OfAuto: openai.Opt("auto"),
-	}
+	return convertAnthropicToolChoiceViewToOpenAI(viewAnthropicBetaToolChoice(tc))
 }
 
 // ConvertBetaTextBlocksToString converts Anthropic beta TextBlockParam array to string
@@ -183,162 +78,10 @@ func betaImageBlockToOpenAIURL(img *anthropic.BetaImageBlockParam) string {
 // convertAnthropicBetaAssistantMessageToOpenAI converts Anthropic beta assistant message to OpenAI format
 // Note: thinking content is preserved in "x_thinking" field for provider-specific transforms
 func convertAnthropicBetaAssistantMessageToOpenAI(msg anthropic.BetaMessageParam) openai.ChatCompletionMessageParamUnion {
-	var textContent string
-	var toolCalls []map[string]interface{}
-	var thinking string
-
-	// Process content blocks
-	for _, block := range msg.Content {
-		if block.OfText != nil {
-			textContent += block.OfText.Text
-		} else if block.OfToolUse != nil {
-			// Convert tool_use block to OpenAI tool_call format
-			toolCall := map[string]interface{}{
-				"id":   block.OfToolUse.ID,
-				"type": "function",
-				"function": map[string]interface{}{
-					"name": block.OfToolUse.Name,
-				},
-			}
-			// Marshal input to JSON string for OpenAI
-			if argsBytes, err := json.Marshal(block.OfToolUse.Input); err == nil {
-				toolCall["function"].(map[string]interface{})["arguments"] = string(argsBytes)
-			}
-			toolCalls = append(toolCalls, toolCall)
-		} else if block.OfThinking != nil {
-			thinking = block.OfThinking.Thinking
-		}
-	}
-
-	// Build the message based on what we have
-	if len(toolCalls) > 0 {
-		// Use JSON marshaling to create a message with tool_calls
-		msgMap := map[string]interface{}{
-			"role":    "assistant",
-			"content": textContent,
-		}
-		msgMap["tool_calls"] = toolCalls
-
-		msgBytes, _ := json.Marshal(msgMap)
-		var result openai.ChatCompletionMessageParamUnion
-		_ = json.Unmarshal(msgBytes, &result)
-
-		// Preserve x_thinking in ExtraFields for provider transforms (e.g., DeepSeek/Moonshot)
-		// Must set on OfAssistant (variant level), not on union level, because
-		// MarshalUnion only serializes the active variant — union-level ExtraFields are dropped.
-		if result.OfAssistant != nil {
-			extraFields := result.OfAssistant.ExtraFields()
-			if extraFields == nil {
-				extraFields = map[string]any{}
-			}
-			extraFields["x_thinking"] = thinking
-			result.OfAssistant.SetExtraFields(extraFields)
-		}
-
-		return result
-	}
-
-	// Simple text message
-	msgMap := map[string]interface{}{
-		"role":    "assistant",
-		"content": textContent,
-	}
-	msgBytes, _ := json.Marshal(msgMap)
-	var result openai.ChatCompletionMessageParamUnion
-	_ = json.Unmarshal(msgBytes, &result)
-
-	// Preserve x_thinking in ExtraFields for provider transforms
-	// Must set on OfAssistant (variant level), not on union level.
-	if result.OfAssistant != nil {
-		extraFields := result.OfAssistant.ExtraFields()
-		if extraFields == nil {
-			extraFields = map[string]any{}
-		}
-		extraFields["x_thinking"] = thinking
-		result.OfAssistant.SetExtraFields(extraFields)
-	}
-
-	return result
+	return convertAnthropicViewAssistantToOpenAI(viewAnthropicBetaMessage(msg).Blocks)
 }
 
 // convertAnthropicBetaUserMessageToOpenAI converts Anthropic beta user message to OpenAI format
 func convertAnthropicBetaUserMessageToOpenAI(msg anthropic.BetaMessageParam) []openai.ChatCompletionMessageParamUnion {
-	var result []openai.ChatCompletionMessageParamUnion
-	var textContent string
-	var hasToolResult, hasImage bool
-
-	for _, block := range msg.Content {
-		if block.OfToolResult != nil {
-			hasToolResult = true
-		}
-		if block.OfImage != nil {
-			hasImage = true
-		}
-	}
-
-	// Process content blocks
-	if hasToolResult {
-		// When there are tool_result blocks, we need to create separate messages
-		for _, block := range msg.Content {
-			if block.OfText != nil {
-				textContent += block.OfText.Text
-			} else if block.OfToolResult != nil {
-				// Convert tool_result to OpenAI role="tool" message
-				// Truncate tool_call_id to meet OpenAI's 40 character limit
-				truncatedID := truncateToolCallID(block.OfToolResult.ToolUseID)
-				toolMsg := map[string]interface{}{
-					"role":         "tool",
-					"tool_call_id": truncatedID,
-					"content":      convertBetaToolResultContent(block.OfToolResult.Content),
-				}
-				msgBytes, _ := json.Marshal(toolMsg)
-				var toolResultMsg openai.ChatCompletionMessageParamUnion
-				_ = json.Unmarshal(msgBytes, &toolResultMsg)
-				result = append(result, toolResultMsg)
-			}
-		}
-		// If there was text content alongside tool results, add it as a user message
-		if textContent != "" {
-			result = append(result, openai.UserMessage(textContent))
-		}
-	} else if hasImage {
-		// Multimodal user message: emit an array of text + image_url content parts
-		parts := make([]map[string]interface{}, 0, len(msg.Content))
-		for _, block := range msg.Content {
-			switch {
-			case block.OfText != nil:
-				parts = append(parts, map[string]interface{}{
-					"type": "text",
-					"text": block.OfText.Text,
-				})
-			case block.OfImage != nil:
-				url := betaImageBlockToOpenAIURL(block.OfImage)
-				if url == "" {
-					continue
-				}
-				parts = append(parts, map[string]interface{}{
-					"type":      "image_url",
-					"image_url": map[string]interface{}{"url": url},
-				})
-			}
-		}
-		if len(parts) > 0 {
-			msgMap := map[string]interface{}{
-				"role":    "user",
-				"content": parts,
-			}
-			msgBytes, _ := json.Marshal(msgMap)
-			var userMsg openai.ChatCompletionMessageParamUnion
-			_ = json.Unmarshal(msgBytes, &userMsg)
-			result = append(result, userMsg)
-		}
-	} else {
-		// Simple text-only user message
-		contentStr := ConvertBetaContentBlocksToString(msg.Content)
-		if contentStr != "" {
-			result = append(result, openai.UserMessage(contentStr))
-		}
-	}
-
-	return result
+	return convertAnthropicViewUserToOpenAI(viewAnthropicBetaMessage(msg).Blocks)
 }

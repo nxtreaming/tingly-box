@@ -106,6 +106,10 @@ type ProtocolHandlerDeps struct {
 // here in later steps and become methods on *ProtocolHandler.
 type ProtocolHandler struct {
 	deps ProtocolHandlerDeps
+
+	// mcpTC caches the stateless MCP chain transforms (see
+	// protocol_transform.go); they depend only on construction-time deps.
+	mcpTC mcpTransformCache
 }
 
 // NewHandler constructs the AI Model API handler from its dependencies.
