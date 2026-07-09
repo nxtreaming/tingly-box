@@ -144,6 +144,7 @@ export const useProviderDialog = (
             token: fd.token,
             no_key_required: fd.noKeyRequired,
             proxy_url: fd.proxyUrl,
+            user_agent: fd.userAgent ?? '',
         };
 
         const result = await api.addProvider(providerData);

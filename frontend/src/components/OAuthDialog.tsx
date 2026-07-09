@@ -555,6 +555,7 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
     const [globalProxyUrl, setGlobalProxyUrl] = useState('');
     // For autoStartProviderId mode: whether user has clicked "Connect & Authorize"
     const [configConfirmed, setConfigConfirmed] = useState(false);
+    const [authAttempt, setAuthAttempt] = useState(0);
 
     // Load saved proxy URL and global proxy setting from localStorage/config on mount
     useEffect(() => {
@@ -630,6 +631,7 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
         setAuthDialogOpen(false);
         setAuthData(null);
         setConfigConfirmed(false);
+        setAuthAttempt(0);
         onClose();
     };
 
@@ -737,17 +739,18 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
     useEffect(() => {
         if (!open) {
             autoStartedRef.current = null;
+            setAuthAttempt(0);
             return;
         }
-        if (!autoStartProviderId || autoStartedRef.current === autoStartProviderId) return;
+        if (!autoStartProviderId || autoStartedRef.current === `${autoStartProviderId}:${authAttempt}`) return;
         if (!configConfirmed) return;
         const provider = oauthProviders.find((p) => p.id === autoStartProviderId);
         if (provider && provider.enabled !== false) {
-            autoStartedRef.current = autoStartProviderId;
+            autoStartedRef.current = `${autoStartProviderId}:${authAttempt}`;
             handleProviderClick(provider);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, autoStartProviderId, oauthProviders, configConfirmed]);
+    }, [open, autoStartProviderId, oauthProviders, configConfirmed, authAttempt]);
 
     // Direct mode: launched from the unified picker for a single provider.
     // Shows a config screen (proxy settings, etc.) before starting the OAuth
@@ -760,6 +763,7 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
         const handleRetry = () => {
             setConfigConfirmed(false);
             setInitError(null);
+            setAuthAttempt((attempt) => attempt + 1);
             autoStartedRef.current = null;
         };
 
@@ -865,7 +869,10 @@ const OAuthDialog = ({open, onClose, onSuccess, autoStartProviderId, reauthProvi
                                     fullWidth
                                     startIcon={<Launch/>}
                                     disabled={provider?.enabled === false}
-                                    onClick={() => setConfigConfirmed(true)}
+                                    onClick={() => {
+                                        if (configConfirmed) setAuthAttempt((attempt) => attempt + 1);
+                                        else setConfigConfirmed(true);
+                                    }}
                                 >
                                     {isReauth ? 'Reauthorize' : 'Connect & Authorize'}
                                 </Button>
