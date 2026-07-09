@@ -67,7 +67,7 @@ transformers.  The stored provider record is never mutated.
 
 ## Add flow
 
-See also: [connect-provider-flow.md](connect-provider-flow.md) for the full
+See also: [connect-provider-flow.md](connect-ai-flow.md) for the full
 picker → form sequence.
 
 Dual is reached two ways, kept on separate surfaces so each form answers one

@@ -25,20 +25,19 @@ Scrollbar is always visible on the card area.
 
 | Section | Grid | Badge | Notes |
 |---|---|---|---|
-| Custom | 2-column | Key | "Custom endpoint" (single URL), "Dual endpoint" (two URLs, one key), "Import" |
-| OAuth sign-in | 2-column | OAuth (green) | Short names fit side-by-side |
-| Self-hosted | 2-column | Self-hosted (amber) | Ollama, LM Studio, LocalAI, Jan, vLLM, SGLang |
-| API key providers | 1-column | Key | Long localized names need full width |
+| Custom | responsive 1/2/3-column in dialog | Key | "Custom endpoint" (free-form URL), "Import" |
+| OAuth sign-in | responsive 1/2/3-column in dialog | OAuth (green) | Choosing a card opens OAuth direct mode |
+| Self-hosted | responsive 1/2/3-column in dialog | Self-hosted (amber) | Ollama, LM Studio, LocalAI, Jan, vLLM, SGLang |
+| API key providers | responsive 1/2/3-column in dialog | Key / region | Provider templates pre-fill protocol slots |
 
-**Custom vs Dual** — two shapes, two cards (`kind: 'custom'` / `'dual'`):
-- **Custom endpoint** → single-protocol form (one base URL + OpenAI/Anthropic radio).
-- **Dual endpoint** → `dualMode` form: *OpenAI Base URL* + *Anthropic Base URL*
-  + one key, always a single fused record. See
-  [dual-provider.md](dual-provider.md).
+**Custom** — the custom card opens the same protocol-slot form as presets, but with empty URLs.
+Users can enable OpenAI, Anthropic, or both protocol slots in the form; dual-endpoint
+configuration is no longer a separate picker card or mode. See [dual-provider.md](dual-provider.md).
 
 **Routing on card click:**
-- **Custom / Dual / Key provider / Self-hosted** → opens the form dialog (pre-filled)
-- **OAuth** → opens OAuthDialog in direct mode (skips the provider grid, straight to auth)
+- **Custom / Key provider / Self-hosted** → opens the form dialog (pre-filled when a template was chosen)
+- **Import** → opens the import modal
+- **OAuth** → opens OAuthDialog in direct mode (skips the provider grid, shows provider + proxy config, then starts auth)
 
 ### Flow at a glance
 
@@ -48,18 +47,18 @@ Scrollbar is always visible on the card area.
                        │  search ▸ filter all cards   │
                        └──────────────┬───────────────┘
                                       │ onSelect(ConnectSelection)
-        ┌───────────────┬─────────────┼─────────────┬───────────────┐
-        │ kind:'custom' │ kind:'dual'│ kind:'key'  │ kind:'local'  │ kind:'oauth'
+        ┌───────────────┬─────────────┼─────────────┬───────────────┬─────────────┐
+        │ kind:'custom' │ kind:'import'│ kind:'key' │ kind:'local'  │ kind:'oauth'│
         ▼               ▼              ▼             ▼               ▼
   ┌───────────┐  ┌─────────────┐ ┌──────────┐ ┌────────────┐ ┌──────────────┐
-  │ Custom    │  │ Dual form │ │ preset   │ │ self-hosted│ │ OAuthDialog  │
-  │ endpoint  │  │ (dualMode)│ │ pre-fill │ │ pre-fill   │ │ direct mode  │
-  │ 1 URL +   │  │ OpenAI URL +│ │ from     │ │ localhost  │ │ autoStart    │
-  │ proto     │  │ Anthropic   │ │ template │ │ :port +    │ │ ProviderId   │
-  │ radio     │  │ URL, 1 key  │ │          │ │ key conv.  │ │ ▸ sign in    │
-  └─────┬─────┘  └──────┬──────┘ └────┬─────┘ └─────┬──────┘ └──────┬───────┘
-        │               │             │             │               │
-        └───────────────┴──────┬──────┴─────────────┘               │
+  │ Blank     │  │ ImportModal │ │ preset   │ │ self-hosted│ │ OAuthDialog  │
+  │ protocol  │  │ clipboard / │ │ pre-fill │ │ pre-fill   │ │ direct mode  │
+  │ slots     │  │ file import │ │ from     │ │ localhost  │ │ provider +   │
+  │           │  │             │ │ template │ │ :port +    │ │ proxy config │
+  │           │  │             │ │          │ │ key conv.  │ │ ▸ sign in    │
+  └─────┬─────┘  └─────────────┘ └────┬─────┘ └─────┬──────┘ └──────┬───────┘
+        │                              │             │               │
+        └──────────────────────────────┴─────────────┘               │
                                ▼                                     ▼
                     ┌─────────────────────┐                ┌──────────────────┐
                     │  ProviderFormDialog  │                │  token stored on │
@@ -69,15 +68,15 @@ Scrollbar is always visible on the card area.
                                │ submit
                                ▼
                     ┌─────────────────────┐
-                    │  api.addProvider     │  dual → single record with
-                    │  (1 or 2 records)    │  api_base_openai + api_base_anthropic
+                    │  api.addProvider     │  one record; optional
+                    │                     │  api_base_openai + api_base_anthropic
                     └─────────────────────┘
 ```
 
-Three surfaces render this picker → form sequence and each wires the same
-`ConnectSelection` kinds (so the Dual card must be handled in all three):
-`CredentialPage.tsx` (full edit/upgrade), `useProviderDialog.tsx` (onboarding
-templates), and `ConnectProviderFlow.tsx` (the scenario "Use …" pages).
+Three surfaces render this picker → form sequence and each should wire the same
+`ConnectSelection` kinds: `CredentialPage.tsx` (full credential management),
+`useProviderDialog.tsx` (shared add-flow hook), and `ConnectProviderFlow.tsx`
+(the scenario "Use …" pages).
 
 ---
 
@@ -85,11 +84,11 @@ templates), and `ConnectProviderFlow.tsx` (the scenario "Use …" pages).
 
 Layout top → bottom:
 
-1. **Base URL \*** — required; inline error if submitted empty
+1. **Protocols** — independent OpenAI / Anthropic URL slots; at least one enabled URL is required
 2. **API Key** — password field with show/hide toggle
-3. **No API Key Required** — right-aligned checkbox; disables the key field
-4. **API Style** — OpenAI / Anthropic checkboxes; when both are checked on a dual-URL template a **Dual mode** toggle and topology hint appear (see [dual-provider.md](dual-provider.md))
-5. **Advanced accordion** — collapsed by default in add mode, auto-expanded in edit mode
+3. **No API Key Required** — checkbox tied to the key field; self-hosted templates may keep the key optional but editable
+4. **Proxy URL** — optional; can use the global quick proxy
+5. **Advanced accordion** — collapsed by default in add mode, auto-expanded in edit mode; contains provider name and custom User-Agent
 
 When opened from the picker, the form shows a **← Back** button (bottom-left) that
 closes the form and re-opens the picker. "Test Connection" and the submit button stay
@@ -135,12 +134,12 @@ enter their key without unchecking a separate toggle.
 | ← Back button when opened from picker | Users can reconsider provider choice without dismissing the whole flow |
 | Back + [Test | Submit] layout via `ml:auto` | Avoids `justifyContent: space-between` + empty placeholder span |
 | Header locked in picker | Description + search don't scroll away when the list is long |
-| Single-column for API key providers | Localized CN names (e.g. "百度千帆 Coding Plan") overflow a 2-column grid |
-| "No API Key Required" as right-aligned checkbox | Checkbox placement matches the key field it modifies; chips felt too prominent for a rare toggle |
+| Responsive 1/2/3-column picker grid | Uses one column on mobile, two on small screens, and three on large dialogs to reduce scrolling without adding another mode |
+| "No API Key Required" tied to key field | Checkbox placement matches the key field it modifies; self-hosted optional-key cases still leave the token editable |
 | Advanced accordion | Proxy, user-agent, name are rarely needed; hiding them shortens the common add-key path |
 | Base URL required validation | Blocks submit and shows an inline field error; clears on first keystroke |
 | Empty `!` fix in test panel | Splitting an empty `details` string produced a dangling warning icon with no text |
-| OAuth direct mode | Picker already chose the provider; OAuthDialog skips its own grid via `autoStartProviderId` |
+| OAuth direct mode | Picker already chose the provider; OAuthDialog skips its own grid via `autoStartProviderId`, shows provider/proxy configuration, and supports retrying a failed authorization initialization |
 
 ---
 
@@ -148,15 +147,16 @@ enter their key without unchecking a separate toggle.
 
 | File | Role |
 |---|---|
-| `frontend/src/components/ConnectProviderDialog.tsx` | Step 1 — unified picker; `SELF_HOSTED_PROVIDERS` constant with default keys |
-| `frontend/src/components/ProviderFormDialog.tsx` | Step 2 — API key / custom / dual form; `onBack` prop for picker navigation |
+| `frontend/src/components/ConnectProviderDialog.tsx` | Step 1 — unified picker and provider grouping/search |
+| `frontend/src/components/ProviderFormDialog.tsx` | Step 2 — API key / custom / protocol-slot form; `onBack` prop for picker navigation |
 | `frontend/src/components/OAuthDialog.tsx` | Step 2 — OAuth flow; `autoStartProviderId` for direct mode |
-| `frontend/src/pages/CredentialPage.tsx` | Wires picker → form routing (surface 1); `fromConnectPicker` + `isLocalProvider` + `isDualMode` state |
-| `frontend/src/hooks/useProviderDialog.tsx` | Picker → form routing for onboarding templates (surface 2); `dualMode` |
-| `frontend/src/components/ConnectProviderFlow.tsx` | Picker → form routing for scenario "Use …" pages (surface 3); `isDualMode` |
-| `frontend/src/components/providerFormDialog/ApiKeyField.tsx` | Key field; `hideCheckbox` + `optionalEditable` props |
-| `frontend/src/components/providerFormDialog/CustomEndpointField.tsx` | Single base-URL input for custom mode; persistent "append /v1" tooltip |
-| `frontend/src/components/providerFormDialog/DualUrlFields.tsx` | Two-URL body (OpenAI + Anthropic) for `dualMode`; downgrade link |
-| `frontend/src/components/providerFormDialog/ProviderAutocomplete.tsx` | Base URL field; `required`/`error`/`helperText` props |
-| `frontend/src/components/providerFormDialog/VerificationResultPanel.tsx` | Test result panel; filters empty detail rows |
-| `internal/data/providers.json` | Provider templates; self-hosted entries use `type: "self-hosted"` |
+| `frontend/src/pages/CredentialPage.tsx` | Credential-management surface; standard add flow uses `useProviderDialog`, edit flow uses `useProviderEditDialog` |
+| `frontend/src/hooks/useProviderDialog.tsx` | Shared picker → form routing for the standard add flow; owns optional self-hosted token behavior and add-provider payload |
+| `frontend/src/components/ConnectProviderFlow.tsx` | Scenario "Use …" pages: local picker → form/OAuth routing |
+| `frontend/src/components/provider-form-dialog/ApiKeyField.tsx` | Key field; optional editable token state for self-hosted providers |
+| `frontend/src/components/provider-form-dialog/ProtocolSlot.tsx` | OpenAI / Anthropic URL slot UI |
+| `frontend/src/components/provider-form-dialog/ProxyUrlField.tsx` | Proxy URL and global quick-proxy selector |
+| `frontend/src/components/provider-form-dialog/KeyNameField.tsx` | Advanced provider-name field |
+| `frontend/src/components/provider-form-dialog/VerificationResultPanel.tsx` | Test result panel; filters empty detail rows |
+| `frontend/src/components/provider-form-dialog/probe.ts` | Lightweight probe adapter for "Test Connection" |
+| `internal/data/providers.json` | Provider templates; self-hosted entries use `region: "self-hosted"` |

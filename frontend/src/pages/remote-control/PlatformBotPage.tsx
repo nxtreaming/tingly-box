@@ -383,7 +383,6 @@ const PlatformBotPage = ({ platformId, platformName, platformGuide }: PlatformBo
                     <EmptyStateGuide
                         title={`No ${platformName} Bots Configured`}
                         description={`Configure ${platformName} bots to enable remote-control chat integration.`}
-                        showOAuthButton={false}
                         showHeroIcon={false}
                         primaryButtonLabel={`Add ${platformName} Bot`}
                         onAddApiKeyClick={() => handleOpenBotTokenDialog()}

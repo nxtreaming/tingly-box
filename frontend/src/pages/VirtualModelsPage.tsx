@@ -71,7 +71,6 @@ const VirtualModelsPage = () => {
                     <EmptyStateGuide
                         title="No Virtual Models Available"
                         description="Virtual models are seeded at server startup. Restart the server if this page is empty."
-                        showOAuthButton={false}
                         showHeroIcon={false}
                     />
                 )}

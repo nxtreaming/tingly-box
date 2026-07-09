@@ -206,7 +206,7 @@ const CardGrid: React.FC<{children: React.ReactNode; single?: boolean; wide?: bo
     return (
         <Box sx={{
             display: 'grid',
-            gridTemplateColumns: {xs: '1fr', sm: '1fr 1fr'},
+            gridTemplateColumns: {xs: '1fr', sm: '1fr 1fr', lg: 'repeat(3, 1fr)'},
             gap: 1,
         }}>
             {children}
@@ -273,8 +273,7 @@ export const ProviderListContent: React.FC<ProviderListContentProps> = ({
         <Box>
             {!hideOfficialInfo && (
                 <Typography variant="body2" color="text.secondary" sx={{mb: 1.5}}>
-                    Search for your provider below — most are pre-configured, so we&apos;ll ask only
-                    for what they need. Not listed? Pick <Box component="span" sx={{fontWeight: 600, color: 'text.primary'}}>Custom endpoint</Box> to enter any base URL yourself.
+                    Search for your provider below — most are preseted. Not listed? Pick <Box component="span" sx={{fontWeight: 600, color: 'text.primary'}}>Custom endpoint</Box> to enter any base URL yourself.
                 </Typography>
             )}
             <TextField
@@ -296,7 +295,7 @@ export const ProviderListContent: React.FC<ProviderListContentProps> = ({
             <Box
                 sx={{
                     pt: 1,
-                    maxHeight: '60vh',
+                    maxHeight: '70vh',
                     overflowY: 'auto',
                     scrollbarWidth: 'thin',
                     '&::-webkit-scrollbar': {width: 8},
@@ -447,7 +446,7 @@ const ConnectProviderDialog: React.FC<ConnectProviderDialogProps> = ({open, onCl
             maxWidth="sm"
             fullWidth
             scroll="paper"
-            PaperProps={{sx: {maxHeight: '82vh', display: 'flex', flexDirection: 'column'}}}
+            PaperProps={{sx: {maxHeight: '88vh', display: 'flex', flexDirection: 'column', maxWidth: {lg: '900px'}}}}
         >
             {/* Locked header: title and close button never scroll. */}
             <DialogTitle sx={{pb: 1, flexShrink: 0}}>

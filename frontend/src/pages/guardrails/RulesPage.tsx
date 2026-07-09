@@ -1338,7 +1338,6 @@ const GuardrailsRulesPage = () => {
                                   ? 'Start with a guided command execution policy to control dangerous or disallowed commands.'
                                   : 'Start with a guided privacy policy to filter model output or tool results.'
                         }
-                        showOAuthButton={false}
                         showHeroIcon={false}
                         primaryButtonLabel="New Policy"
                         onAddApiKeyClick={() => handleNewPolicy(kind)}

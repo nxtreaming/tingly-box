@@ -1,26 +1,20 @@
-import { Add, VpnKey } from '@/components/icons';
+import { Add } from '@/components/icons';
 import { Box, Button, Stack, Typography } from '@mui/material';
 
 interface EmptyStateGuideProps {
     title?: string;
     description?: string;
-    showOAuthButton?: boolean;
     showHeroIcon?: boolean;
     primaryButtonLabel?: string;
-    secondaryButtonLabel?: string;
     onAddApiKeyClick?: () => void;
-    onAddOAuthClick?: () => void;
 }
 
 const EmptyStateGuide: React.FC<EmptyStateGuideProps> = ({
     title = "No API Keys Configured",
-    description = "Get started by adding your first API key or OAuth provider to access AI services",
-    showOAuthButton = true,
+    description = "Get started by connecting your first AI provider to access AI services",
     showHeroIcon = true,
     primaryButtonLabel = "Connect AI",
-    secondaryButtonLabel = "Add OAuth",
     onAddApiKeyClick,
-    onAddOAuthClick,
 }) => {
     return (
         <Box textAlign="center" py={8} width="100%">
@@ -61,16 +55,6 @@ const EmptyStateGuide: React.FC<EmptyStateGuideProps> = ({
                 >
                     {primaryButtonLabel}
                 </Button>
-                {showOAuthButton && onAddOAuthClick && (
-                    <Button
-                        variant="outlined"
-                        startIcon={<VpnKey />}
-                        onClick={onAddOAuthClick}
-                        size="large"
-                    >
-                        {secondaryButtonLabel}
-                    </Button>
-                )}
             </Stack>
         </Box>
     );

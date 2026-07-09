@@ -366,7 +366,6 @@ const TemplatePage: React.FC<TemplatePageProps> = (props) => {
                     title={"No Providers Configured"}
                     description={"Add an API key provider to start routing requests"}
                     primaryButtonLabel={"Get started"}
-                    showOAuthButton={false}
                     onAddApiKeyClick={onAddApiKeyClick || (() => navigate('/onboarding'))}
                 />
             </UnifiedCard>
