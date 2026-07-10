@@ -106,7 +106,7 @@ func TestLBScenario_C_CascadeFailoverAndRecovery(t *testing.T) {
 	t1 := svc("openai", "gpt-5.5", 1, true)
 	id0, id1 := t0.ServiceID(), t1.ServiceID()
 	sim, cleanup, err := NewLBSimulator(tierTacticRule("rule-C", 1800, t0, t1), map[string][]int{
-		id0: {500, 500, 500, 200},
+		id0: {500, 500, 500, 200, 200, 200},
 		id1: {200},
 	})
 	require.NoError(t, err)
@@ -130,9 +130,15 @@ func TestLBScenario_C_CascadeFailoverAndRecovery(t *testing.T) {
 	// Enough time passes for the breaker to admit a probe; t0 recovers upstream.
 	sim.Advance(loadbalance.DefaultBreakerOpenDuration + time.Second)
 
-	tr, err = sim.Request(sess)
-	require.NoError(t, err)
-	require.Equal(t, []string{id0}, tr.Attempts, "after recovery the session should return to t0")
+	// Recovery requires RecoveryThreshold (3) consecutive successful probes
+	// (hysteresis). Each probe returns to t0 while still HalfOpen; only the
+	// 3rd closes the breaker and re-pins the session.
+	for probe := 1; probe <= 3; probe++ {
+		tr, err = sim.Request(sess)
+		require.NoError(t, err)
+		require.Equal(t, []string{id0}, tr.Attempts, "recovery probe %d should land on t0", probe)
+		require.Equal(t, 200, tr.FinalStatus)
+	}
 	require.Equal(t, id0, sim.Pin(sess), "session should be re-pinned to the recovered primary t0")
 	require.Equal(t, "closed", sim.BreakerStates()[id0])
 }
@@ -379,8 +385,11 @@ func TestLBScenario_HalfOpenProbeRecovery(t *testing.T) {
 	t0 := svc("openai", "gpt-5.4", 0, true)
 	t1 := svc("openai", "gpt-5.5", 1, true)
 	id0, id1 := t0.ServiceID(), t1.ServiceID()
+	// 3 failures trip t0; then RecoveryThreshold (3) consecutive successful
+	// probes are required to close it (hysteresis: a single success no longer
+	// closes). We feed 3 successes so the breaker fully recovers.
 	sim, cleanup, err := NewLBSimulator(tierTacticRule("rule-hop", 1800, t0, t1), map[string][]int{
-		id0: {500, 500, 500, 200, 200}, // 3 failures trip, 4th is the probe (succeeds), 5th is closed
+		id0: {500, 500, 500, 200, 200, 200},
 		id1: {200},
 	})
 	require.NoError(t, err)
@@ -406,19 +415,87 @@ func TestLBScenario_HalfOpenProbeRecovery(t *testing.T) {
 	// Advance past OpenDuration (30s + 1s)
 	sim.Advance(loadbalance.DefaultBreakerOpenDuration + time.Second)
 
-	// 5th request: half-open probe to t0 → 200 → breaker closes
-	tr, err = sim.Request(sess)
-	require.NoError(t, err)
-	require.Equal(t, []string{id0}, tr.Attempts, "after OpenDuration, half-open probe lands on t0")
-	require.Equal(t, 200, tr.FinalStatus)
-	require.Equal(t, "closed", sim.BreakerStates()[id0], "successful probe closes the breaker")
+	// Recovery takes RecoveryThreshold (3) consecutive successful probes.
+	// Each successful probe while still HalfOpen admits t0 but does not yet
+	// close the breaker; only the 3rd consecutive success closes it.
+	for probe := 0; probe < 3; probe++ {
+		tr, err = sim.Request(sess)
+		require.NoError(t, err)
+		require.Equal(t, []string{id0}, tr.Attempts, "half-open probe should land on t0")
+		require.Equal(t, 200, tr.FinalStatus)
+		want := "half_open"
+		if probe == 2 {
+			want = "closed"
+		}
+		require.Equal(t, want, sim.BreakerStates()[id0], "probe %d: breaker state", probe+1)
+	}
 	require.Equal(t, id0, sim.Pin(sess), "session should be re-pinned to t0 after recovery")
 
-	// 6th request: t0 closed → t0 directly
+	// Next request: t0 closed → t0 directly
 	tr, err = sim.Request(sess)
 	require.NoError(t, err)
 	require.Equal(t, []string{id0}, tr.Attempts, "after recovery, requests land on t0")
 	require.Equal(t, 200, tr.FinalStatus)
+}
+
+// ============ PromotionHold: de-jitter batch return-to-primary ============
+//
+// Plan B. When t0 recovers, a freshly-Closed primary is within PromotionHold.
+// During the hold it takes NEW sessions but does NOT reclaim sessions already
+// pinned to the fallback tier — so the whole fallback population isn't vacuumed
+// back at once (which would re-trip t0 under full load). Once t0 has stayed
+// healthy past the hold, fallback pins migrate back.
+func TestLBScenario_PromotionHoldBatchDeJitter(t *testing.T) {
+	t0 := svc("openai", "gpt-5.4", 0, true)
+	t1 := svc("openai", "gpt-5.5", 1, true)
+	id0, id1 := t0.ServiceID(), t1.ServiceID()
+	// t0: 3 failures trip; 3 successes recover (driven by a NEW session's
+	// probes); then more 200s for the post-hold return of the original session.
+	sim, cleanup, err := NewLBSimulator(tierTacticRule("rule-promo", 1800, t0, t1), map[string][]int{
+		id0: {500, 500, 500, 200, 200, 200, 200, 200},
+		id1: {200},
+	})
+	require.NoError(t, err)
+	defer cleanup()
+
+	const orig = "sess-orig" // lands on t1 while t0 is tripped
+
+	// 3 failures trip t0; orig failovers to t1 and pins there.
+	for i := 0; i < 3; i++ {
+		_, err := sim.Request(orig)
+		require.NoError(t, err)
+	}
+	require.Equal(t, "open", sim.BreakerStates()[id0])
+	_, err = sim.Request(orig)
+	require.NoError(t, err)
+	require.Equal(t, id1, sim.Pin(orig), "orig should be pinned to t1 while t0 is open")
+
+	// Advance past OpenDuration; drive t0's recovery with a NEW session so orig
+	// (pinned to t1) is not the one probing t0.
+	sim.Advance(loadbalance.DefaultBreakerOpenDuration + time.Second)
+	const fresh = "sess-fresh"
+	for probe := 0; probe < 3; probe++ {
+		tr, err := sim.Request(fresh)
+		require.NoError(t, err)
+		require.Equal(t, []string{id0}, tr.Attempts, "fresh session probes recovered t0")
+		require.Equal(t, 200, tr.FinalStatus)
+	}
+	require.Equal(t, "closed", sim.BreakerStates()[id0], "t0 should be closed after 3 successful probes")
+
+	// t0 just recovered — within PromotionHold. The fresh session adopted t0,
+	// but orig STAYS on t1 (the recovered primary hasn't proven stable yet).
+	require.Equal(t, id0, sim.Pin(fresh), "fresh session adopts recovered t0 during hold")
+	tr, err := sim.Request(orig)
+	require.NoError(t, err)
+	require.Equal(t, []string{id1}, tr.Attempts, "orig stays on t1 while t0 is within PromotionHold")
+	require.Equal(t, id1, sim.Pin(orig), "orig remains pinned to t1 during the hold")
+
+	// Advance past PromotionHold. t0 has now proven stable → orig migrates back.
+	sim.Advance(loadbalance.DefaultPromotionHold + time.Second)
+	tr, err = sim.Request(orig)
+	require.NoError(t, err)
+	require.Equal(t, []string{id0}, tr.Attempts, "orig returns to t0 after PromotionHold elapses")
+	require.Equal(t, id0, sim.Pin(orig), "orig re-pins to t0 after the hold")
 }
 
 // ============ All tiers tripped: degrade to T0 ============

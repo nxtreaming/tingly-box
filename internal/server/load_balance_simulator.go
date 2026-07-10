@@ -224,20 +224,15 @@ func (s *LBSimulator) Request(session string) (LBTrace, error) {
 		tr.Statuses = append(tr.Statuses, status)
 		tr.FinalStatus = status
 
-		// Feed BOTH production feedback channels exactly as a real request would:
-		//   - breaker: binary success/failure (mirrors the recorder).
-		//   - health monitor: status-classified, via the production classifier
-		//     reportHealthStatus (429→rate-limit, 401/403→auth, 5xx/4xx/other→
-		//     error, 2xx→success). The synthesized message routes through its
-		//     substring matcher exactly.
+		// Feed the health-monitor production channel. Breaker feedback is now
+		// owned by the failover gate itself, matching real requests when scenario
+		// recording is disabled.
 		if status == http.StatusOK {
 			c.Writer.WriteHeader(http.StatusOK)
 			CommitFirstChunkIfGate(c.Writer) // simulate the stream's first real chunk
-			loadbalance.RecordServiceSuccess(sid)
 			s.server.reportHealthStatus(provider, model, nil, "")
 		} else {
 			c.Writer.WriteHeader(status)
-			loadbalance.RecordServiceFailure(sid)
 			s.server.reportHealthStatus(provider, model,
 				fmt.Errorf("upstream returned HTTP %d", status), "")
 		}
@@ -308,13 +303,16 @@ func (s *LBSimulator) SeedPin(session, provider, model string) {
 }
 
 // BreakerStates returns a snapshot of every rule service's breaker state, keyed
-// by serviceID (values: "closed" / "open" / "half_open").
+// by serviceID (values: "closed" / "open" / "half_open"). The breaker store is
+// rule-scoped, so reads key on s.rule.UUID; the returned map stays
+// serviceID-keyed (a consumer-facing contract used by scenario tests + the
+// harness CLI).
 func (s *LBSimulator) BreakerStates() map[string]string {
 	store := loadbalance.DefaultBreakerStore()
 	out := make(map[string]string, len(s.rule.Services))
 	for _, svc := range s.rule.Services {
 		id := svc.ServiceID()
-		out[id] = store.Get(id).State().String()
+		out[id] = store.Get(s.rule.UUID, id).State().String()
 	}
 	return out
 }

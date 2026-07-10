@@ -18,34 +18,47 @@ const (
 
 // Default circuit breaker tunables.
 const (
-	DefaultBreakerFailureThreshold = 3
-	DefaultBreakerOpenDuration     = 30 * time.Second
+	DefaultBreakerFailureThreshold  = 3
+	DefaultBreakerOpenDuration      = 30 * time.Second
+	DefaultBreakerRecoveryThreshold = 3 // consecutive half-open successes required to close
+
+	// DefaultPromotionHold is how long a recovered (Closed) primary tier must
+	// stay recovered before it can reclaim sessions pinned to a lower tier.
+	// It de-jitters batch return-to-primary: a freshly-recovered primary only
+	// takes NEW sessions during the hold; existing fallback-tier pins migrate
+	// back once the primary has proven stable. Zero disables the hold.
+	DefaultPromotionHold = 60 * time.Second
 )
 
-// Breaker is a simple three-state circuit breaker for a single service.
+// Breaker is a three-state circuit breaker for a single service, with
+// hysteresis on recovery to avoid tier oscillation.
 //
-// State transitions:
 //   - Closed → Open when consecutive failures hit FailureThreshold.
 //   - Open → HalfOpen lazily, once OpenDuration has elapsed since the trip.
-//     The next Allow() call observes the elapsed time and flips state.
-//   - HalfOpen → Closed on RecordSuccess.
-//   - HalfOpen → Open on RecordFailure (open timer restarts).
+//   - HalfOpen → Closed only after RecoveryThreshold consecutive probe
+//     successes. A single success is not enough — it just releases the probe
+//     slot so the next probe can go through.
+//   - HalfOpen → Open on any probe failure (timer restarts from scratch).
 //
-// While HalfOpen, Allow() returns true for the first caller and false for
-// concurrent callers, so exactly one probe request goes through at a time.
+// While HalfOpen, Allow() returns true for at most one caller at a time, so
+// exactly one probe request goes through per probe round.
 type Breaker struct {
 	mu               sync.Mutex
 	state            BreakerState
 	consecFails      int
 	openedAt         time.Time
 	halfOpenInFlight bool
+	halfOpenSuccess  int // consecutive successes in the current HalfOpen run
+	closedSince      time.Time // when recovery completed (HalfOpen→Closed); zero while never recovered or currently open
 
-	FailureThreshold int
-	OpenDuration     time.Duration
+	FailureThreshold  int
+	OpenDuration      time.Duration
+	RecoveryThreshold int // N_up: consecutive successes to recover
 }
 
 // NewBreaker creates a breaker with the supplied thresholds. Zero values
-// fall back to defaults.
+// fall back to defaults. RecoveryThreshold defaults to
+// DefaultBreakerRecoveryThreshold.
 func NewBreaker(failureThreshold int, openDuration time.Duration) *Breaker {
 	if failureThreshold <= 0 {
 		failureThreshold = DefaultBreakerFailureThreshold
@@ -54,9 +67,10 @@ func NewBreaker(failureThreshold int, openDuration time.Duration) *Breaker {
 		openDuration = DefaultBreakerOpenDuration
 	}
 	return &Breaker{
-		state:            BreakerClosed,
-		FailureThreshold: failureThreshold,
-		OpenDuration:     openDuration,
+		state:             BreakerClosed,
+		FailureThreshold:  failureThreshold,
+		OpenDuration:      openDuration,
+		RecoveryThreshold: DefaultBreakerRecoveryThreshold,
 	}
 }
 
@@ -74,6 +88,7 @@ func (b *Breaker) Allow() bool {
 		if clock.Now().Sub(b.openedAt) >= b.OpenDuration {
 			b.state = BreakerHalfOpen
 			b.halfOpenInFlight = true
+			b.halfOpenSuccess = 0
 			return true
 		}
 		return false
@@ -87,32 +102,72 @@ func (b *Breaker) Allow() bool {
 	return true
 }
 
-// RecordSuccess closes the breaker and resets failure tracking.
+// recoveryThreshold guards against a misconfigured zero value.
+func (b *Breaker) recoveryThreshold() int {
+	if b.RecoveryThreshold <= 0 {
+		return DefaultBreakerRecoveryThreshold
+	}
+	return b.RecoveryThreshold
+}
+
+// RecordSuccess closes the breaker once RecoveryThreshold consecutive probe
+// successes have been observed in HalfOpen. Before the threshold is reached it
+// merely releases the probe slot so the next probe can go through. A success
+// from a Closed breaker resets failure tracking.
 func (b *Breaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.state = BreakerClosed
+
+	if b.state == BreakerHalfOpen {
+		b.halfOpenSuccess++
+		b.halfOpenInFlight = false
+		if b.halfOpenSuccess >= b.recoveryThreshold() {
+			b.state = BreakerClosed
+			b.consecFails = 0
+			b.halfOpenSuccess = 0
+			b.closedSince = clock.Now()
+		}
+		return
+	}
 	b.consecFails = 0
-	b.halfOpenInFlight = false
 }
 
-// RecordFailure increments failure tracking and trips the breaker when
-// the threshold is reached. A failure during HalfOpen immediately re-opens.
+// RecordFailure increments failure tracking and trips the breaker when the
+// threshold is reached. A failure during HalfOpen immediately re-opens and
+// restarts the open timer from scratch.
 func (b *Breaker) RecordFailure() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.state == BreakerHalfOpen {
-		b.state = BreakerOpen
-		b.openedAt = clock.Now()
+		b.openLocked()
 		b.halfOpenInFlight = false
 		return
 	}
 	b.consecFails++
-	if b.consecFails >= b.FailureThreshold {
-		b.state = BreakerOpen
-		b.openedAt = clock.Now()
+	if b.state == BreakerClosed && b.consecFails >= b.FailureThreshold {
+		b.openLocked()
 	}
+}
+
+// openLocked transitions to Open and stamps the open time. Caller holds b.mu.
+func (b *Breaker) openLocked() {
+	b.state = BreakerOpen
+	b.openedAt = clock.Now()
+	b.halfOpenSuccess = 0
+	b.closedSince = time.Time{}
+}
+
+// ClosedSince returns when recovery last completed (the HalfOpen→Closed
+// transition after RecoveryThreshold successes). It is zero while the service
+// has never recovered or is currently open/tripping. Tier affinity uses it for
+// PromotionHold: a primary tier must stay recovered for a hold period before
+// it can reclaim sessions pinned to a lower tier, so a freshly-recovered
+// primary doesn't vacuum all fallback-tier sessions back at once.
+func (b *Breaker) ClosedSince() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closedSince
 }
 
 // State returns the current breaker state. Intended for introspection / UI.
@@ -139,12 +194,15 @@ func (s BreakerState) String() string {
 	return "unknown"
 }
 
-// BreakerStore is a concurrent-safe registry of breakers keyed by service
-// identifier. Breakers are created lazily on first access.
+// BreakerStore is a concurrent-safe registry of breakers keyed by
+// (ruleUUID, serviceID). Breakers are created lazily on first access.
 //
-// The store is process-wide: two rules that reference the same
-// provider:model share breaker state. This is intentional — if a service
-// is failing, it is generally failing for every rule that uses it.
+// Breakers are rule-scoped: each rule owns independent breaker state per
+// service. A service failing for one rule does NOT fail it for another rule
+// that uses the same provider:model — each rule's failover decisions are
+// driven only by the traffic it observes. This mirrors the rule-scoped
+// affinity store (internal/server/affinity/affinity.go). Key composition lives
+// in FormatBreakerKey.
 type BreakerStore struct {
 	mu       sync.RWMutex
 	breakers map[string]*Breaker
@@ -168,11 +226,12 @@ func NewBreakerStore(failureThreshold int, openDuration time.Duration) *BreakerS
 	}
 }
 
-// Get returns the breaker for the given serviceID, creating one with the
-// store's default thresholds if needed.
-func (s *BreakerStore) Get(serviceID string) *Breaker {
+// Get returns the breaker for the given (ruleUUID, serviceID), creating one
+// with the store's default thresholds if needed.
+func (s *BreakerStore) Get(ruleUUID, serviceID string) *Breaker {
+	key := FormatBreakerKey(ruleUUID, serviceID)
 	s.mu.RLock()
-	if b, ok := s.breakers[serviceID]; ok {
+	if b, ok := s.breakers[key]; ok {
 		s.mu.RUnlock()
 		return b
 	}
@@ -180,17 +239,17 @@ func (s *BreakerStore) Get(serviceID string) *Breaker {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b, ok := s.breakers[serviceID]; ok {
+	if b, ok := s.breakers[key]; ok {
 		return b
 	}
 	b := NewBreaker(s.failures, s.openFor)
-	s.breakers[serviceID] = b
+	s.breakers[key] = b
 	return b
 }
 
-// Allow is a convenience over Get(serviceID).Allow().
-func (s *BreakerStore) Allow(serviceID string) bool {
-	return s.Get(serviceID).Allow()
+// Allow is a convenience over Get(ruleUUID, serviceID).Allow().
+func (s *BreakerStore) Allow(ruleUUID, serviceID string) bool {
+	return s.Get(ruleUUID, serviceID).Allow()
 }
 
 // IsAvailable reports whether the service's breaker currently permits traffic,
@@ -199,29 +258,36 @@ func (s *BreakerStore) Allow(serviceID string) bool {
 // only need to know "is this service usable right now" (e.g. affinity scoping)
 // should use it so they don't steal the single half-open probe from the
 // selection path.
-func (s *BreakerStore) IsAvailable(serviceID string) bool {
-	return s.Get(serviceID).State() != BreakerOpen
+func (s *BreakerStore) IsAvailable(ruleUUID, serviceID string) bool {
+	return s.Get(ruleUUID, serviceID).State() != BreakerOpen
 }
 
-// RecordSuccess is a convenience over Get(serviceID).RecordSuccess().
-func (s *BreakerStore) RecordSuccess(serviceID string) {
-	s.Get(serviceID).RecordSuccess()
-}
-
-// RecordFailure is a convenience over Get(serviceID).RecordFailure().
-func (s *BreakerStore) RecordFailure(serviceID string) {
-	s.Get(serviceID).RecordFailure()
-}
-
-// Snapshot returns a copy of current breaker states for introspection.
-func (s *BreakerStore) Snapshot() map[string]BreakerState {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := make(map[string]BreakerState, len(s.breakers))
-	for id, b := range s.breakers {
-		out[id] = b.State()
+// WithinPromotionHold reports whether the service recovered (entered Closed
+// from a HalfOpen recovery) within the given hold window. Tier affinity uses
+// this to keep sessions pinned to a lower tier from being vacuumed back to a
+// freshly-recovered primary until it has proven stable for the hold. A service
+// that is Open, HalfOpen, never-tripped, or recovered longer ago than hold is
+// NOT within the hold. hold <= 0 disables the check (always false).
+func (s *BreakerStore) WithinPromotionHold(ruleUUID, serviceID string, hold time.Duration) bool {
+	if hold <= 0 {
+		return false
 	}
-	return out
+	b := s.Get(ruleUUID, serviceID)
+	since := b.ClosedSince()
+	if since.IsZero() {
+		return false
+	}
+	return clock.Now().Sub(since) < hold
+}
+
+// RecordSuccess is a convenience over Get(ruleUUID, serviceID).RecordSuccess().
+func (s *BreakerStore) RecordSuccess(ruleUUID, serviceID string) {
+	s.Get(ruleUUID, serviceID).RecordSuccess()
+}
+
+// RecordFailure is a convenience over Get(ruleUUID, serviceID).RecordFailure().
+func (s *BreakerStore) RecordFailure(ruleUUID, serviceID string) {
+	s.Get(ruleUUID, serviceID).RecordFailure()
 }
 
 // Reset clears all breaker entries. Useful for tests/harness to avoid state leakage
@@ -243,16 +309,16 @@ func DefaultBreakerStore() *BreakerStore {
 }
 
 // AllowService is a package-level convenience used by selection logic.
-func AllowService(serviceID string) bool {
-	return defaultStore.Allow(serviceID)
+func AllowService(ruleUUID, serviceID string) bool {
+	return defaultStore.Allow(ruleUUID, serviceID)
 }
 
 // RecordServiceSuccess is a package-level convenience used by dispatch.
-func RecordServiceSuccess(serviceID string) {
-	defaultStore.RecordSuccess(serviceID)
+func RecordServiceSuccess(ruleUUID, serviceID string) {
+	defaultStore.RecordSuccess(ruleUUID, serviceID)
 }
 
 // RecordServiceFailure is a package-level convenience used by dispatch.
-func RecordServiceFailure(serviceID string) {
-	defaultStore.RecordFailure(serviceID)
+func RecordServiceFailure(ruleUUID, serviceID string) {
+	defaultStore.RecordFailure(ruleUUID, serviceID)
 }

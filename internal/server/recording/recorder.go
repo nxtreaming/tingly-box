@@ -10,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/server/middleware"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -90,23 +89,14 @@ func NewProtocolRecorder(c *gin.Context, sink *obs.Sink, scenario string, mode o
 }
 
 // SetActiveService re-binds the recorder to a new provider/model. The
-// failover orchestrator calls this between attempts so a subsequent
-// RecordError attributes the failure to the right service rather than
-// to whichever service the recorder was last bound to.
+// failover orchestrator calls this between attempts so records reflect the
+// service currently being attempted. Breaker accounting is owned by the
+// failover loop, not by recording.
 func (sr *ProtocolRecorder) SetActiveService(provider *typ.Provider, model string) {
 	if sr == nil {
 		return
 	}
 	sr.BindProvider(provider, model, "")
-}
-
-// breakerServiceID returns the loadbalance service identifier for the
-// active provider+model, or "" if either is unknown.
-func (sr *ProtocolRecorder) breakerServiceID() string {
-	if sr == nil || sr.providerUUID == "" || sr.model == "" {
-		return ""
-	}
-	return loadbalance.FormatServiceID(sr.providerUUID, sr.model)
 }
 
 // GetRecorderFromContext returns the ProtocolRecorder stashed in c by
@@ -247,9 +237,6 @@ func (sr *ProtocolRecorder) RecordResponse(provider *typ.Provider, model string)
 	if sr.finalResponse == nil {
 		sr.finalResponse = sr.synthesizeFinalResponse()
 	}
-	if id := sr.breakerServiceID(); id != "" {
-		loadbalance.RecordServiceSuccess(id)
-	}
 	sr.emit(nil)
 }
 
@@ -257,11 +244,6 @@ func (sr *ProtocolRecorder) RecordResponse(provider *typ.Provider, model string)
 func (sr *ProtocolRecorder) RecordError(err error) {
 	if sr == nil {
 		return
-	}
-	if err != nil {
-		if id := sr.breakerServiceID(); id != "" {
-			loadbalance.RecordServiceFailure(id)
-		}
 	}
 	sr.emit(err)
 }

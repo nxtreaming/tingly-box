@@ -159,9 +159,9 @@ func TestAffinity_TierScope_HonorsPinWhilePrimaryDown(t *testing.T) {
 
 	bs := loadbalance.DefaultBreakerStore()
 	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
-		bs.RecordFailure(t0.ServiceID())
+		bs.RecordFailure("rule-tier-b", t0.ServiceID())
 	}
-	defer bs.RecordSuccess(t0.ServiceID())
+	defer bs.RecordSuccess("rule-tier-b", t0.ServiceID())
 
 	stage := NewAffinityStage(store, "global")
 	ctx := testContext(rule, "s1")
@@ -183,9 +183,9 @@ func TestAffinity_TierScope_DeclinesWhenPinnedBreakerOpen(t *testing.T) {
 
 	bs := loadbalance.DefaultBreakerStore()
 	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
-		bs.RecordFailure(t1.ServiceID())
+		bs.RecordFailure("rule-tier-c", t1.ServiceID())
 	}
-	defer bs.RecordSuccess(t1.ServiceID())
+	defer bs.RecordSuccess("rule-tier-c", t1.ServiceID())
 
 	stage := NewAffinityStage(store, "global")
 	ctx := testContext(rule, "s1")
@@ -228,9 +228,9 @@ func TestAffinity_HorizontalRule_DropsPinToDeadPeer(t *testing.T) {
 
 	bs := loadbalance.DefaultBreakerStore()
 	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
-		bs.RecordFailure(a.ServiceID())
+		bs.RecordFailure("rule-horiz", a.ServiceID())
 	}
-	defer bs.RecordSuccess(a.ServiceID())
+	defer bs.RecordSuccess("rule-horiz", a.ServiceID())
 
 	stage := NewAffinityStage(store, "global")
 	ctx := testContext(rule, "s1")

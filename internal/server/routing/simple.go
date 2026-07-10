@@ -92,6 +92,23 @@ func (s *SimpleSelector) SelectService(
 	}
 	c.Set(constant.CtxKeyLBTactic, tacticName)
 
+	logrus.WithContext(c.Request.Context()).WithFields(logrus.Fields{
+		"stage":            "routing_selected",
+		"rule_uuid":        rule.UUID,
+		"scenario":         string(scenario),
+		"request_model":    rule.RequestModel,
+		"source":           result.Source,
+		"lb_tactic":        tacticName,
+		"service":          result.Service.ServiceID(),
+		"provider":         result.Provider.Name,
+		"provider_uuid":    result.Provider.UUID,
+		"model":            result.Service.Model,
+		"routed_model":     result.Service.Model,
+		"routed_provider":  result.Provider.Name,
+		"candidate_count":  len(ctx.Rule.GetActiveServices()),
+		"evaluated_stages": result.EvaluatedStages,
+	}).Infof("[routing] selected %s/%s via %s", result.Provider.UUID, result.Service.Model, result.Source)
+
 	setRoutingDebugHeaders(c, result.Provider.Name, result.Provider.UUID, result.Service.Model, result.Source, result.MatchedSmartRuleIndex)
 
 	return result.Provider, result.Service, nil
