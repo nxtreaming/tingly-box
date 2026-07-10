@@ -3,9 +3,9 @@ package protocoltest
 // Duo is the two-instance end-to-end verification environment born from the
 // #1255 OOM investigation:
 //
-//	client ──(Anthropic beta, streaming, large conversation)──▶ tb2 gateway
-//	   tb2 ──(converted OpenAI Chat request over real HTTP)───▶ tb1 /virtual/openai/v1
-//	   tb1 ──(vmodel SSE stream)────────────────────────────────▶ tb2 ──▶ client
+//	client ──(Anthropic v1/beta, streaming, large conversation)──▶ tb2 gateway
+//	   tb2 ──(converted provider request over real HTTP)──────────▶ tb1 /virtual/...
+//	   tb1 ──(vmodel SSE stream)───────────────────────────────────▶ tb2 ──▶ client
 //
 // Both instances are full production servers (server.NewServer) running in
 // one process on real HTTP listeners, so the whole gateway stack is
@@ -13,16 +13,21 @@ package protocoltest
 // tracking — and a post-GC heap profile attributes retained bytes to real
 // call stacks.
 //
+// Every anthropic-source conversion route the production vmodel endpoint can
+// back is wired (see AllDuoRoutes): {v1, beta} × {anthropic passthrough,
+// OpenAI Chat, OpenAI Responses}. The Google target is not covered — the
+// vmodel surface deliberately skips it for now.
+//
 // Two verification phases are provided:
 //
-//   - RunFunctionalChecks: protocol correctness through the conversion path
+//   - RunFunctionalChecks: protocol correctness through a conversion route
 //     (streaming SSE shape + assembled content + usage; non-streaming body).
 //   - RunMemoryPhase: allocation churn, post-GC retention slope across
-//     request batches (a leak shows as a positive slope; transient spikes do
-//     not), concurrent-burst peak heap, and optional pprof heap profiles.
+//     request batches (a leak shows up as a positive slope; transient spikes
+//     do not), concurrent-burst peak heap, and optional pprof heap profiles.
 //
-// Consumed by `harness duo` (cli/harness) and by duo_test.go as a memory
-// regression test.
+// Consumed by `harness duo` (cli/harness) and by duo_test.go as functional +
+// memory regression tests.
 
 import (
 	"bufio"
@@ -49,11 +54,57 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/typ"
 )
 
-// DuoRequestModel is the request model routed from tb2 to tb1's vmodel.
-const DuoRequestModel = "duo-e2e-model"
+// DuoRoute is one anthropic-source conversion route through tb2.
+type DuoRoute struct {
+	// Name identifies the route in flags, check names, and reports,
+	// e.g. "beta-chat", "v1-responses", "beta-anthropic".
+	Name string
+	// Beta selects the Anthropic beta source surface (?beta=true) over v1.
+	Beta bool
+	// Target is the provider protocol tb2 converts to: "chat", "responses",
+	// or "anthropic" (passthrough).
+	Target string
+}
 
-// DuoVModel is the vmodel served by tb1 that tb2's rule targets.
-const DuoVModel = "virtual-gpt-4"
+// RequestModel returns the tb2 request model wired for this route.
+func (r DuoRoute) RequestModel() string { return "duo-e2e-" + r.Name }
+
+// AllDuoRoutes lists every anthropic-source route the production vmodel
+// endpoint can back: {v1, beta} × {anthropic, openai chat, openai responses}.
+func AllDuoRoutes() []DuoRoute {
+	var routes []DuoRoute
+	for _, src := range []struct {
+		prefix string
+		beta   bool
+	}{{"beta", true}, {"v1", false}} {
+		for _, target := range []string{"chat", "responses", "anthropic"} {
+			routes = append(routes, DuoRoute{Name: src.prefix + "-" + target, Beta: src.beta, Target: target})
+		}
+	}
+	return routes
+}
+
+// FindDuoRoute resolves a route by name.
+func FindDuoRoute(name string) (DuoRoute, bool) {
+	for _, r := range AllDuoRoutes() {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return DuoRoute{}, false
+}
+
+// DuoDefaultRoute is the memory-phase default: the Claude Code hot path
+// (Anthropic beta client → OpenAI Chat provider) where #1255 was reported.
+var DuoDefaultRoute = DuoRoute{Name: "beta-chat", Beta: true, Target: "chat"}
+
+// duoTargetVModel maps a route target to the tb1 vmodel that serves it.
+func duoTargetVModel(target string) string {
+	if target == "anthropic" {
+		return "virtual-claude-3" // anthropic registry
+	}
+	return "virtual-gpt-4" // openai registry (chat + responses surfaces)
+}
 
 // DuoEnv holds the two running instances and the wiring between them.
 type DuoEnv struct {
@@ -68,7 +119,7 @@ type DuoEnv struct {
 }
 
 // NewDuoEnv boots tb1 (vmodel provider) and tb2 (gateway under test) and
-// wires tb2's anthropic scenario to tb1's /virtual/openai/v1 endpoint.
+// wires one tb2 rule per route in AllDuoRoutes to tb1's virtual endpoints.
 // Callers must Close() the returned env.
 func NewDuoEnv() (*DuoEnv, error) {
 	env := &DuoEnv{client: &http.Client{Timeout: 120 * time.Second}}
@@ -97,39 +148,61 @@ func NewDuoEnv() (*DuoEnv, error) {
 		return nil, fmt.Errorf("boot tb2: %w", err)
 	}
 	env.tb2Token = env.tb2Cfg.GetGlobalConfig().GetModelToken()
+	tb1Token := env.tb1Cfg.GetGlobalConfig().GetModelToken()
 
-	provider := &typ.Provider{
-		UUID:               "tb1-vmodel",
-		Name:               "tb1-vmodel",
-		APIBase:            env.tb1.URL + "/virtual/openai/v1",
-		APIStyle:           protocol.APIStyleOpenAI,
-		OpenAIEndpointMode: ai.EndpointModeChat,
-		Token:              env.tb1Cfg.GetGlobalConfig().GetModelToken(),
-		Enabled:            true,
-		Timeout:            int64(constant.DefaultRequestTimeout),
+	// One provider per target protocol; routes of both source surfaces share it.
+	providers := map[string]*typ.Provider{
+		"chat": {
+			UUID:               "tb1-openai-chat",
+			Name:               "tb1-openai-chat",
+			APIBase:            env.tb1.URL + "/virtual/openai/v1",
+			APIStyle:           protocol.APIStyleOpenAI,
+			OpenAIEndpointMode: ai.EndpointModeChat,
+		},
+		"responses": {
+			UUID:               "tb1-openai-responses",
+			Name:               "tb1-openai-responses",
+			APIBase:            env.tb1.URL + "/virtual/openai/v1",
+			APIStyle:           protocol.APIStyleOpenAI,
+			OpenAIEndpointMode: ai.EndpointModeResponses,
+		},
+		"anthropic": {
+			UUID:     "tb1-anthropic",
+			Name:     "tb1-anthropic",
+			APIBase:  env.tb1.URL + "/virtual/anthropic", // SDK appends /v1/messages
+			APIStyle: protocol.APIStyleAnthropic,
+		},
 	}
-	if err := env.tb2Cfg.AddProvider(provider); err != nil {
-		env.Close()
-		return nil, fmt.Errorf("add provider: %w", err)
+	for _, p := range providers {
+		p.Token = tb1Token
+		p.Enabled = true
+		p.Timeout = int64(constant.DefaultRequestTimeout)
+		if err := env.tb2Cfg.AddProvider(p); err != nil {
+			env.Close()
+			return nil, fmt.Errorf("add provider %s: %w", p.Name, err)
+		}
 	}
-	rule := typ.Rule{
-		UUID:          DuoRequestModel,
-		Scenario:      typ.ScenarioAnthropic,
-		RequestModel:  DuoRequestModel,
-		ResponseModel: DuoVModel,
-		Services: []*loadbalance.Service{{
-			Provider:   "tb1-vmodel",
-			Model:      DuoVModel,
-			Weight:     1,
-			Active:     true,
-			TimeWindow: 300,
-		}},
-		LBTactic: typ.Tactic{Type: loadbalance.TacticAdaptive, Params: typ.DefaultAdaptiveParams()},
-		Active:   true,
-	}
-	if err := env.tb2Cfg.GetGlobalConfig().AddRequestConfig(rule); err != nil {
-		env.Close()
-		return nil, fmt.Errorf("add rule: %w", err)
+
+	for _, route := range AllDuoRoutes() {
+		rule := typ.Rule{
+			UUID:          route.RequestModel(),
+			Scenario:      typ.ScenarioAnthropic,
+			RequestModel:  route.RequestModel(),
+			ResponseModel: duoTargetVModel(route.Target),
+			Services: []*loadbalance.Service{{
+				Provider:   providers[route.Target].UUID,
+				Model:      duoTargetVModel(route.Target),
+				Weight:     1,
+				Active:     true,
+				TimeWindow: 300,
+			}},
+			LBTactic: typ.Tactic{Type: loadbalance.TacticAdaptive, Params: typ.DefaultAdaptiveParams()},
+			Active:   true,
+		}
+		if err := env.tb2Cfg.GetGlobalConfig().AddRequestConfig(rule); err != nil {
+			env.Close()
+			return nil, fmt.Errorf("add rule %s: %w", route.Name, err)
+		}
 	}
 	return env, nil
 }
@@ -151,10 +224,11 @@ func (env *DuoEnv) Close() {
 func (env *DuoEnv) TB1URL() string { return env.tb1.URL }
 func (env *DuoEnv) TB2URL() string { return env.tb2.URL }
 
-// BuildConversationBody builds a Claude-Code-shaped Anthropic beta request of
-// approximately totalBytes: alternating user/assistant text messages, so the
-// gateway parses and converts a realistically large agentic context.
-func BuildConversationBody(totalBytes int, streaming bool) []byte {
+// BuildConversationBody builds a Claude-Code-shaped Anthropic request of
+// approximately totalBytes for the given route: alternating user/assistant
+// text messages, so the gateway parses and converts a realistically large
+// agentic context. The shape is valid for both the v1 and beta surfaces.
+func BuildConversationBody(route DuoRoute, totalBytes int, streaming bool) []byte {
 	const msgBytes = 40 * 1024
 	msgs := totalBytes / msgBytes
 	if msgs < 1 {
@@ -164,7 +238,7 @@ func BuildConversationBody(totalBytes int, streaming bool) []byte {
 	fb, _ := json.Marshal(filler)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, `{"model":%q,"max_tokens":1024,"stream":%v,"messages":[`, DuoRequestModel, streaming)
+	fmt.Fprintf(&sb, `{"model":%q,"max_tokens":1024,"stream":%v,"messages":[`, route.RequestModel(), streaming)
 	for i := 0; i < msgs; i++ {
 		if i > 0 {
 			sb.WriteString(",")
@@ -179,9 +253,14 @@ func BuildConversationBody(totalBytes int, streaming bool) []byte {
 	return []byte(sb.String())
 }
 
-// post sends one request through tb2's anthropic beta endpoint.
-func (env *DuoEnv) post(body []byte) (*http.Response, error) {
-	req, err := http.NewRequest(http.MethodPost, env.tb2.URL+"/tingly/anthropic/v1/messages?beta=true", strings.NewReader(string(body)))
+// post sends one request through tb2's anthropic endpoint for the route's
+// source surface (v1 or beta).
+func (env *DuoEnv) post(route DuoRoute, body []byte) (*http.Response, error) {
+	path := "/tingly/anthropic/v1/messages"
+	if route.Beta {
+		path += "?beta=true"
+	}
+	req, err := http.NewRequest(http.MethodPost, env.tb2.URL+path, strings.NewReader(string(body)))
 	if err != nil {
 		return nil, err
 	}
@@ -190,10 +269,10 @@ func (env *DuoEnv) post(body []byte) (*http.Response, error) {
 	return env.client.Do(req)
 }
 
-// DrainStreaming drives one streaming request and fully drains the SSE body,
-// returning the number of `event:` lines seen.
-func (env *DuoEnv) DrainStreaming(body []byte) (int, error) {
-	resp, err := env.post(body)
+// DrainStreaming drives one streaming request over the route and fully
+// drains the SSE body, returning the number of `event:` lines seen.
+func (env *DuoEnv) DrainStreaming(route DuoRoute, body []byte) (int, error) {
+	resp, err := env.post(route, body)
 	if err != nil {
 		return 0, err
 	}
@@ -220,22 +299,23 @@ func (env *DuoEnv) DrainStreaming(body []byte) (int, error) {
 
 // DuoCheck is one functional verification result.
 type DuoCheck struct {
+	Route  string `json:"route"`
 	Name   string `json:"name"`
 	Pass   bool   `json:"pass"`
 	Detail string `json:"detail,omitempty"`
 }
 
-// RunFunctionalChecks verifies protocol correctness of the tb2→tb1 conversion
-// path with a bodyBytes-sized conversation: streaming SSE shape, assembled
+// RunFunctionalChecks verifies protocol correctness of one conversion route
+// with a bodyBytes-sized conversation: streaming SSE shape, assembled
 // content, usage propagation, and the non-streaming response body.
-func (env *DuoEnv) RunFunctionalChecks(bodyBytes int) []DuoCheck {
+func (env *DuoEnv) RunFunctionalChecks(route DuoRoute, bodyBytes int) []DuoCheck {
 	var checks []DuoCheck
 	add := func(name string, pass bool, detail string) {
-		checks = append(checks, DuoCheck{Name: name, Pass: pass, Detail: detail})
+		checks = append(checks, DuoCheck{Route: route.Name, Name: name, Pass: pass, Detail: detail})
 	}
 
 	// Streaming: event shape + assembled result.
-	resp, err := env.post(BuildConversationBody(bodyBytes, true))
+	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, true))
 	if err != nil {
 		add("stream/http", false, err.Error())
 		return checks
@@ -271,7 +351,7 @@ func (env *DuoEnv) RunFunctionalChecks(bodyBytes int) []DuoCheck {
 	}()
 
 	// Non-streaming: response body shape.
-	resp2, err := env.post(BuildConversationBody(bodyBytes, false))
+	resp2, err := env.post(route, BuildConversationBody(route, bodyBytes, false))
 	if err != nil {
 		add("nonstream/http", false, err.Error())
 		return checks
@@ -302,16 +382,21 @@ func (env *DuoEnv) RunFunctionalChecks(bodyBytes int) []DuoCheck {
 
 // DuoMemoryConfig parameterizes RunMemoryPhase.
 type DuoMemoryConfig struct {
-	BodyBytes  int    // conversation size per request (default 2MB)
-	Warmup     int    // warmup requests before the baseline (default 3)
-	Batch      int    // requests per sequential batch, two batches are run (default 15)
-	Workers    int    // concurrent workers in the burst phase (default 4)
-	PerWorker  int    // requests per worker in the burst phase (default 5)
-	ProfileDir string // write pprof heap profiles here ("" = skip)
+	Route      *DuoRoute // conversion route to drive (default DuoDefaultRoute)
+	BodyBytes  int       // conversation size per request (default 2MB)
+	Warmup     int       // warmup requests before the baseline (default 3)
+	Batch      int       // requests per sequential batch, two batches are run (default 15)
+	Workers    int       // concurrent workers in the burst phase (default 4)
+	PerWorker  int       // requests per worker in the burst phase (default 5)
+	ProfileDir string    // write pprof heap profiles here ("" = skip)
 	Progress   func(format string, args ...any)
 }
 
 func (c *DuoMemoryConfig) withDefaults() {
+	if c.Route == nil {
+		r := DuoDefaultRoute
+		c.Route = &r
+	}
 	if c.BodyBytes <= 0 {
 		c.BodyBytes = 2 * 1024 * 1024
 	}
@@ -334,6 +419,7 @@ func (c *DuoMemoryConfig) withDefaults() {
 
 // DuoMemoryReport is the outcome of RunMemoryPhase.
 type DuoMemoryReport struct {
+	Route             string  `json:"route"`
 	BodyBytes         int     `json:"body_bytes"`
 	SequentialCount   int     `json:"sequential_requests"`
 	BaselineHeapMB    float64 `json:"baseline_heap_mb"`
@@ -372,22 +458,24 @@ func duoWriteHeapProfile(dir, name string) (string, error) {
 }
 
 // RunMemoryPhase measures allocation churn, post-GC retention slope, and
-// concurrent-burst peak heap on the tb2→tb1 path. A near-zero slope means no
-// per-request leak; the #1255 latency-attribute leak measured 823 KB/request
-// here before the fix, 0.5 KB/request after.
+// concurrent-burst peak heap on one conversion route. A near-zero slope means
+// no per-request leak; the #1255 latency-attribute leak measured 823
+// KB/request here before the fix, 0.5 KB/request after.
 func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error) {
 	cfg.withDefaults()
-	body := BuildConversationBody(cfg.BodyBytes, true)
+	route := *cfg.Route
+	body := BuildConversationBody(route, cfg.BodyBytes, true)
 	report := &DuoMemoryReport{
+		Route:             route.Name,
 		BodyBytes:         len(body),
 		SequentialCount:   2 * cfg.Batch,
 		ConcurrentWorkers: cfg.Workers,
 		ConcurrentTotal:   cfg.Workers * cfg.PerWorker,
 	}
 
-	cfg.Progress("warmup: %d requests, body %.2f MB", cfg.Warmup, float64(len(body))/1024/1024)
+	cfg.Progress("route %s: warmup %d requests, body %.2f MB", route.Name, cfg.Warmup, float64(len(body))/1024/1024)
 	for i := 0; i < cfg.Warmup; i++ {
-		if _, err := env.DrainStreaming(body); err != nil {
+		if _, err := env.DrainStreaming(route, body); err != nil {
 			return nil, fmt.Errorf("warmup request %d: %w", i, err)
 		}
 	}
@@ -395,7 +483,7 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 	baseline := duoHeapAfterGC()
 	report.BaselineHeapMB = float64(baseline) / 1024 / 1024
 	if cfg.ProfileDir != "" {
-		p, err := duoWriteHeapProfile(cfg.ProfileDir, "duo-baseline.pb.gz")
+		p, err := duoWriteHeapProfile(cfg.ProfileDir, "duo-"+route.Name+"-baseline.pb.gz")
 		if err != nil {
 			return nil, err
 		}
@@ -406,13 +494,13 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 
 	runBatch := func() error {
 		for i := 0; i < cfg.Batch; i++ {
-			if _, err := env.DrainStreaming(body); err != nil {
+			if _, err := env.DrainStreaming(route, body); err != nil {
 				return fmt.Errorf("sequential request: %w", err)
 			}
 		}
 		return nil
 	}
-	cfg.Progress("sequential: 2 batches × %d requests", cfg.Batch)
+	cfg.Progress("route %s: sequential 2 batches × %d requests", route.Name, cfg.Batch)
 	if err := runBatch(); err != nil {
 		return nil, err
 	}
@@ -430,7 +518,7 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 	report.ChurnMBPerRequest = float64(m1.TotalAlloc-m0.TotalAlloc) / float64(2*cfg.Batch) / 1024 / 1024
 
 	// Concurrent burst with live-heap sampling.
-	cfg.Progress("concurrent burst: %d workers × %d requests", cfg.Workers, cfg.PerWorker)
+	cfg.Progress("route %s: concurrent burst %d workers × %d requests", route.Name, cfg.Workers, cfg.PerWorker)
 	peakCh := make(chan uint64, 1)
 	stop := make(chan struct{})
 	go func() {
@@ -458,7 +546,7 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < cfg.PerWorker; i++ {
-				if _, err := env.DrainStreaming(body); err != nil {
+				if _, err := env.DrainStreaming(route, body); err != nil {
 					errCh <- err
 					return
 				}
@@ -476,7 +564,7 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 	report.PostBurstDeltaMB = float64(int64(duoHeapAfterGC())-int64(baseline)) / 1024 / 1024
 
 	if cfg.ProfileDir != "" {
-		p, err := duoWriteHeapProfile(cfg.ProfileDir, "duo-final.pb.gz")
+		p, err := duoWriteHeapProfile(cfg.ProfileDir, "duo-"+route.Name+"-final.pb.gz")
 		if err != nil {
 			return nil, err
 		}

@@ -113,7 +113,7 @@ func (s *Server) SetupAnthropicEndpoints(group *gin.RouterGroup) {
 // UseVirtualModelEndpoints sets up the direct virtual-model entrypoints,
 // split per protocol:
 //
-//	/virtual/openai/v1/{models,chat/completions}
+//	/virtual/openai/v1/{models,chat/completions,responses}
 //	/virtual/anthropic/v1/{models,messages}
 //
 // These bypass the provider/rule/scenario pipeline and call the in-process

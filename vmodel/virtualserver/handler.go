@@ -227,6 +227,12 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 
 		var explicitUsage *vmodel.MockUsage
 		var stopReason string
+		// Accumulate streamed text so the terminal usage fallback can estimate
+		// output tokens. Real Anthropic ALWAYS reports usage (input on
+		// message_start, output on message_delta); models without an explicit
+		// UsageEvent get the same estimate the non-streaming handler uses.
+		var streamedText string
+		estimatedInput := token.EstimateBetaAnthropicTokens(req.Messages)
 
 		// Track which content-block indices have an open content_block_start so
 		// we emit a matching start before the first delta and a stop for every
@@ -284,11 +290,15 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 					id = msgID
 				}
 				data, _ := json.Marshal(AnthropicStreamEvent{
-					Type:    "message_start",
-					Message: &AnthropicMessageResponse{ID: id, Type: "message", Role: "assistant", Model: req.Model},
+					Type: "message_start",
+					Message: &AnthropicMessageResponse{
+						ID: id, Type: "message", Role: "assistant", Model: req.Model,
+						Usage: AnthropicUsage{InputTokens: estimatedInput},
+					},
 				})
 				fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", data)
 			case anthropicvm.TextDeltaEvent:
+				streamedText += e.Text
 				startTextBlock(e.Index)
 				data, _ := json.Marshal(AnthropicStreamEvent{
 					Type:  "content_block_delta",
@@ -348,6 +358,11 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 					if explicitUsage.ReasoningTokens > 0 {
 						usageMap["reasoning_tokens"] = explicitUsage.ReasoningTokens
 					}
+				} else {
+					// Estimate fallback, mirroring the non-streaming handler:
+					// real Anthropic always reports terminal usage here.
+					usageMap["input_tokens"] = estimatedInput
+					usageMap["output_tokens"] = token.EstimateTokensString(streamedText)
 				}
 				deltaPayload["usage"] = usageMap
 				data, _ := json.Marshal(deltaPayload)

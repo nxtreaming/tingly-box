@@ -1,8 +1,14 @@
 package protocoltest
 
 // Regression tests over the Duo two-instance environment (see duo.go).
-// The memory phase guards against the #1255 class of leak: before the fix
-// this measured 823 KB/request of permanent post-GC retention; after, 0.5.
+//
+// TestDuoFunctional covers every anthropic-source conversion route the
+// production vmodel endpoint can back: {v1, beta} × {anthropic passthrough,
+// OpenAI Chat, OpenAI Responses}.
+//
+// TestDuoMemoryRegression guards against the #1255 class of leak on the
+// Claude Code hot path: before the fix this measured 823 KB/request of
+// permanent post-GC retention; after, ~0.5.
 //
 // Heap profiles are written when OOM_PROFILE_DIR is set:
 //
@@ -23,16 +29,21 @@ func TestDuoFunctional(t *testing.T) {
 	}
 	defer env.Close()
 
-	checks := env.RunFunctionalChecks(256 * 1024)
-	if len(checks) == 0 {
-		t.Fatal("no functional checks ran")
-	}
-	for _, c := range checks {
-		if !c.Pass {
-			t.Errorf("check %s failed: %s", c.Name, c.Detail)
-		} else {
-			t.Logf("check %s ok %s", c.Name, c.Detail)
-		}
+	for _, route := range AllDuoRoutes() {
+		route := route
+		t.Run(route.Name, func(t *testing.T) {
+			checks := env.RunFunctionalChecks(route, 256*1024)
+			if len(checks) == 0 {
+				t.Fatal("no functional checks ran")
+			}
+			for _, c := range checks {
+				if !c.Pass {
+					t.Errorf("check %s failed: %s", c.Name, c.Detail)
+				} else {
+					t.Logf("check %s ok %s", c.Name, c.Detail)
+				}
+			}
+		})
 	}
 }
 
@@ -54,8 +65,8 @@ func TestDuoMemoryRegression(t *testing.T) {
 		t.Fatalf("memory phase: %v", err)
 	}
 
-	t.Logf("body %.2f MB | slope %.1f KB/request | churn %.2f MB/request | burst peak %.2f MB (post-GC %+.2f MB)",
-		float64(report.BodyBytes)/1024/1024, report.SlopeKBPerRequest,
+	t.Logf("route %s | body %.2f MB | slope %.1f KB/request | churn %.2f MB/request | burst peak %.2f MB (post-GC %+.2f MB)",
+		report.Route, float64(report.BodyBytes)/1024/1024, report.SlopeKBPerRequest,
 		report.ChurnMBPerRequest, report.PeakHeapMB, report.PostBurstDeltaMB)
 	if report.BaselineProfile != "" {
 		t.Logf("profiles: %s %s", report.BaselineProfile, report.FinalProfile)

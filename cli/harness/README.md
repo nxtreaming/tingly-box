@@ -355,14 +355,28 @@ exactly how routing, failover, the breaker, and affinity behave over a sequence.
 ## Tier Duo — `duo`
 
 Two full tingly-box instances in one process, verified end-to-end over **real
-HTTP**: `tb2` (the gateway under test) routes an anthropic-scenario rule to
-`tb1`'s production vmodel endpoint (`/virtual/openai/v1`), and the harness
-drives Claude-Code-shaped conversations (megabytes of context per turn)
-through tb2's protocol-conversion path.
+HTTP**: `tb2` (the gateway under test) routes anthropic-scenario rules to
+`tb1`'s production vmodel endpoints, and the harness drives Claude-Code-shaped
+conversations (megabytes of context per turn) through tb2's
+protocol-conversion paths.
 
 ```
-client ──(Anthropic beta stream)──▶ tb2 ──(OpenAI Chat, real HTTP)──▶ tb1 /virtual/openai/v1 (vmodel)
+client ──(Anthropic v1/beta stream)──▶ tb2 ──(real HTTP)──▶ tb1 /virtual/{openai,anthropic}/... (vmodel)
 ```
+
+Every anthropic-source route the vmodel can back is wired:
+
+| route            | source          | target                      | tb1 endpoint                       |
+|------------------|-----------------|-----------------------------|------------------------------------|
+| `beta-chat`      | Anthropic beta  | OpenAI Chat                 | `/virtual/openai/v1/chat/completions` |
+| `beta-responses` | Anthropic beta  | OpenAI Responses            | `/virtual/openai/v1/responses`     |
+| `beta-anthropic` | Anthropic beta  | Anthropic (passthrough)     | `/virtual/anthropic/v1/messages`   |
+| `v1-chat`        | Anthropic v1    | OpenAI Chat                 | `/virtual/openai/v1/chat/completions` |
+| `v1-responses`   | Anthropic v1    | OpenAI Responses            | `/virtual/openai/v1/responses`     |
+| `v1-anthropic`   | Anthropic v1    | Anthropic (passthrough)     | `/virtual/anthropic/v1/messages`   |
+
+(The Google target is deliberately not covered — the vmodel surface skips it
+for now.)
 
 Two phases, both on by default:
 
@@ -377,10 +391,12 @@ Two phases, both on by default:
   (default 32).
 
 ```bash
-./harness duo                                   # both phases, 2MB bodies, 2×15 + 4×5 requests
+./harness duo                                   # functional: all routes; memory: beta-chat hot path
+./harness duo --mem-routes all                  # memory slope on every route
+./harness duo --routes beta-responses,v1-responses --skip-memory
 ./harness duo --body-mb 4 --batch 30            # heavier sweep
 ./harness duo --skip-func --profile-dir /tmp    # memory only, write pprof heap profiles
-go tool pprof -top -inuse_space /tmp/duo-final.pb.gz
+go tool pprof -top -inuse_space /tmp/duo-beta-chat-final.pb.gz
 ./harness duo --json                            # machine-readable report
 ```
 

@@ -71,6 +71,7 @@ func (s *Service) SetupOpenAIRoutes(group *gin.RouterGroup) {
 	v1 := group.Group("/v1")
 	v1.GET("/models", s.handler.ListOpenAIModels)
 	v1.POST("/chat/completions", s.handler.ChatCompletions)
+	v1.POST("/responses", s.handler.Responses)
 }
 
 // SetupAnthropicRoutes mounts the Anthropic-only entrypoints on the given
