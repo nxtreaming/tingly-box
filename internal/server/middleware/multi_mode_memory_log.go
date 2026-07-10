@@ -38,8 +38,12 @@ type MultiModeMemoryLogMiddleware struct {
 // NewMultiModeMemoryLogMiddleware creates the HTTP access log middleware.
 func NewMultiModeMemoryLogMiddleware(multiLogger *obs.MultiLogger) *MultiModeMemoryLogMiddleware {
 	if multiLogger == nil {
-		// Fallback for test environments where no multi-logger is configured.
+		// Fallback for test/harness environments where no multi-logger is
+		// configured. Follow the process-global logrus level so embedding
+		// callers (protocoltest, cli/harness) can silence per-request access
+		// logs the same way they silence everything else.
 		l := logrus.New()
+		l.SetLevel(logrus.StandardLogger().GetLevel())
 		if gin.Mode() == gin.TestMode {
 			l.SetOutput(io.Discard)
 		}

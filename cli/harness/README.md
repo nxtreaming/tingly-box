@@ -352,6 +352,42 @@ exactly how routing, failover, the breaker, and affinity behave over a sequence.
 
 ---
 
+## Tier Duo — `duo`
+
+Two full tingly-box instances in one process, verified end-to-end over **real
+HTTP**: `tb2` (the gateway under test) routes an anthropic-scenario rule to
+`tb1`'s production vmodel endpoint (`/virtual/openai/v1`), and the harness
+drives Claude-Code-shaped conversations (megabytes of context per turn)
+through tb2's protocol-conversion path.
+
+```
+client ──(Anthropic beta stream)──▶ tb2 ──(OpenAI Chat, real HTTP)──▶ tb1 /virtual/openai/v1 (vmodel)
+```
+
+Two phases, both on by default:
+
+- **Functional** — SSE event shape (`message_start` … `message_stop`),
+  assembled content, `stop_reason`, usage propagation, and the non-streaming
+  response body.
+- **Memory** — allocation churn per request, **post-GC retention slope**
+  across two sequential batches (a leak shows as a positive slope; transient
+  spikes do not), and peak live heap under a concurrent burst. This is the
+  setup that pinned down #1255: 823 KB/request retained before the fix,
+  ~0.5 KB after. The run fails if the slope exceeds `--max-slope-kb`
+  (default 32).
+
+```bash
+./harness duo                                   # both phases, 2MB bodies, 2×15 + 4×5 requests
+./harness duo --body-mb 4 --batch 30            # heavier sweep
+./harness duo --skip-func --profile-dir /tmp    # memory only, write pprof heap profiles
+go tool pprof -top -inuse_space /tmp/duo-final.pb.gz
+./harness duo --json                            # machine-readable report
+```
+
+The engine lives in `internal/protocoltest/duo.go` and is shared with the
+`TestDuoFunctional` / `TestDuoMemoryRegression` Go tests, so CI guards the
+same slope threshold.
+
 ## Agent reference
 
 | agent      | API style          | gateway endpoint                  | built-in rule UUID  | RequestModel       |
@@ -370,6 +406,7 @@ cli/harness/
                      provider / init-config
   matrix.go          Tier A command — wraps protocoltest.Matrix
   replay.go          Tier B command — fixture replay, upstreams, skip list
+  duo.go             Tier Duo command — wraps protocoltest.DuoEnv (function + memory)
   agent.go           Tier C command — agent CLI subprocess driver (+ env wiring)
   agent_real.go      Tier C real-provider mode: config iteration, per-entry runs
   lb.go              Tier LB command — load-balancing scenario simulator
