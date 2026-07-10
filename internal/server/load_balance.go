@@ -134,15 +134,14 @@ func (lb *LoadBalancer) selectService(rule *typ.Rule, claim bool) (*loadbalance.
 // a tactic can select within a candidate subset without mutating the source.
 func ruleView(rule *typ.Rule, services []*loadbalance.Service) *typ.Rule {
 	return &typ.Rule{
-		UUID:             rule.UUID,
-		RequestModel:     rule.RequestModel,
-		ResponseModel:    rule.ResponseModel,
-		CurrentServiceID: rule.CurrentServiceID,
-		LBTactic:         rule.LBTactic,
-		Active:           rule.Active,
-		SmartEnabled:     rule.SmartEnabled,
-		SmartRouting:     rule.SmartRouting,
-		Services:         services,
+		UUID:          rule.UUID,
+		RequestModel:  rule.RequestModel,
+		ResponseModel: rule.ResponseModel,
+		LBTactic:      rule.LBTactic,
+		Active:        rule.Active,
+		SmartEnabled:  rule.SmartEnabled,
+		SmartRouting:  rule.SmartRouting,
+		Services:      services,
 	}
 }
 
@@ -291,8 +290,8 @@ func (lb *LoadBalancer) ClearAllStats() {
 	// Also clear stats from all rules in memory. GetRequestConfigs returns
 	// rule VALUE copies, but Rule.Services is a pointer slice, so mutating
 	// svc.Stats reaches the live services; rule fields themselves must not be
-	// written here (it would edit the copy — the previous CurrentServiceID
-	// reset and slice write-back were silent no-ops for exactly that reason).
+	// written here (it would edit the copy — a previous rule-field reset and
+	// slice write-back were silent no-ops for exactly that reason).
 	if lb.config != nil {
 		for _, rule := range lb.config.GetRequestConfigs() {
 			for i := range rule.Services {
@@ -357,13 +356,12 @@ func (lb *LoadBalancer) GetRuleSummary(rule *typ.Rule) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"request_model":      rule.RequestModel,
-		"response_model":     rule.ResponseModel,
-		"tactic":             rule.GetTacticType().String(),
-		"current_service_id": rule.CurrentServiceID,
-		"active":             rule.Active,
-		"is_legacy":          false,
-		"services":           serviceSummaries,
+		"request_model":  rule.RequestModel,
+		"response_model": rule.ResponseModel,
+		"tactic":         rule.GetTacticType().String(),
+		"active":         rule.Active,
+		"is_legacy":      false,
+		"services":       serviceSummaries,
 	}
 }
 

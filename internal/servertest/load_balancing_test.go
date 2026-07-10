@@ -972,10 +972,9 @@ func TestLoadBalancer_TokenBasedThreshold2(t *testing.T) {
 
 		selectedProviders = append(selectedProviders, service.Provider)
 
-		// Record usage as the production handlers do. Note there is no
-		// current-service pointer advance: production never updates
-		// CurrentServiceID at runtime, so the tactic re-evaluates from the
-		// persisted value (empty here) on every request.
+		// Record usage as the production handlers do. The tactic anchors on
+		// the first active service and re-evaluates every request; there is
+		// no cross-request pointer.
 		service.RecordUsage(10, 10)
 
 		t.Logf("Request %d: Selected provider %s", i+1, service.Provider)

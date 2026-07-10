@@ -289,24 +289,6 @@ func NewTokenBasedTactic(tokenThreshold int64) *TokenBasedTactic {
 	return &TokenBasedTactic{TokenThreshold: tokenThreshold}
 }
 
-// resolveCurrentService returns the service matching rule.CurrentServiceID
-// among the given services, defaulting to the first when unset or not found.
-// Sticky tactics (token/latency) use it to keep serving from the current
-// service until a threshold forces a switch.
-func resolveCurrentService(rule *Rule, services []*loadbalance.Service) *loadbalance.Service {
-	if rule.CurrentServiceID != "" {
-		for _, svc := range services {
-			if svc.ServiceID() == rule.CurrentServiceID {
-				return svc
-			}
-		}
-	}
-	if len(services) > 0 {
-		return services[0]
-	}
-	return nil
-}
-
 // SelectService selects service based on token consumption thresholds
 func (tb *TokenBasedTactic) SelectService(rule *Rule) *loadbalance.Service {
 	// Get active services once to avoid duplicate filtering
@@ -315,10 +297,11 @@ func (tb *TokenBasedTactic) SelectService(rule *Rule) *loadbalance.Service {
 		return nil
 	}
 
-	currentService := resolveCurrentService(rule, activeServices)
-	if currentService == nil {
-		return nil
-	}
+	// Anchor on the first active service: stay on it until its window
+	// consumption crosses the threshold, then rotate to the least-used
+	// service. (This threshold-triggered rotation is what yields the
+	// round-robin-like behavior across equal services.)
+	currentService := activeServices[0]
 
 	_, windowTokens := currentService.GetWindowStats()
 
@@ -467,10 +450,9 @@ func (lt *LatencyBasedTactic) SelectService(rule *Rule) *loadbalance.Service {
 		return activeServices[0]
 	}
 
-	currentService := resolveCurrentService(rule, activeServices)
-	if currentService == nil {
-		return nil
-	}
+	// Anchor on the first active service: keep it while its latency stays
+	// under the threshold, otherwise pick the lowest-latency service.
+	currentService := activeServices[0]
 
 	// Check if current service has exceeded latency threshold
 	currentLatency := lt.getLatencyForService(currentService)
@@ -942,7 +924,6 @@ func (pt *TierTactic) pickWithinTier(rule *Rule, services []*loadbalance.Service
 	// services so the sub-tactic operates on the right pool.
 	sub := *rule
 	sub.Services = services
-	sub.CurrentServiceID = ""
 	tactic := GetDefaultTactic(pt.WithinTierTactic)
 	if tactic == nil {
 		return services[0]

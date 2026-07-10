@@ -7,26 +7,6 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 )
 
-// mockRuleForLatency is a minimal mock of Rule for latency testing
-type mockRuleForLatency struct {
-	services         []*loadbalance.Service
-	currentServiceID string
-}
-
-func (m *mockRuleForLatency) GetActiveServices() []*loadbalance.Service {
-	var active []*loadbalance.Service
-	for i := range m.services {
-		if m.services[i].Active {
-			active = append(active, m.services[i])
-		}
-	}
-	return active
-}
-
-func (m *mockRuleForLatency) GetCurrentServiceID() string {
-	return m.currentServiceID
-}
-
 func TestLatencyBasedTactic_SelectService(t *testing.T) {
 	// Create services with different latency profiles
 	service1 := &loadbalance.Service{
@@ -70,40 +50,38 @@ func TestLatencyBasedTactic_SelectService(t *testing.T) {
 		service3.Stats.RecordLatency(100, 10)
 	}
 
+	// The tactic anchors on the FIRST active service: it keeps the anchor
+	// while its latency stays under the threshold, otherwise picks the
+	// lowest-latency service — so the service order encodes the anchor.
 	tests := []struct {
-		name             string
-		services         []*loadbalance.Service
-		currentServiceID string
-		thresholdMs      int64
-		wantServiceID    string
+		name          string
+		services      []*loadbalance.Service
+		thresholdMs   int64
+		wantServiceID string
 	}{
 		{
-			name:             "selects lowest latency service when threshold exceeded",
-			services:         []*loadbalance.Service{service1, service2, service3},
-			currentServiceID: "provider1/model1", // Current has high latency (~200ms)
-			thresholdMs:      150,                // Threshold below current latency
-			wantServiceID:    "provider3/model3", // Should switch to lowest latency
+			name:          "selects lowest latency service when anchor exceeds threshold",
+			services:      []*loadbalance.Service{service1, service2, service3}, // anchor ~200ms
+			thresholdMs:   150,                                                  // below anchor latency
+			wantServiceID: "provider3/model3",                                   // switch to lowest latency
 		},
 		{
-			name:             "keeps current if within threshold",
-			services:         []*loadbalance.Service{service1, service2, service3},
-			currentServiceID: "provider3/model3", // Current has lowest latency (~100ms)
-			thresholdMs:      2000,               // High threshold
-			wantServiceID:    "provider3/model3", // Should keep current
+			name:          "keeps anchor if within threshold",
+			services:      []*loadbalance.Service{service3, service1, service2}, // anchor ~100ms
+			thresholdMs:   2000,                                                 // high threshold
+			wantServiceID: "provider3/model3",                                   // keep anchor
 		},
 		{
-			name:             "handles single service",
-			services:         []*loadbalance.Service{service1},
-			currentServiceID: "provider1/model1",
-			thresholdMs:      2000,
-			wantServiceID:    "provider1/model1",
+			name:          "handles single service",
+			services:      []*loadbalance.Service{service1},
+			thresholdMs:   2000,
+			wantServiceID: "provider1/model1",
 		},
 		{
-			name:             "handles no active services",
-			services:         []*loadbalance.Service{},
-			currentServiceID: "",
-			thresholdMs:      2000,
-			wantServiceID:    "",
+			name:          "handles no active services",
+			services:      []*loadbalance.Service{},
+			thresholdMs:   2000,
+			wantServiceID: "",
 		},
 	}
 
@@ -115,10 +93,7 @@ func TestLatencyBasedTactic_SelectService(t *testing.T) {
 				constant.DefaultLatencyPercentile,
 				"avg",
 			)
-			rule := &Rule{
-				Services:         tt.services,
-				CurrentServiceID: tt.currentServiceID,
-			}
+			rule := &Rule{Services: tt.services}
 
 			got := tactic.SelectService(rule)
 			var gotID string
