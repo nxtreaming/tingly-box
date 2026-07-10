@@ -128,11 +128,17 @@ cfg := &otel.Config{
 | Scenario | `llm.scenario` | "openai", "anthropic", "claude_code" |
 | Streaming | `llm.streaming` | true, false |
 | Status | `llm.response.status` | "success", "error", "canceled" |
-| Error Code | `llm.error.code` | Error code if failed |
+| Error Code | `llm.error.code` | Bounded error class ("rate_limit", "timeout", ...) |
 | Rule UUID | `llm.rule.uuid` | Load balancer rule |
 | Provider UUID | `llm.provider.uuid` | Provider UUID |
 | User Tier | `llm.user.tier` | "enterprise", "standard" |
-| Latency | `llm.latency.ms` | Request latency in ms |
+
+> **Cardinality note:** metric attributes must be low-cardinality. Every
+> distinct attribute set permanently allocates a data point per instrument in
+> the cumulative metrics SDK, so per-request values (latency, raw error
+> messages, request IDs) must never be attributes. Latency is recorded as the
+> `llm.request.duration` histogram *value*; error codes are classified into a
+> bounded set before recording.
 
 ## Configuration
 

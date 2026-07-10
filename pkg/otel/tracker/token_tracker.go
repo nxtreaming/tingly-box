@@ -21,8 +21,14 @@ var (
 	attrLLMErrorCode      = attribute.Key("llm.error.code")
 	attrLLMRuleUUID       = attribute.Key("llm.rule.uuid")
 	attrLLMUserTier       = attribute.Key("llm.user.tier")
-	attrLLMLatencyMs      = attribute.Key("llm.latency.ms")
 )
+
+// maxErrorCodeAttrLen caps the llm.error.code attribute value. Every distinct
+// attribute set becomes a data point the cumulative metrics SDK retains for
+// the lifetime of the process, so unbounded error strings (which may embed
+// upstream response bodies) would leak memory one timeseries at a time.
+// Callers should already pass a bounded classification; this is a guard.
+const maxErrorCodeAttrLen = 64
 
 // UsageOptions contains the options for recording token usage.
 type UsageOptions struct {
@@ -194,11 +200,16 @@ func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
 		commonAttrs = append(commonAttrs, attrLLMUserTier.String(opts.UserTier))
 	}
 	if opts.ErrorCode != "" {
-		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(opts.ErrorCode))
+		code := opts.ErrorCode
+		if len(code) > maxErrorCodeAttrLen {
+			code = code[:maxErrorCodeAttrLen]
+		}
+		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(code))
 	}
-	if opts.LatencyMs > 0 {
-		commonAttrs = append(commonAttrs, attrLLMLatencyMs.Int(opts.LatencyMs))
-	}
+	// NOTE: latency is deliberately NOT an attribute. It is near-unique per
+	// request, and each unique attribute set permanently allocates a new data
+	// point on every instrument below — a slow, unbounded memory leak (#1255).
+	// Latency is recorded as the requestDuration histogram VALUE instead.
 
 	// Record input tokens
 	if opts.InputTokens > 0 {

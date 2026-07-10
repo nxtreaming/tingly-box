@@ -42,6 +42,11 @@ var (
 	// AttrLLMUserTier identifies low-cardinality user class for enterprise traffic.
 	AttrLLMUserTier = attribute.Key("llm.user.tier")
 
-	// AttrLLMLatencyMs identifies the request latency in milliseconds
+	// AttrLLMLatencyMs identifies the request latency in milliseconds.
+	//
+	// Deprecated: do not attach this as a metric attribute — latency is
+	// near-unique per request, and every distinct attribute set permanently
+	// allocates a new data point per instrument (unbounded memory growth,
+	// #1255). Record latency as a histogram value instead.
 	AttrLLMLatencyMs = attribute.Key("llm.latency.ms")
 )

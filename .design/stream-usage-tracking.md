@@ -243,7 +243,7 @@ type StreamTokenCounter struct {
 - `GetCounts() → (input, output)`：有上游就用上游，`input = upstreamInput − upstreamCache`（归一化成仅未命中）
 - `GetUpstreamDetails() → (cache, reasoning)`：上游 usage chunk 里抓到的 cache/reasoning（没有则 0）
 
-tiktoken：默认 `O200kBase`；`EstimateInputTokens(req)` 在流前预置 input；`countTokens` 失败回退 `len(text)/4`。Anthropic 侧另有 `EstimateAnthropicTokens`。
+tiktoken：默认 `O200kBase`；流前用 `EstimateInputTokensSimple(req)`（`len/4` 近似）预置 input——**不要**在流式热路径用精确 BPE 的 `EstimateInputTokens`：agentic 客户端每轮携带全量上下文（MB 级），tiktoken 的 regexp2 切分会产生远超输入体积的瞬时分配，是 OOM 峰值来源之一（#1255）；该预置值只用于 message_start 占位与上游无 usage 时的回退。`countTokens` 失败回退 `len(text)/4`。Anthropic 侧另有 `EstimateAnthropicTokens`。
 
 ---
 

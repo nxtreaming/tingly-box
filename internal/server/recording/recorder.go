@@ -250,6 +250,10 @@ func (sr *ProtocolRecorder) RecordError(err error) {
 
 func (sr *ProtocolRecorder) emit(err error) {
 	if sr.sink == nil || sr.mode == "" {
+		// Still drop buffered request/response payloads: without a sink the
+		// recorder would otherwise keep them reachable via the gin context
+		// for the remainder of the request.
+		sr.release()
 		return
 	}
 

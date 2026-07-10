@@ -67,10 +67,16 @@ func newOpenAIToAnthropicConverter(
 	if tc, err := token.NewStreamTokenCounter(); err == nil {
 		c.tokenCounter = tc
 		if req != nil {
-			if inputTokens, err := token.EstimateInputTokens(req); err == nil {
-				c.tokenCounter.SetInputTokens(inputTokens)
-				c.estimatedInputTokens = inputTokens
-			}
+			// Cheap len/4 estimate, NOT exact BPE: this runs at the start of
+			// every stream over the entire conversation (agentic clients ship
+			// megabytes of context per turn), and tiktoken's regexp2 splitter
+			// allocates orders of magnitude more than the input size — a major
+			// per-request heap spike (#1255). The estimate only seeds the
+			// message_start placeholder and the fallback for providers that
+			// never report usage; upstream usage supersedes it when present.
+			inputTokens := token.EstimateInputTokensSimple(req)
+			c.tokenCounter.SetInputTokens(inputTokens)
+			c.estimatedInputTokens = inputTokens
 		}
 	}
 	return c

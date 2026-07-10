@@ -136,6 +136,10 @@ func (bp *BatchProcessor) worker() {
 		if err := bp.exporter.Export(context.Background(), pending); err != nil {
 			logrus.Warnf("obs: export error: %v", err)
 		}
+		// Zero the slots before truncating: pending[:0] alone keeps every
+		// exported *Record reachable through the backing array until its slot
+		// is overwritten, pinning full request/response payloads indefinitely.
+		clear(pending)
 		pending = pending[:0]
 	}
 
