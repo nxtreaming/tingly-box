@@ -123,9 +123,18 @@ export const barRadius: [number, number, number, number] = [4, 4, 0, 0];
 // Animation duration for chart transitions
 export const ANIMATION_DURATION = 600;
 
-// Format numbers (50K, 1M, etc.)
-export const formatNumber = (n: number): string => {
-    if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
-    if (n >= 1000) return `${(n / 1000).toFixed(0)}K`;
-    return n.toString();
-};
+// Format large numbers compactly (999, 50K, 1.5M, 20.4B, 1.1T).
+//
+// Backed by Intl's compact notation instead of a hand-rolled unit ladder: a
+// manual "divide, then toFixed" approach rounds within the chosen unit and
+// can strand a value just below a boundary — e.g. 999999 divided by 1e3 and
+// rounded to 0 decimals gives "1000K" instead of carrying into "1M". Intl
+// rounds to the target significant digits first and picks the unit that
+// carry produces, so boundary values always land in the right unit.
+const compactNumberFormatter = new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumSignificantDigits: 3,
+});
+
+export const formatNumber = (n: number): string => compactNumberFormatter.format(n);
