@@ -67,8 +67,35 @@ func (ph *ProtocolHandler) mcpChainTransforms(stripEnabled bool) []transform.Tra
 	return []transform.Transform{ph.mcpTC.injection, ph.mcpTC.strip, guard}
 }
 
-func (ph *ProtocolHandler) TransformAnthropicBeta(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, preBaseTransforms []transform.Transform, preVendorTransforms []transform.Transform) (*transform.TransformContext, error) {
+// transformSourceOptions carries the per-source knobs that differ between the
+// four Transform* entry points; the rest of the pipeline (chain build, flag
+// resolution, context setup, execution, recording) is shared by
+// transformRequest.
+type transformSourceOptions struct {
+	source protocol.APIType
 
+	// defaultScenarioFlags selects how scenario flags are resolved: the
+	// Anthropic entry points go through ScenarioConfig.GetDefaultFlags()
+	// (which also enables the SmartCompact chain prepend), while the OpenAI
+	// entry points use the raw ScenarioConfig.Flags pointer.
+	defaultScenarioFlags bool
+
+	hasNativeAdvisor bool
+
+	// extraOpts are appended after the shared options: WithMaxTokens for the
+	// Responses path, and WithContext for the Beta path. The latter is
+	// preserved drift, not design — historically only the Beta entry point
+	// passed the request context into the transform chain (the MCP transforms
+	// fall back to context.Background() on the other paths).
+	extraOpts []transform.TransformOption
+}
+
+// transformRequest is the shared core of the four Transform* entry points:
+// build the canonical chain, resolve scenario flags, assemble the
+// TransformContext, execute, and mirror steps/errors into the recorder.
+// Generic (free function — Go methods cannot have type parameters) so the
+// compile-time RequestUnionConstraint on NewTransformContext is preserved.
+func transformRequest[T transform.RequestUnionConstraint](ph *ProtocolHandler, c *gin.Context, req T, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, preBaseTransforms, preVendorTransforms []transform.Transform, src transformSourceOptions) (*transform.TransformContext, error) {
 	// Build transform chain with recording support. The rule-driven pre-Base and
 	// preVendor transforms are slotted into their canonical positions by the builder.
 	chain, err := ph.buildTransformChain(c, target, scenarioType, protocolRecorder, preBaseTransforms, preVendorTransforms)
@@ -76,207 +103,87 @@ func (ph *ProtocolHandler) TransformAnthropicBeta(c *gin.Context, req *protocol.
 		return nil, err
 	}
 
-	// Create transform context
 	var scenarioFlags *typ.ScenarioFlags
 	if scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType); scenarioConfig != nil {
-		flags := scenarioConfig.GetDefaultFlags()
-		scenarioFlags = &flags
-		if flags.SmartCompact {
-			baseTransforms := chain.GetTransforms()
-			chain.SetTransforms(append(
-				[]transform.Transform{smart_compact.NewCompactTransform(2)},
-				baseTransforms...,
-			))
+		if src.defaultScenarioFlags {
+			flags := scenarioConfig.GetDefaultFlags()
+			scenarioFlags = &flags
+			if flags.SmartCompact {
+				chain.SetTransforms(append(
+					[]transform.Transform{smart_compact.NewCompactTransform(2)},
+					chain.GetTransforms()...,
+				))
+			}
+		} else {
+			scenarioFlags = &scenarioConfig.Flags
 		}
 	}
 
 	opts := []transform.TransformOption{
-		transform.WithContext(c.Request.Context()),
 		transform.WithProvider(provider),
 		transform.WithScenarioFlags(scenarioFlags),
 		transform.WithStreaming(isStreaming),
 		transform.WithDevice(ph.deps.Config.ClaudeCodeDeviceID),
 	}
+	opts = append(opts, src.extraOpts...)
 
-	// Advisor loopback requests carry X-Tingly-Advisor-Depth >= 1; skip MCP tool injection for them
+	// Advisor loopback requests carry X-Tingly-Advisor-Depth >= 1; mark them
+	// so MCP tool injection is skipped. Advisor loopbacks are Anthropic/Chat
+	// shaped, so on the Responses path this is a no-op.
 	if c.GetHeader("X-Tingly-Advisor-Depth") != "" {
 		opts = append(opts, transform.WithIsAdvisorRequest(true))
 	}
 
-	transformCtx := transform.NewTransformContext(
-		req.BetaMessageNewParams,
-		opts...,
-	)
-	transformCtx.HasNativeAdvisor = HasNativeAdvisorBeta(req)
-	transformCtx.SourceAPI = protocol.TypeAnthropicBeta
+	transformCtx := transform.NewTransformContext(req, opts...)
+	transformCtx.HasNativeAdvisor = src.hasNativeAdvisor
+	transformCtx.SourceAPI = src.source
 	transformCtx.TargetAPI = target
 
-	// Execute transform chain
-	finalCtx, err := chain.Execute(transformCtx)
-	if err != nil {
-		return nil, err
-	}
+	finalCtx, execErr := chain.Execute(transformCtx)
 
-	// Store transform steps in V2 recorder
+	// Mirror transform steps (and any failure) into the V2 recorder. Steps are
+	// read from transformCtx, which Execute mutates in place: on failure it
+	// returns a nil finalCtx, but transformCtx still holds every step up to and
+	// including the one that failed.
 	if protocolRecorder != nil {
-		protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
+		protocolRecorder.SetTransformSteps(transformCtx.TransformSteps)
+		if execErr != nil {
+			protocolRecorder.RecordError(execErr)
+		}
 	}
-
+	if execErr != nil {
+		return nil, execErr
+	}
 	return finalCtx, nil
+}
+
+func (ph *ProtocolHandler) TransformAnthropicBeta(c *gin.Context, req *protocol.AnthropicBetaMessagesRequest, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, preBaseTransforms []transform.Transform, preVendorTransforms []transform.Transform) (*transform.TransformContext, error) {
+	return transformRequest(ph, c, req.BetaMessageNewParams, target, provider, isStreaming, protocolRecorder, scenarioType, preBaseTransforms, preVendorTransforms, transformSourceOptions{
+		source:               protocol.TypeAnthropicBeta,
+		defaultScenarioFlags: true,
+		hasNativeAdvisor:     HasNativeAdvisorBeta(req),
+		extraOpts:            []transform.TransformOption{transform.WithContext(c.Request.Context())},
+	})
 }
 
 func (ph *ProtocolHandler) TransformAnthropicV1(c *gin.Context, req *protocol.AnthropicMessagesRequest, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, preBaseTransforms []transform.Transform, preVendorTransforms []transform.Transform) (*transform.TransformContext, error) {
-	// Build transform chain with recording support. The rule-driven pre-Base and
-	// preVendor transforms are slotted into their canonical positions by the builder.
-	chain, err := ph.buildTransformChain(c, target, scenarioType, protocolRecorder, preBaseTransforms, preVendorTransforms)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create transform context
-	var scenarioFlags *typ.ScenarioFlags
-	if scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType); scenarioConfig != nil {
-		flags := scenarioConfig.GetDefaultFlags()
-		scenarioFlags = &flags
-		if flags.SmartCompact {
-			baseTransforms := chain.GetTransforms()
-			chain.SetTransforms(append(
-				[]transform.Transform{smart_compact.NewCompactTransform(2)},
-				baseTransforms...,
-			))
-		}
-	}
-
-	opts := []transform.TransformOption{
-		transform.WithProvider(provider),
-		transform.WithScenarioFlags(scenarioFlags),
-		transform.WithStreaming(isStreaming),
-		transform.WithDevice(ph.deps.Config.ClaudeCodeDeviceID),
-	}
-
-	// Check if this is an advisor request
-	if c.GetHeader("X-Tingly-Advisor-Depth") != "" {
-		opts = append(opts, transform.WithIsAdvisorRequest(true))
-	}
-
-	transformCtx := transform.NewTransformContext(
-		req.MessageNewParams,
-		opts...,
-	)
-	transformCtx.SourceAPI = protocol.TypeAnthropicV1
-	transformCtx.TargetAPI = target
-
-	// Execute transform chain
-	finalCtx, err := chain.Execute(transformCtx)
-	if err != nil {
-		if protocolRecorder != nil {
-			protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-			protocolRecorder.RecordError(err)
-		}
-		return nil, err
-	}
-
-	// Store transform steps in V2 recorder
-	if protocolRecorder != nil {
-		protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-	}
-	return finalCtx, nil
+	return transformRequest(ph, c, req.MessageNewParams, target, provider, isStreaming, protocolRecorder, scenarioType, preBaseTransforms, preVendorTransforms, transformSourceOptions{
+		source:               protocol.TypeAnthropicV1,
+		defaultScenarioFlags: true,
+	})
 }
 
 func (ph *ProtocolHandler) TransformOpenAIChat(c *gin.Context, req *protocol.OpenAIChatCompletionRequest, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, preBaseTransforms []transform.Transform, preVendorTransforms []transform.Transform) (*transform.TransformContext, error) {
-	// Build transform chain with recording support. The rule-driven pre-Base and
-	// preVendor transforms are slotted into their canonical positions by the builder.
-	chain, err := ph.buildTransformChain(c, target, scenarioType, protocolRecorder, preBaseTransforms, preVendorTransforms)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create transform context
-	var scenarioFlags *typ.ScenarioFlags
-	if scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType); scenarioConfig != nil {
-		scenarioFlags = &scenarioConfig.Flags
-	}
-
-	opts := []transform.TransformOption{
-		transform.WithProvider(provider),
-		transform.WithScenarioFlags(scenarioFlags),
-		transform.WithStreaming(isStreaming),
-		transform.WithDevice(ph.deps.Config.ClaudeCodeDeviceID),
-	}
-
-	// Check if this is an advisor request
-	if c.GetHeader("X-Tingly-Advisor-Depth") != "" {
-		opts = append(opts, transform.WithIsAdvisorRequest(true))
-	}
-
-	transformCtx := transform.NewTransformContext(
-		req.ChatCompletionNewParams,
-		opts...,
-	)
-	transformCtx.SourceAPI = protocol.TypeOpenAIChat
-	transformCtx.TargetAPI = target
-
-	// Execute transform chain
-	finalCtx, err := chain.Execute(transformCtx)
-	if err != nil {
-		if protocolRecorder != nil {
-			protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-			protocolRecorder.RecordError(err)
-		}
-		return nil, err
-	}
-
-	// Store transform steps in V2 recorder
-	if protocolRecorder != nil {
-		protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-	}
-	return finalCtx, nil
+	return transformRequest(ph, c, req.ChatCompletionNewParams, target, provider, isStreaming, protocolRecorder, scenarioType, preBaseTransforms, preVendorTransforms, transformSourceOptions{
+		source: protocol.TypeOpenAIChat,
+	})
 }
 
 func (ph *ProtocolHandler) TransformOpenAIResponses(c *gin.Context, req *protocol.ResponseCreateRequest, target protocol.APIType, provider *typ.Provider, isStreaming bool, protocolRecorder *recording.ProtocolRecorder, scenarioType typ.RuleScenario, maxAllowed int, preBaseTransforms []transform.Transform, preVendorTransforms []transform.Transform) (*transform.TransformContext, error) {
-	// Build transform chain with recording support. The rule-driven pre-Base and
-	// preVendor transforms are slotted into their canonical positions by the builder.
-	chain, err := ph.buildTransformChain(c, target, scenarioType, protocolRecorder, preBaseTransforms, preVendorTransforms)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create transform context
-	var scenarioFlags *typ.ScenarioFlags
-	if scenarioConfig := ph.deps.Config.GetScenarioConfig(scenarioType); scenarioConfig != nil {
-		scenarioFlags = &scenarioConfig.Flags
-	}
-
-	opts := []transform.TransformOption{
-		transform.WithProvider(provider),
-		transform.WithScenarioFlags(scenarioFlags),
-		transform.WithStreaming(isStreaming),
-		transform.WithDevice(ph.deps.Config.ClaudeCodeDeviceID),
-		transform.WithMaxTokens(int64(maxAllowed)),
-	}
-
-	transformCtx := transform.NewTransformContext(
-		req.ResponseNewParams,
-		opts...,
-	)
-	transformCtx.SourceAPI = protocol.TypeOpenAIResponses
-	transformCtx.TargetAPI = target
-
-	// Execute transform chain
-	finalCtx, err := chain.Execute(transformCtx)
-	if err != nil {
-		if protocolRecorder != nil {
-			protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-			protocolRecorder.RecordError(err)
-		}
-		return nil, err
-	}
-
-	// Store transform steps in V2 recorder
-	if protocolRecorder != nil {
-		protocolRecorder.SetTransformSteps(finalCtx.TransformSteps)
-	}
-	return finalCtx, nil
+	return transformRequest(ph, c, req.ResponseNewParams, target, provider, isStreaming, protocolRecorder, scenarioType, preBaseTransforms, preVendorTransforms, transformSourceOptions{
+		source:    protocol.TypeOpenAIResponses,
+		extraOpts: []transform.TransformOption{transform.WithMaxTokens(int64(maxAllowed))},
+	})
 }
 
 // buildTransformChain assembles the canonical transform chain in a single place,
@@ -341,20 +248,6 @@ func (ph *ProtocolHandler) buildTransformChain(c *gin.Context, targetType protoc
 	return transform.NewTransformChain(transforms), nil
 }
 
-// buildAnthropicPreChain constructs the pre-request transform chain for Anthropic V1 and Beta handlers.
-// Currently only applies MaxTokens validation.
-// All other scenario-level transforms (ThinkingEffort, CleanHeader) are handled via
-// rule flags injection in resolveRuleFlagsWithScenario.
-func buildAnthropicPreChain(
-	scenarioConfig *typ.ScenarioConfig,
-	defaultMaxTokens, maxAllowed int,
-) []transform.Transform {
-	var chain []transform.Transform
-	// Only MaxTokens validation remains at scenario level
-	chain = append(chain, servertransform.NewMaxTokensTransform(defaultMaxTokens, maxAllowed))
-	return chain
-}
-
 // scenarioFlagsOrNil returns the scenario flags or nil.
 func scenarioFlagsOrNil(scenarioConfig *typ.ScenarioConfig) *typ.ScenarioFlags {
 	if scenarioConfig != nil {
@@ -363,44 +256,27 @@ func scenarioFlagsOrNil(scenarioConfig *typ.ScenarioConfig) *typ.ScenarioFlags {
 	return nil
 }
 
-// ExecuteAnthropicV1PreChain builds and runs the pre-transform chain for Anthropic V1 requests.
+// ExecuteAnthropicPreChain builds and runs the server-side pre-transform chain
+// for Anthropic requests (req is *anthropic.MessageNewParams or
+// *anthropic.BetaMessageNewParams — the transforms type-switch internally).
+// Currently only MaxTokens validation remains at scenario level; other
+// scenario-level transforms (ThinkingEffort, CleanHeader) are handled via rule
+// flags injection in resolveRuleFlagsWithScenario.
 // Returns an error that should be mapped to HTTP 400.
-func ExecuteAnthropicV1PreChain(
-	req *anthropic.MessageNewParams,
+func ExecuteAnthropicPreChain[T *anthropic.MessageNewParams | *anthropic.BetaMessageNewParams](
+	req T,
 	scenarioConfig *typ.ScenarioConfig,
 	defaultMaxTokens, maxAllowed int,
 	isStreaming bool,
 ) error {
-	transforms := buildAnthropicPreChain(scenarioConfig, defaultMaxTokens, maxAllowed)
 	ctx := transform.NewTransformContext(
 		req,
 		transform.WithScenarioFlags(scenarioFlagsOrNil(scenarioConfig)),
 		transform.WithStreaming(isStreaming),
 	)
-	if len(transforms) == 0 {
-		return nil
-	}
-	_, err := transform.NewTransformChain(transforms).Execute(ctx)
-	return err
-}
-
-// ExecuteAnthropicBetaPreChain builds and runs the pre-transform chain for Anthropic Beta requests.
-// Returns an error that should be mapped to HTTP 400.
-func ExecuteAnthropicBetaPreChain(
-	req *anthropic.BetaMessageNewParams,
-	scenarioConfig *typ.ScenarioConfig,
-	defaultMaxTokens, maxAllowed int,
-	isStreaming bool,
-) error {
-	transforms := buildAnthropicPreChain(scenarioConfig, defaultMaxTokens, maxAllowed)
-	ctx := transform.NewTransformContext(
-		req,
-		transform.WithScenarioFlags(scenarioFlagsOrNil(scenarioConfig)),
-		transform.WithStreaming(isStreaming),
-	)
-	if len(transforms) == 0 {
-		return nil
-	}
-	_, err := transform.NewTransformChain(transforms).Execute(ctx)
+	chain := transform.NewTransformChain([]transform.Transform{
+		servertransform.NewMaxTokensTransform(defaultMaxTokens, maxAllowed),
+	})
+	_, err := chain.Execute(ctx)
 	return err
 }

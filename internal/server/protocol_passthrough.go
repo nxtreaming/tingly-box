@@ -71,7 +71,7 @@ func (ph *ProtocolHandler) NonstreamAnthropicV1(
 	// Run processor
 	response, err := processor.Run(req)
 	if err != nil {
-		recordMCPError(ph, c, err, recorder)
+		ph.handlePreStreamFailure(c, err, recorder)
 		return
 	}
 
@@ -173,7 +173,7 @@ func (ph *ProtocolHandler) StreamAnthropicV1(
 	)
 
 	if err := interceptor.Run(req); err != nil {
-		recordMCPError(ph, c, err, recorder)
+		ph.handlePreStreamFailure(c, err, recorder)
 		return
 	}
 }
@@ -207,15 +207,7 @@ func (ph *ProtocolHandler) nonstreamOpenAIChat(c *gin.Context, provider *typ.Pro
 	fc := forwarding.NewForwardContext(c.Request.Context(), provider)
 	response, _, err := forwarding.ForwardOpenAIChat(fc, wrapper, req)
 	if err != nil {
-		// Track error with no usage
-		usage := protocol.NewTokenUsageWithCache(0, 0, 0)
-		ph.trackUsageWithTokenUsage(c, usage, err)
-		c.JSON(protocol.UpstreamStatus(err, http.StatusInternalServerError), ErrorResponse{
-			Error: ErrorDetail{
-				Message: "Failed to forward request: " + err.Error(),
-				Type:    "api_error",
-			},
-		})
+		ph.failForward(c, nil, err)
 		return
 	}
 
@@ -294,15 +286,7 @@ func (ph *ProtocolHandler) streamOpenAIChat(c *gin.Context, provider *typ.Provid
 		defer cancel()
 	}
 	if err != nil {
-		// Track error with no usage
-		usage := protocol.NewTokenUsageWithCache(0, 0, 0)
-		ph.trackUsageWithTokenUsage(c, usage, err)
-		c.JSON(protocol.UpstreamStatus(err, http.StatusInternalServerError), ErrorResponse{
-			Error: ErrorDetail{
-				Message: "Failed to create streaming request: " + err.Error(),
-				Type:    "api_error",
-			},
-		})
+		ph.handlePreStreamFailure(c, err, nil)
 		return
 	}
 
@@ -318,7 +302,7 @@ func (ph *ProtocolHandler) streamOpenAIChat(c *gin.Context, provider *typ.Provid
 }
 
 // nonstreamOpenAIResponses handles Responses API passthrough (non-streaming)
-func (ph *ProtocolHandler) nonstreamOpenAIResponses(c *gin.Context, reqCtx *transform.TransformContext, rule *typ.Rule, provider *typ.Provider, recorder *recording.ProtocolRecorder) {
+func (ph *ProtocolHandler) nonstreamOpenAIResponses(c *gin.Context, reqCtx *transform.TransformContext, provider *typ.Provider, recorder *recording.ProtocolRecorder) {
 	params := reqCtx.Request.(*responses.ResponseNewParams)
 
 	wrapper := ph.deps.ClientPool.GetOpenAIClient(c.Request.Context(), provider, string(params.Model))
@@ -328,11 +312,7 @@ func (ph *ProtocolHandler) nonstreamOpenAIResponses(c *gin.Context, reqCtx *tran
 		defer cancel()
 	}
 	if err != nil {
-		ph.trackUsageWithTokenUsage(c, protocol.NewTokenUsageWithCache(0, 0, 0), err)
-		SendErrorResponse(c, err, "Failed to forward request")
-		if recorder != nil {
-			recorder.RecordError(err)
-		}
+		ph.failRequest(c, recorder, err, "Failed to forward request")
 		return
 	}
 
@@ -347,7 +327,7 @@ func (ph *ProtocolHandler) nonstreamOpenAIResponses(c *gin.Context, reqCtx *tran
 
 // streamOpenAIResponses handles Responses API passthrough (streaming)
 // Moved from openai_responses.go:421-456
-func (ph *ProtocolHandler) streamOpenAIResponses(c *gin.Context, reqCtx *transform.TransformContext, rule *typ.Rule, provider *typ.Provider, recorder *recording.ProtocolRecorder) {
+func (ph *ProtocolHandler) streamOpenAIResponses(c *gin.Context, reqCtx *transform.TransformContext, provider *typ.Provider, recorder *recording.ProtocolRecorder) {
 	responseModel := reqCtx.ResponseModel
 	params := reqCtx.Request.(*responses.ResponseNewParams)
 
