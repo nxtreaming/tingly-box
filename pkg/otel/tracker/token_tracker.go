@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -182,33 +183,44 @@ func NewTokenTracker(meter metric.Meter) (*TokenTracker, error) {
 
 // RecordUsage records token usage with the provided options.
 func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
-	// Build common attributes
+	// Build common attributes.
+	//
+	// Attribute values are retained for the lifetime of the process by the
+	// cumulative metrics SDK, and several of them (model, request model) can
+	// originate from the parsed request body — where SDK JSON decoding yields
+	// substrings that alias the multi-megabyte gjson copy of the entire body.
+	// A retained attribute string would then pin that whole buffer forever
+	// (the #1255 leak: ~0.8MB pinned per request, attributed to
+	// gjson.ParseBytes in heap profiles). strings.Clone detaches every value
+	// from whatever backing array it came from.
 	commonAttrs := []attribute.KeyValue{
-		attrLLMProvider.String(opts.Provider),
-		attrLLMProviderUUID.String(opts.ProviderUUID),
-		attrLLMModel.String(opts.Model),
-		attrLLMRequestModel.String(opts.RequestModel),
-		attrLLMScenario.String(opts.Scenario),
+		attrLLMProvider.String(strings.Clone(opts.Provider)),
+		attrLLMProviderUUID.String(strings.Clone(opts.ProviderUUID)),
+		attrLLMModel.String(strings.Clone(opts.Model)),
+		attrLLMRequestModel.String(strings.Clone(opts.RequestModel)),
+		attrLLMScenario.String(strings.Clone(opts.Scenario)),
 		attrLLMStreaming.Bool(opts.Streamed),
-		attrLLMResponseStatus.String(opts.Status),
+		attrLLMResponseStatus.String(strings.Clone(opts.Status)),
 	}
 
 	if opts.RuleUUID != "" {
-		commonAttrs = append(commonAttrs, attrLLMRuleUUID.String(opts.RuleUUID))
+		commonAttrs = append(commonAttrs, attrLLMRuleUUID.String(strings.Clone(opts.RuleUUID)))
 	}
 	if opts.UserTier != "" {
-		commonAttrs = append(commonAttrs, attrLLMUserTier.String(opts.UserTier))
+		commonAttrs = append(commonAttrs, attrLLMUserTier.String(strings.Clone(opts.UserTier)))
 	}
 	if opts.ErrorCode != "" {
 		code := opts.ErrorCode
 		if len(code) > maxErrorCodeAttrLen {
 			code = code[:maxErrorCodeAttrLen]
 		}
-		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(code))
+		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(strings.Clone(code)))
 	}
 	// NOTE: latency is deliberately NOT an attribute. It is near-unique per
-	// request, and each unique attribute set permanently allocates a new data
-	// point on every instrument below — a slow, unbounded memory leak (#1255).
+	// request, so every request would permanently allocate a new data point
+	// (and pin its attribute strings, see above) on every instrument below.
+	// This exact line was bisected as the #1255 leak: with it, the tb2→tb1
+	// e2e retains 823KB/request forever; without it, 0.5KB/request.
 	// Latency is recorded as the requestDuration histogram VALUE instead.
 
 	// Record input tokens
