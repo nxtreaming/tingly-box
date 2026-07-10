@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -101,17 +103,27 @@ func (api *LoadBalancerAPI) GetRuleSummary(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"summary": summary})
 }
 
-// UpdateRuleTactic updates the load balancing tactic for a rule
+// UpdateRuleTactic updates the load balancing tactic for a rule without
+// resubmitting the whole rule. The tactic name is validated strictly
+// (unknown names are rejected, not silently degraded) and the params decode
+// through Tactic.UnmarshalJSON — the SAME polymorphic path a full rule save
+// uses — so this partial update cannot drift from the canonical parser.
 func (api *LoadBalancerAPI) UpdateRuleTactic(c *gin.Context) {
 	ruleId := c.Param("ruleId")
 
 	var req struct {
-		Tactic string                 `json:"tactic" binding:"required"`
-		Params map[string]interface{} `json:"params,omitempty"`
+		Tactic string          `json:"tactic" binding:"required"`
+		Params json.RawMessage `json:"params,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tacticType, ok := loadbalance.ParseTacticTypeStrict(req.Tactic)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported tactic: " + req.Tactic})
 		return
 	}
 
@@ -121,21 +133,32 @@ func (api *LoadBalancerAPI) UpdateRuleTactic(c *gin.Context) {
 		return
 	}
 
-	// Validate tactic
-	tacticType := loadbalance.ParseTacticType(req.Tactic)
-	if !typ.IsValidTactic(req.Tactic) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported tactic: " + req.Tactic})
-		return
+	tactic := typ.NewDefaultTactic(tacticType)
+	if len(req.Params) > 0 && string(req.Params) != "null" {
+		// Re-encode as the canonical {"type","params"} shape and decode via
+		// Tactic.UnmarshalJSON, exactly like a rule-save payload.
+		payload, err := json.Marshal(map[string]json.RawMessage{
+			"type":   json.RawMessage(strconv.Quote(tacticType.String())),
+			"params": req.Params,
+		})
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode tactic: " + err.Error()})
+			return
+		}
+		if err := json.Unmarshal(payload, &tactic); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tactic params: " + err.Error()})
+			return
+		}
 	}
 
-	// Create tactic with params using the helper function
-	rule.LBTactic = typ.ParseTacticFromMap(tacticType, req.Params)
+	rule.LBTactic = tactic
 	if err := api.config.UpdateRequestConfigByUUID(ruleId, *rule); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update rule: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Tactic updated successfully", "tactic": req.Tactic})
+	// Echo the canonical tactic name (aliases resolve, e.g. priority → tier).
+	c.JSON(http.StatusOK, gin.H{"message": "Tactic updated successfully", "tactic": tacticType.String()})
 }
 
 // GetRuleStats returns statistics for all services in a rule

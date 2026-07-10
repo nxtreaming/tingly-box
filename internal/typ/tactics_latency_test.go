@@ -1,6 +1,7 @@
 package typ
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/tingly-dev/tingly-box/internal/constant"
@@ -306,16 +307,13 @@ func TestAsLatencyBasedParams(t *testing.T) {
 	}
 }
 
-func TestParseTacticFromMap_LatencyBased(t *testing.T) {
-	params := map[string]interface{}{
-		"latency_threshold_ms": int64(1500),
-		"sample_window_size":   int64(50),
-		"percentile":           0.90,
-		"comparison_mode":      "p95",
+func TestTacticUnmarshal_LatencyBasedParams(t *testing.T) {
+	raw := `{"type":"latency_based","params":{"latency_threshold_ms":1500,"sample_window_size":50,"percentile":0.90,"comparison_mode":"p95"}}`
+
+	var tactic Tactic
+	if err := json.Unmarshal([]byte(raw), &tactic); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-
-	tactic := ParseTacticFromMap(loadbalance.TacticLatencyBased, params)
-
 	if tactic.Type != loadbalance.TacticLatencyBased {
 		t.Errorf("Expected tactic type = TacticLatencyBased, got %v", tactic.Type)
 	}
@@ -324,7 +322,6 @@ func TestParseTacticFromMap_LatencyBased(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to convert params to LatencyBasedParams")
 	}
-
 	if lp.LatencyThresholdMs != 1500 {
 		t.Errorf("Expected LatencyThresholdMs = 1500, got %d", lp.LatencyThresholdMs)
 	}
@@ -339,11 +336,11 @@ func TestParseTacticFromMap_LatencyBased(t *testing.T) {
 	}
 }
 
-func TestIsValidTactic_LatencyBased(t *testing.T) {
-	if !IsValidTactic("latency_based") {
-		t.Error("IsValidTactic(\"latency_based\") returned false")
+func TestParseTacticTypeStrict_LatencyBased(t *testing.T) {
+	if tt, ok := loadbalance.ParseTacticTypeStrict("latency_based"); !ok || tt != loadbalance.TacticLatencyBased {
+		t.Error("ParseTacticTypeStrict(\"latency_based\") should resolve")
 	}
-	if !IsValidTactic("LATENCY_BASED") {
-		t.Error("IsValidTactic(\"LATENCY_BASED\") returned false (should be case-insensitive)")
+	if tt, ok := loadbalance.ParseTacticTypeStrict("LATENCY_BASED"); !ok || tt != loadbalance.TacticLatencyBased {
+		t.Error("ParseTacticTypeStrict should be case-insensitive")
 	}
 }

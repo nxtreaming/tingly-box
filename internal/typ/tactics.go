@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math/rand"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/tingly-dev/tingly-box/internal/constant"
@@ -66,107 +65,26 @@ func (tc *Tactic) Instantiate() LoadBalancingTactic {
 	return CreateTacticWithTypedParams(tc.Type, tc.Params)
 }
 
-// ParseTacticFromMap creates a Tactic from a tactic type and parameter map.
-// This is useful for parsing API request parameters into a Tactic configuration.
-func ParseTacticFromMap(tacticType loadbalance.TacticType, params map[string]interface{}) Tactic {
-	var tacticParams TacticParams
+// NewDefaultTactic returns a Tactic of the given type carrying that type's
+// default params. Used when an API caller names a tactic without params.
+func NewDefaultTactic(tacticType loadbalance.TacticType) Tactic {
+	var params TacticParams
 	switch tacticType {
 	case loadbalance.TacticTokenBased:
-		if params != nil {
-			tacticParams = &TokenBasedParams{
-				TokenThreshold: getIntParamFromMap(params, "token_threshold", constant.DefaultTokenThreshold),
-			}
-		} else {
-			tacticParams = DefaultTokenBasedParams()
-		}
-	case loadbalance.TacticRandom:
-		tacticParams = DefaultRandomParams()
+		params = DefaultTokenBasedParams()
 	case loadbalance.TacticLatencyBased:
-		if params != nil {
-			tacticParams = &LatencyBasedParams{
-				LatencyThresholdMs: getIntParamFromMap(params, "latency_threshold_ms", constant.DefaultLatencyThresholdMs),
-				SampleWindowSize:   int(getIntParamFromMap(params, "sample_window_size", int64(constant.DefaultLatencySampleWindow))),
-				Percentile:         getFloatParamFromMap(params, "percentile", constant.DefaultLatencyPercentile),
-				ComparisonMode:     getStringParamFromMap(params, "comparison_mode", constant.DefaultLatencyComparisonMode),
-			}
-		} else {
-			tacticParams = DefaultLatencyBasedParams()
-		}
+		params = DefaultLatencyBasedParams()
 	case loadbalance.TacticSpeedBased:
-		if params != nil {
-			tacticParams = &SpeedBasedParams{
-				MinSamplesRequired: int(getIntParamFromMap(params, "min_samples_required", int64(constant.DefaultMinSpeedSamples))),
-				SpeedThresholdTps:  getFloatParamFromMap(params, "speed_threshold_tps", constant.DefaultSpeedThresholdTps),
-				SampleWindowSize:   int(getIntParamFromMap(params, "sample_window_size", int64(constant.DefaultSpeedSampleWindow))),
-			}
-		} else {
-			tacticParams = DefaultSpeedBasedParams()
-		}
+		params = DefaultSpeedBasedParams()
 	case loadbalance.TacticCapacityBased:
-		tacticParams = DefaultCapacityBasedParams()
+		params = DefaultCapacityBasedParams()
 	case loadbalance.TacticTier:
-		if params != nil {
-			tacticParams = &TierParams{
-				WithinTierTactic: loadbalance.ParseTacticType(
-					getStringParamFromMap(params, "within_tier_tactic", "random"),
-				),
-			}
-		} else {
-			tacticParams = DefaultTierParams()
-		}
+		params = DefaultTierParams()
 	default:
 		tacticType = loadbalance.TacticRandom
-		tacticParams = DefaultRandomParams()
+		params = DefaultRandomParams()
 	}
-
-	return Tactic{
-		Type:   tacticType,
-		Params: tacticParams,
-	}
-}
-
-// getIntParamFromMap safely extracts an int64 parameter from a map.
-// Supports float64 (JSON numbers), int, and int64 types.
-func getIntParamFromMap(params map[string]interface{}, key string, defaultValue int64) int64 {
-	if val, ok := params[key]; ok {
-		switch v := val.(type) {
-		case float64:
-			return int64(v)
-		case int:
-			return int64(v)
-		case int64:
-			return v
-		}
-	}
-	return defaultValue
-}
-
-// getFloatParamFromMap safely extracts a float64 parameter from a map.
-func getFloatParamFromMap(params map[string]interface{}, key string, defaultValue float64) float64 {
-	if val, ok := params[key]; ok {
-		switch v := val.(type) {
-		case float64:
-			return v
-		case float32:
-			return float64(v)
-		case int:
-			return float64(v)
-		case int64:
-			return float64(v)
-		}
-	}
-	return defaultValue
-}
-
-// getStringParamFromMap safely extracts a string parameter from a map.
-func getStringParamFromMap(params map[string]interface{}, key string, defaultValue string) string {
-	if val, ok := params[key]; ok {
-		switch v := val.(type) {
-		case string:
-			return v
-		}
-	}
-	return defaultValue
+	return Tactic{Type: tacticType, Params: params}
 }
 
 // TacticParams represents parameters for different load balancing tactics
@@ -239,8 +157,8 @@ func DefaultSpeedBasedParams() TacticParams {
 }
 
 // Type assertion helpers for TacticParams. They accept both the pointer and
-// value forms because UnmarshalJSON / ParseTacticFromMap store pointers while
-// hand-built configs may use values.
+// value forms because UnmarshalJSON stores pointers while hand-built configs
+// may use values.
 func AsRandomParams(p TacticParams) (RandomParams, bool) {
 	if rp, ok := p.(*RandomParams); ok {
 		return *rp, true
@@ -250,7 +168,7 @@ func AsRandomParams(p TacticParams) (RandomParams, bool) {
 }
 
 func AsLatencyBasedParams(p TacticParams) (LatencyBasedParams, bool) {
-	// Try pointer type first (used by ParseTacticFromMap and UnmarshalJSON)
+	// Try pointer type first (used by UnmarshalJSON)
 	if lp, ok := p.(*LatencyBasedParams); ok {
 		return *lp, true
 	}
@@ -607,28 +525,6 @@ var (
 		constant.DefaultSpeedSampleWindow,
 	)
 )
-
-// IsValidTactic checks if the given tactic string is valid.
-// Deprecated aliases are accepted and mapped by loadbalance.ParseTacticType:
-// round_robin/hybrid → token_based, priority → tier, and adaptive → random
-// (the adaptive scorer is legacy; configuring it by name selects random).
-func IsValidTactic(tacticStr string) bool {
-	validTactics := map[string]bool{
-		"round_robin":   true, // deprecated → token_based
-		"token_based":   true,
-		"hybrid":        true, // deprecated → token_based
-		"random":        true,
-		"latency_based": true,
-		"speed_based":   true,
-		"adaptive":      true, // legacy → random
-		"tier":          true,
-		"priority":      true, // deprecated → tier
-	}
-
-	// Convert to lowercase for case-insensitive comparison
-	input := strings.ToLower(tacticStr)
-	return validTactics[input]
-}
 
 func CreateTacticWithTypedParams(tacticType loadbalance.TacticType, params TacticParams) LoadBalancingTactic {
 	switch tacticType {
