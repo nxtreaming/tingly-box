@@ -26,7 +26,6 @@ func TestHealthFilter_BasicFiltering(t *testing.T) {
 
 	// Create load balancer with health filter
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	// Create test rule with two services
 	rule := &typ.Rule{
@@ -34,8 +33,8 @@ func TestHealthFilter_BasicFiltering(t *testing.T) {
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{
@@ -83,15 +82,14 @@ func TestHealthFilter_AllUnhealthy(t *testing.T) {
 	healthFilter := typ.NewHealthFilter(healthMonitor)
 
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	rule := &typ.Rule{
 		Scenario:     typ.ScenarioOpenAI,
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{
@@ -139,15 +137,14 @@ func TestHealthFilter_Recovery(t *testing.T) {
 	healthFilter := typ.NewHealthFilter(healthMonitor)
 
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	rule := &typ.Rule{
 		Scenario:     typ.ScenarioOpenAI,
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{
@@ -197,15 +194,14 @@ func TestHealthFilter_SuccessRecovery(t *testing.T) {
 	healthFilter := typ.NewHealthFilter(healthMonitor)
 
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	rule := &typ.Rule{
 		Scenario:     typ.ScenarioOpenAI,
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{
@@ -252,15 +248,14 @@ func TestHealthFilter_ConsecutiveErrors(t *testing.T) {
 	healthFilter := typ.NewHealthFilter(healthMonitor)
 
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	rule := &typ.Rule{
 		Scenario:     typ.ScenarioOpenAI,
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{
@@ -300,15 +295,14 @@ func TestHealthFilter_InactiveServices(t *testing.T) {
 	healthFilter := typ.NewHealthFilter(healthMonitor)
 
 	lb := server.NewLoadBalancer(appConfig.GetGlobalConfig(), healthFilter)
-	defer lb.Stop()
 
 	rule := &typ.Rule{
 		Scenario:     typ.ScenarioOpenAI,
 		RequestModel: "test-model",
 		UUID:         uuid.New().String(),
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Services: []*loadbalance.Service{
 			{

@@ -84,10 +84,6 @@ func TestLB_VirtualValidation_EqualProviders(t *testing.T) {
 			tactic: typ.Tactic{}, // Type==0: what a rule gets when no tactic is configured
 		},
 		{
-			name:   "Adaptive",
-			tactic: typ.Tactic{Type: loadbalance.TacticAdaptive, Params: typ.DefaultAdaptiveParams()},
-		},
-		{
 			name:   "TokenBased(default 10000)",
 			tactic: typ.Tactic{Type: loadbalance.TacticTokenBased, Params: typ.DefaultTokenBasedParams()},
 		},
@@ -113,7 +109,6 @@ func TestLB_VirtualValidation_EqualProviders(t *testing.T) {
 		rule := newTwoProviderRule(c.tactic)
 		counts := simulate(t, lb, rule, total)
 		report(t, c.name, counts, total)
-		lb.Stop()
 
 		p1, p2 := counts["provider1"], counts["provider2"]
 		maxShare := 100.0 * float64(max(p1, p2)) / float64(total)
@@ -122,8 +117,9 @@ func TestLB_VirtualValidation_EqualProviders(t *testing.T) {
 	}
 
 	// Regression guard: with two equal providers EVERY tactic must spread load.
-	// Before the fix, the unset default (which resolved to Adaptive) and Adaptive
-	// itself concentrated ~95% on the first provider once token scores saturated.
+	// Before the fix, the unset default (which resolved to the since-removed
+	// adaptive scorer) concentrated ~95% on the first provider once token
+	// scores saturated.
 	for name, share := range shares {
 		if share >= 65.0 {
 			t.Errorf("%s concentrates %.1f%% on one provider (want <65%% for equal providers)", name, share)

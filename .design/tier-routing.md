@@ -4,7 +4,7 @@ Status: shipped (v1) on branch `claude/priority-service-routing-dIQfX`. Tracking
 
 ## Why
 
-Existing routing in tingly-box treats every service in a rule as an equal peer. `random`, `token_based`, `latency_based`, `speed_based`, `adaptive`, `capacity_based` — all of them spread load across services. That is the right default for "I have several equivalent providers, share the load".
+Existing routing in tingly-box treats every service in a rule as an equal peer. `random`, `token_based`, `latency_based`, `speed_based`, `capacity_based` (`adaptive` has since been removed — the name still parses and falls back to `random`) — all of them spread load across services. That is the right default for "I have several equivalent providers, share the load".
 
 It is the wrong default for the other very common shape:
 
@@ -60,6 +60,11 @@ The breaker is a three-state machine (`Closed → Open → HalfOpen`):
 - **Closed** — normal. `Allow()` returns true, failures are counted.
 - **Open** — too many consecutive failures (`FailureThreshold`, default 3). `Allow()` returns false. After `OpenDuration` (default 30 s) the next `Allow()` call lazily flips to HalfOpen.
 - **HalfOpen** — exactly one probe is permitted at a time. Recovery requires **`RecoveryThreshold` (default 3) consecutive probe successes** to close; a single success just releases the probe slot so the next probe can go through. Any probe failure re-opens with a fresh timer.
+
+Two guards keep the single probe slot from wedging recovery:
+
+- **Claim-on-pick.** `TierTactic.SelectService` gathers tier candidates with the non-consuming `IsAvailable` read and calls the consuming `Allow()` only for the service it actually picks (if the claim fails because a probe is already in flight, it re-picks among the tier's peers). Claiming for every candidate up front used to consume probe slots of services that were never dispatched — with no outcome ever reported, those slots stayed taken and the service could never finish recovering.
+- **Stale-probe reclaim.** If a claimed probe never reports an outcome (selected but not dispatched, crashed mid-flight), `Allow()` hands the slot to a new caller after `OpenDuration` has elapsed since the claim, so a lost probe delays recovery by at most one open-window.
 
 Recovery requires **no separate scheduler**. Selection re-evaluates the tier list every request, and the breaker's lazy state transition admits one probe naturally. Active probing was considered and rejected for v1 — for hot rules it's redundant, and for cold rules there is no one to serve anyway.
 
@@ -176,15 +181,15 @@ The "user moves a service card to a different tier" event has to cross five laye
 │       LoadBalancerStage.Evaluate  (or SmartRoutingStage when matched) │
 │       ↓                                                               │
 │  Both stages call:                                                    │
-│       lb.SelectService(&tempRule)        (load_balancer.go:55)        │
+│       lb.SelectService(&tempRule)        (load_balance.go)        │
 │       ↓                                                               │
-│  load_balancer.go:92                                                  │
+│  load_balance.go                                                  │
 │       actualTactic := rule.LBTactic.Instantiate()                     │
 │       ↓                                                               │
 │  typ.Tactic.Instantiate → CreateTacticWithTypedParams(type, params)   │
 │       case TacticTier → NewTierTactic(pp.WithinTierTactic)            │
 │       ↓                                                               │
-│  load_balancer.go:111                                                 │
+│  load_balance.go                                                 │
 │       actualTactic.SelectService(tempRule)                            │
 │       ↓                                                               │
 │  TierTactic.SelectService:                                            │
@@ -203,7 +208,7 @@ The "user moves a service card to a different tier" event has to cross five laye
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-The single transformation point that turns the JSON payload into live runtime behaviour is `Tactic.Instantiate()` at `internal/server/load_balancer.go:92`. Every dispatch path — Anthropic v1/Beta, OpenAI Chat/Responses/Embeddings/Images, Google, smart routing matches — funnels through `LoadBalancer.SelectService`, so the tactic switch is enforced uniformly with no per-protocol changes required.
+The single transformation point that turns the JSON payload into live runtime behaviour is `Tactic.Instantiate()` at `internal/server/load_balance.go`. Every dispatch path — Anthropic v1/Beta, OpenAI Chat/Responses/Embeddings/Images, Google, smart routing matches — funnels through `LoadBalancer.SelectService`, so the tactic switch is enforced uniformly with no per-protocol changes required.
 
 This is pinned down by `TestTierRouting_EndToEnd` in `internal/server/priority_routing_e2e_test.go`, which:
 
