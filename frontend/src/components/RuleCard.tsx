@@ -13,6 +13,8 @@ import { RuleCardDeleteDialog, RuleFlagEditDialog } from '@/components/rule-card
 import UnifiedRoutingGraph from '@/components/UnifiedRoutingGraph';
 import SmartRuleCatalogDialog from '@/components/rule-card/SmartRuleCatalogDialog';
 import GraphSettingsMenu from '@/components/GraphSettingsMenu';
+import { QuickProbeButton } from '@/components/probe';
+import { Box } from '@mui/material';
 import RulePluginsCard from '@/components/rule-card/RulePluginsCard';
 import FlagCatalogDialog from '@/components/rule-card/FlagCatalogDialog';
 import { formatRuleFlags, parseRuleFlags } from '@/components/rule-card/utils';
@@ -62,6 +64,8 @@ export interface RuleCardProps {
     allowToggleRule?: boolean;
     onToggleExpanded?: () => void;
     onContext1MToggle?: (newState: boolean, ruleUuid?: string) => void;
+    /** Increment to trigger this rule's quick probe externally ("test all"). */
+    quickProbeSignal?: number;
 }
 
 export const RuleCard: React.FC<RuleCardProps> = ({
@@ -82,6 +86,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
     allowToggleRule = true,
     onToggleExpanded,
     onContext1MToggle,
+    quickProbeSignal,
 }) => {
     // Expansion state management
     const { expanded, handleToggleExpanded } = useRuleCardExpanded({
@@ -100,8 +105,10 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         showNotification,
     });
 
-    // Export functionality
-    const { handleExportAsJsonlToClipboard, handleExportAsBase64ToClipboard } = useRuleExport({ rule, showNotification });
+    // Export functionality — disabled product-side for now. Kept wired so the
+    // Copy actions can return to the gear menu by destructuring the handlers
+    // and passing them to GraphSettingsMenu again.
+    useRuleExport({ rule, showNotification });
 
     // Smart routing handlers
     const { dialogState: smartDialogState, handlers: smartHandlers } = useSmartRoutingHandlers({
@@ -291,23 +298,37 @@ export const RuleCard: React.FC<RuleCardProps> = ({
         />
     );
 
-    // Extra actions menu - shared between RoutingGraph and SmartRoutingGraph
+    // Extra actions - quick streaming test + settings menu, shared between
+    // RoutingGraph and SmartRoutingGraph
     const extraActions = (
-        <GraphSettingsMenu
-            allowDeleteRule={allowDeleteRule}
-            active={configRecord.active}
-            allowToggleRule={allowToggleRule}
-            saving={saving}
-            onExportAsJsonlToClipboard={handleExportAsJsonlToClipboard}
-            onExportAsBase64ToClipboard={handleExportAsBase64ToClipboard}
-            onDelete={handleDeleteButtonClick}
-            onToggleActive={() => updateField(configRecord, setConfigRecord, 'active', !configRecord.active)}
-            onEditFlags={handleOpenFlagEditor}
-            ruleUuid={rule.uuid}
-            ruleName={formatModelNameWithContext1M(rule.request_model || rule.uuid, configRecord.flags)}
-            scenario={rule.scenario}
-            model={formatModelNameWithContext1M(rule.request_model, configRecord.flags)}
-        />
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
+            {rule.uuid && (
+                <QuickProbeButton
+                    ruleUuid={rule.uuid}
+                    ruleName={formatModelNameWithContext1M(rule.request_model || rule.uuid, configRecord.flags)}
+                    scenario={rule.scenario}
+                    model={formatModelNameWithContext1M(rule.request_model, configRecord.flags)}
+                    // "Test all" only exercises active rules — an inactive rule
+                    // can't match its own traffic, so probing it would mislead.
+                    runSignal={configRecord.active ? quickProbeSignal : undefined}
+                />
+            )}
+            <GraphSettingsMenu
+                allowDeleteRule={allowDeleteRule}
+                active={configRecord.active}
+                allowToggleRule={allowToggleRule}
+                saving={saving}
+                // Rule export is currently disabled product-side; omit the handlers
+                // to hide the Copy items (menu keeps supporting them for later).
+                onDelete={handleDeleteButtonClick}
+                onToggleActive={() => updateField(configRecord, setConfigRecord, 'active', !configRecord.active)}
+                onEditFlags={handleOpenFlagEditor}
+                ruleUuid={rule.uuid}
+                ruleName={formatModelNameWithContext1M(rule.request_model || rule.uuid, configRecord.flags)}
+                scenario={rule.scenario}
+                model={formatModelNameWithContext1M(rule.request_model, configRecord.flags)}
+            />
+        </Box>
     );
 
     return (
