@@ -846,6 +846,18 @@ func NewTierTactic(within loadbalance.TacticType) *TierTactic {
 // are never dispatched; with no outcome ever reported, those slots stayed
 // taken and the service could never finish recovering.
 func (pt *TierTactic) SelectService(rule *Rule) *loadbalance.Service {
+	return pt.selectService(rule, true)
+}
+
+// PreviewService selects exactly like SelectService but never claims a
+// breaker probe slot. Read-only surfaces (e.g. the admin current-service
+// preview) must use it: a preview that consumed the single half-open probe
+// would block real traffic from probing the recovering service.
+func (pt *TierTactic) PreviewService(rule *Rule) *loadbalance.Service {
+	return pt.selectService(rule, false)
+}
+
+func (pt *TierTactic) selectService(rule *Rule, claim bool) *loadbalance.Service {
 	active := rule.GetActiveServices()
 	if len(active) == 0 {
 		return nil
@@ -865,7 +877,7 @@ func (pt *TierTactic) SelectService(rule *Rule) *loadbalance.Service {
 		}
 		chosen := PickBreakerAvailable(rule.UUID, group.services, func(candidates []*loadbalance.Service) *loadbalance.Service {
 			return pt.pickWithinTier(rule, candidates)
-		})
+		}, claim)
 		if chosen != nil {
 			return chosen
 		}
@@ -878,16 +890,19 @@ func (pt *TierTactic) SelectService(rule *Rule) *loadbalance.Service {
 
 // PickBreakerAvailable runs a two-phase, breaker-aware selection over
 // candidates: gather the breaker-available subset with the non-consuming
-// IsAvailable read (rule-scoped), let pick choose among that subset, then
-// claim the picked service's breaker slot via Allow. A pick whose claim
-// fails (its half-open probe is already in flight) is dropped and the
-// remainder re-picked, so exactly one probe reaches a recovering service.
+// IsAvailable read (rule-scoped), let pick choose among that subset, then —
+// when claim is true — claim the picked service's breaker slot via Allow.
+// A pick whose claim fails (its half-open probe is already in flight) is
+// dropped and the remainder re-picked, so exactly one probe reaches a
+// recovering service. claim=false is the side-effect-free preview mode for
+// read-only surfaces: it picks from the same available subset but never
+// consumes a probe slot.
 //
 // It returns nil when no candidate is breaker-available or claimable —
 // callers own the degrade decision (TierTactic moves to the next bucket;
-// the horizontal path in LoadBalancer.SelectService falls back to an
-// unfiltered pick so the client sees the real upstream error).
-func PickBreakerAvailable(ruleUUID string, candidates []*loadbalance.Service, pick func([]*loadbalance.Service) *loadbalance.Service) *loadbalance.Service {
+// the horizontal path in LoadBalancer falls back to an unfiltered pick so
+// the client sees the real upstream error).
+func PickBreakerAvailable(ruleUUID string, candidates []*loadbalance.Service, pick func([]*loadbalance.Service) *loadbalance.Service, claim bool) *loadbalance.Service {
 	store := loadbalance.DefaultBreakerStore()
 	avail := make([]*loadbalance.Service, 0, len(candidates))
 	for _, svc := range candidates {
@@ -900,7 +915,7 @@ func PickBreakerAvailable(ruleUUID string, candidates []*loadbalance.Service, pi
 		if chosen == nil {
 			return nil
 		}
-		if store.Allow(ruleUUID, chosen.ServiceID()) {
+		if !claim || store.Allow(ruleUUID, chosen.ServiceID()) {
 			return chosen
 		}
 		avail = removeServiceByID(avail, chosen.ServiceID())

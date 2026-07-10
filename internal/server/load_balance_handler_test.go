@@ -5,11 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tingly-dev/tingly-box/internal/clock"
 	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/server/config"
 	"github.com/tingly-dev/tingly-box/internal/typ"
@@ -70,4 +72,47 @@ func TestGetServicesHealth_ExposesBreakerState(t *testing.T) {
 	require.Equal(t, "closed", healthy["breaker_state"])
 	require.Equal(t, 0.0, healthy["breaker_retry_in_seconds"], "closed breaker reports no retry window")
 	require.Equal(t, 1.0, healthy["tier"].(float64))
+}
+
+// TestPreviewService_DoesNotClaimProbe covers the horizontal (flat) path:
+// PreviewService may pick a half-open service but must leave its single
+// recovery probe slot claimable for real traffic.
+func TestPreviewService_DoesNotClaimProbe(t *testing.T) {
+	loadbalance.DefaultBreakerStore().Reset()
+	base := time.Unix(2_000_000_000, 0)
+	now := base
+	restore := clock.SetClock(func() time.Time { return now })
+	defer restore()
+
+	cfg, err := config.NewConfig(config.WithConfigDir(t.TempDir()))
+	require.NoError(t, err)
+	lb := NewLoadBalancer(cfg, typ.NewHealthFilter(nil))
+
+	a := &loadbalance.Service{Provider: "prev-a", Model: "m", Active: true}
+	b := &loadbalance.Service{Provider: "prev-b", Model: "m", Active: true}
+	rule := &typ.Rule{
+		Scenario:     typ.ScenarioOpenAI,
+		RequestModel: "preview-test",
+		UUID:         uuid.New().String(),
+		Services:     []*loadbalance.Service{a, b},
+		Active:       true,
+		LBTactic:     typ.Tactic{Type: loadbalance.TacticRandom, Params: typ.NewRandomParams()},
+	}
+
+	// Trip A and pass the open window so it is half-open-eligible.
+	store := loadbalance.DefaultBreakerStore()
+	for i := 0; i < loadbalance.DefaultBreakerFailureThreshold; i++ {
+		store.RecordFailure(rule.UUID, a.ServiceID())
+	}
+	now = now.Add(loadbalance.DefaultBreakerOpenDuration + time.Second)
+
+	// Preview many times (random may pick either service); the half-open
+	// probe slot must remain claimable throughout.
+	for i := 0; i < 20; i++ {
+		svc, err := lb.PreviewService(rule)
+		require.NoError(t, err)
+		require.NotNil(t, svc)
+	}
+	require.True(t, store.Allow(rule.UUID, a.ServiceID()),
+		"preview must not consume the half-open probe slot")
 }

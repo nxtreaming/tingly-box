@@ -570,14 +570,6 @@ func (c *Config) RefreshStatsFromStore() error {
 	return nil
 }
 
-// SaveCurrentServiceID persists the current service ID for a rule to SQLite
-func (c *Config) SaveCurrentServiceID(ruleUUID string, serviceID string) error {
-	if c.ruleStateStore == nil {
-		return nil
-	}
-	return c.ruleStateStore.SetServiceID(ruleUUID, serviceID)
-}
-
 // GetEffectiveAffinity returns the effective affinity TTL for a rule.
 // session_affinity is rule-only — there is no scenario-level inheritance.
 // The built-in Claude Code / Claude Desktop / Codex rules seed 1800s by

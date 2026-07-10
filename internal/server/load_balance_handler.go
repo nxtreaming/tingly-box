@@ -22,7 +22,9 @@ type ServiceHealthResponse struct {
 // type — to avoid an import cycle, since the root server package already
 // imports this webui package for static-asset wiring.
 type LoadBalancerEngine interface {
-	SelectService(rule *typ.Rule) (*loadbalance.Service, error)
+	// PreviewService is the side-effect-free selection used by read-only
+	// endpoints: unlike SelectService it never claims a breaker probe slot.
+	PreviewService(rule *typ.Rule) (*loadbalance.Service, error)
 	GetServiceStats(provider, model string) *loadbalance.ServiceStats
 	GetAllServiceStats() map[string]*loadbalance.ServiceStats
 	ClearServiceStats(provider, model string)
@@ -246,7 +248,9 @@ func (api *LoadBalancerAPI) GetCurrentService(c *gin.Context) {
 		return
 	}
 
-	selectedService, err := api.loadBalancer.SelectService(rule)
+	// Preview, not select: this is a read-only endpoint, so it must not
+	// consume the breaker's half-open probe slot meant for real traffic.
+	selectedService, err := api.loadBalancer.PreviewService(rule)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to select service: " + err.Error()})
 		return
