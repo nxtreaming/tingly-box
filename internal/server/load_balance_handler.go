@@ -324,7 +324,6 @@ func (api *LoadBalancerAPI) GetServicesHealth(c *gin.Context) {
 				health := monitor.GetHealth(serviceID)
 				if health != nil {
 					serviceHealth["status"] = health.Status.String()
-					serviceHealth["consecutive_errors"] = health.ConsecutiveErrors
 					serviceHealth["rate_limited"] = health.RateLimited
 					serviceHealth["auth_error"] = health.AuthError
 					if !health.LastErrorTime.IsZero() {

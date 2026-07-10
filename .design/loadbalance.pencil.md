@@ -103,8 +103,8 @@ Selection is stateless; all memory lives in three stores fed by dispatch outcome
   │                           │                            │                           │
   │ 3✗ → Open                │ 429  → rate-limit window   │ rolling windows +         │
   │ 30s → HalfOpen (1 probe,  │ 401/403 → instant unhealthy│ percentiles               │
-  │   stale-reclaimed after   │ 5xx  → 3-strike            │                           │
-  │   another OpenDuration)   │                            │                           │
+  │   stale-reclaimed after   │ (generic 5xx/transport is  │                           │
+  │   another OpenDuration)   │  the breaker's job alone)  │                           │
   │ 3✓ → Closed              │                            │                           │
   │ PromotionHold 60s         │                            │                           │
   │        ┊                  │        ┊                   │        ┊                  │

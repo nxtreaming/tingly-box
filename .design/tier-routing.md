@@ -138,7 +138,7 @@ Notes:
 Each request outcome feeds **two channels**:
 
 - **Breaker** — binary success/failure, 3-strike trip, 30 s window. Drives tier demotion + affinity eligibility.
-- **Health monitor** (`Server.reportHealthStatus`) — status-classified: 429 → rate-limit window, 401/403 → *immediately* unhealthy, 5xx/other → 3-strike. Drives `HealthStage` filtering.
+- **Health monitor** (`Server.reportHealthStatus`) — status-classified: 429 → rate-limit window, 401/403 → *immediately* unhealthy. Generic 5xx/transport failures deliberately do **not** feed it (they used to, via a 3-strike counter) — the breaker owns that signal, rule-scoped, so one rule's failing traffic cannot evict the service globally. Drives `HealthStage` filtering.
 
 So 429 and 401/403 exclude a service on the *first* hit (health channel), well before the breaker trips. The `harness lb` simulator models both faithfully (reusing `reportHealthStatus` + the breaker recorder), driving them off one shared clock so a single simulated advance recovers both.
 
