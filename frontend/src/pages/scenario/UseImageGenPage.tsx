@@ -1,10 +1,11 @@
 import CardGrid from "@/components/CardGrid.tsx";
 import UnifiedCard from "@/components/UnifiedCard.tsx";
 import ProviderConfigCard from "@/components/ProviderConfigCard.tsx";
-import ImageGenQuickStartCard from "./components/ImageGenQuickStartCard";
+import ImageGenQuickStartDialog from "./components/ImageGenQuickStartDialog";
+import ImageGenPlaygroundCard from "./components/ImageGenPlaygroundCard";
 import { Box, Button, Tooltip, IconButton } from '@mui/material';
-import { PlayArrow as PlayArrowIcon, Info as InfoIcon } from '@/components/icons';
-import { useNavigate } from 'react-router-dom';
+import { Info as InfoIcon } from '@/components/icons';
+import { useState } from 'react';
 import PageLayout from '@/components/PageLayout';
 import TemplatePage from './components/TemplatePage.tsx';
 import { useScenarioPageInternal } from '@/pages/scenario/hooks/useScenarioPageInternal.ts';
@@ -13,16 +14,23 @@ import { ScenarioPageModalProvider } from '@/pages/scenario/context/ScenarioPage
 const scenario = "imagegen";
 
 const UseImageGenPageContent: React.FC = () => {
+    const [quickStartOpen, setQuickStartOpen] = useState(false);
     const {
         isLoading,
         notification,
         copyToClipboard,
         baseUrl,
         rules,
+        loadingRule,
+        showNotification,
+        providers,
+        loadProviders,
+        handleRulesChange,
+        handleRuleDelete,
+        loadRules,
     } = useScenarioPageInternal(scenario);
-    const navigate = useNavigate();
 
-    const firstModel = rules?.find((r: any) => !r?.disabled && r?.request_model)?.request_model;
+    const firstModel = rules.find((rule) => rule.active !== false && rule.request_model)?.request_model;
 
     return (
         <PageLayout loading={isLoading} notification={notification}>
@@ -41,12 +49,11 @@ const UseImageGenPageContent: React.FC = () => {
                     size="full"
                     rightAction={
                         <Button
-                            onClick={() => navigate('/agent/playground')}
+                            onClick={() => setQuickStartOpen(true)}
                             variant="contained"
                             size="small"
-                            startIcon={<PlayArrowIcon />}
                         >
-                            Open Playground
+                            Quick Start
                         </Button>
                     }
                 >
@@ -58,16 +65,30 @@ const UseImageGenPageContent: React.FC = () => {
                         scenario={scenario}
                     />
                 </UnifiedCard>
-                <ImageGenQuickStartCard
-                    baseUrl={baseUrl}
-                    model={firstModel || 'gpt-image-1'}
-                    onCopy={copyToClipboard}
+                <ImageGenPlaygroundCard
+                    rules={rules}
+                    loadingRules={loadingRule}
+                    showNotification={showNotification}
                 />
                 <TemplatePage
                     scenario={scenario}
                     title="Image Generation Model Rules"
                     collapsible={true}
                     allowDeleteRule={true}
+                    rules={rules}
+                    providers={providers}
+                    showNotification={showNotification}
+                    onRulesChange={handleRulesChange}
+                    onProvidersLoad={loadProviders}
+                    onRuleDelete={handleRuleDelete}
+                    loadRules={loadRules}
+                />
+                <ImageGenQuickStartDialog
+                    open={quickStartOpen}
+                    onClose={() => setQuickStartOpen(false)}
+                    baseUrl={baseUrl}
+                    model={firstModel || 'gpt-image-1'}
+                    onCopy={copyToClipboard}
                 />
             </CardGrid>
         </PageLayout>
