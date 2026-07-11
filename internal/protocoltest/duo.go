@@ -196,7 +196,7 @@ func NewDuoEnv() (*DuoEnv, error) {
 				Active:     true,
 				TimeWindow: 300,
 			}},
-			LBTactic: typ.Tactic{Type: loadbalance.TacticAdaptive, Params: typ.DefaultAdaptiveParams()},
+			LBTactic: typ.Tactic{Type: loadbalance.TacticRandom, Params: typ.NewRandomParams()},
 			Active:   true,
 		}
 		if err := env.tb2Cfg.GetGlobalConfig().AddRequestConfig(rule); err != nil {
