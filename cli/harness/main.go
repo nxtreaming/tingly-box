@@ -5,6 +5,7 @@
 //   - replay: Fixture replay through the in-process gateway
 //   - agent: Real agent CLI runs against mock or real upstreams
 //   - lb: Load-balancing scenario simulator (tier/failover/breaker/affinity)
+//   - duo: Two-instance e2e verification (tb2 gateway → tb1 vmodel), function + memory
 //   - provider: Real provider API e2e tests (live API compatibility) - Phase 3
 package main
 
@@ -29,6 +30,7 @@ type CLI struct {
 	Agent      AgentCmd      `kong:"cmd,help='Run agent e2e tests (use --mock or --config <file>)'"`
 	Replay     ReplayCmd     `kong:"cmd,help='Replay a captured agent request fixture through the gateway'"`
 	Lb         LbCmd         `kong:"cmd,help='Simulate load-balancing (tier/failover/breaker/affinity) over a request sequence'"`
+	Duo        DuoCmd        `kong:"cmd,help='Two-instance e2e verification: tb2 gateway routed to tb1 vmodel (function + memory)'"`
 	Provider   ProviderCmd   `kong:"cmd,help='Real provider API tests (Phase 3 - not yet implemented)'"`
 	InitConfig InitConfigCmd `kong:"cmd,name='init-config',help='Create a providers config file template for agent --config'"`
 }

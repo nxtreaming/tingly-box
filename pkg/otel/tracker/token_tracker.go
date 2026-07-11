@@ -2,6 +2,8 @@ package tracker
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -21,8 +23,14 @@ var (
 	attrLLMErrorCode      = attribute.Key("llm.error.code")
 	attrLLMRuleUUID       = attribute.Key("llm.rule.uuid")
 	attrLLMUserTier       = attribute.Key("llm.user.tier")
-	attrLLMLatencyMs      = attribute.Key("llm.latency.ms")
 )
+
+// maxErrorCodeAttrLen caps the llm.error.code attribute value. Every distinct
+// attribute set becomes a data point the cumulative metrics SDK retains for
+// the lifetime of the process, so unbounded error strings (which may embed
+// upstream response bodies) would leak memory one timeseries at a time.
+// Callers should already pass a bounded classification; this is a guard.
+const maxErrorCodeAttrLen = 64
 
 // UsageOptions contains the options for recording token usage.
 type UsageOptions struct {
@@ -176,12 +184,22 @@ func NewTokenTracker(meter metric.Meter) (*TokenTracker, error) {
 
 // RecordUsage records token usage with the provided options.
 func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
-	// Build common attributes
+	// Build common attributes.
+	//
+	// Attribute values are retained for the lifetime of the process by the
+	// cumulative metrics SDK. Values that originate from the parsed request
+	// body — model, request model, and error text — can be substrings ALIASING
+	// the multi-megabyte gjson copy of the entire body (SDK JSON decoding
+	// slices rather than copies), so a retained attribute would pin that whole
+	// buffer forever (the #1255 leak: ~0.8MB pinned per request, attributed to
+	// gjson.ParseBytes in heap profiles). strings.Clone detaches exactly those
+	// values; the remaining attributes are config- or enum-owned strings that
+	// cannot alias a request buffer.
 	commonAttrs := []attribute.KeyValue{
 		attrLLMProvider.String(opts.Provider),
 		attrLLMProviderUUID.String(opts.ProviderUUID),
-		attrLLMModel.String(opts.Model),
-		attrLLMRequestModel.String(opts.RequestModel),
+		attrLLMModel.String(strings.Clone(opts.Model)),
+		attrLLMRequestModel.String(strings.Clone(opts.RequestModel)),
 		attrLLMScenario.String(opts.Scenario),
 		attrLLMStreaming.Bool(opts.Streamed),
 		attrLLMResponseStatus.String(opts.Status),
@@ -194,11 +212,20 @@ func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
 		commonAttrs = append(commonAttrs, attrLLMUserTier.String(opts.UserTier))
 	}
 	if opts.ErrorCode != "" {
-		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(opts.ErrorCode))
+		code := opts.ErrorCode
+		if len(code) > maxErrorCodeAttrLen {
+			// The truncated slice still aliases the original backing array, so
+			// the clone below is what actually bounds retained memory.
+			code = code[:maxErrorCodeAttrLen]
+		}
+		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(strings.Clone(code)))
 	}
-	if opts.LatencyMs > 0 {
-		commonAttrs = append(commonAttrs, attrLLMLatencyMs.Int(opts.LatencyMs))
-	}
+	// NOTE: latency is deliberately NOT an attribute. It is near-unique per
+	// request, so every request would permanently allocate a new data point
+	// (and pin its attribute strings, see above) on every instrument below.
+	// This exact line was bisected as the #1255 leak: with it, the tb2→tb1
+	// e2e retains 823KB/request forever; without it, 0.5KB/request.
+	// Latency is recorded as the requestDuration histogram VALUE instead.
 
 	// Record input tokens
 	if opts.InputTokens > 0 {
@@ -216,15 +243,17 @@ func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
 		tt.totalTokens.Add(ctx, int64(totalTokens), metric.WithAttributes(commonAttrs...))
 	}
 
-	// Record cache tokens
+	// Record cache tokens. slices.Clone before append: two appends off the
+	// same commonAttrs base would otherwise share its backing array and the
+	// second could overwrite the first's token_type element.
 	if opts.CacheInputTokens > 0 {
-		cacheAttrs := append(commonAttrs, attrLLMTokenType.String("cache"))
+		cacheAttrs := append(slices.Clone(commonAttrs), attrLLMTokenType.String("cache"))
 		tt.cacheInputTokens.Add(ctx, int64(opts.CacheInputTokens), metric.WithAttributes(cacheAttrs...))
 	}
 
 	// Record system tokens
 	if opts.SystemTokens > 0 {
-		systemAttrs := append(commonAttrs, attrLLMTokenType.String("system"))
+		systemAttrs := append(slices.Clone(commonAttrs), attrLLMTokenType.String("system"))
 		tt.systemTokens.Add(ctx, int64(opts.SystemTokens), metric.WithAttributes(systemAttrs...))
 	}
 

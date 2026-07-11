@@ -2,8 +2,10 @@ package tracker
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
@@ -221,6 +223,67 @@ func TestRecordUsage_MultipleRequests(t *testing.T) {
 	var rm metricdata.ResourceMetrics
 	if err := reader.Collect(ctx, &rm); err != nil {
 		t.Fatalf("Failed to collect metrics: %v", err)
+	}
+}
+
+// TestRecordUsage_NoHighCardinalityAttributes guards the fix for #1255: the
+// per-request latency value must not be a metric attribute (each unique value
+// would permanently allocate a new data point per instrument), and the error
+// code attribute must be bounded in length.
+func TestRecordUsage_NoHighCardinalityAttributes(t *testing.T) {
+	reader := metric.NewManualReader()
+	meterProvider := metric.NewMeterProvider(metric.WithReader(reader))
+	meter := meterProvider.Meter("test")
+
+	tracker, err := NewTokenTracker(meter)
+	if err != nil {
+		t.Fatalf("Failed to create token tracker: %v", err)
+	}
+
+	longError := strings.Repeat("x", 4096)
+	ctx := context.Background()
+	tracker.RecordUsage(ctx, UsageOptions{
+		Provider:     "openai",
+		ProviderUUID: "provider-123",
+		Model:        "gpt-4",
+		RequestModel: "gpt-4",
+		Scenario:     "openai",
+		InputTokens:  100,
+		OutputTokens: 50,
+		Streamed:     true,
+		Status:       "error",
+		ErrorCode:    longError,
+		LatencyMs:    1234,
+	})
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(ctx, &rm); err != nil {
+		t.Fatalf("Failed to collect metrics: %v", err)
+	}
+
+	checkAttrs := func(metricName string, attrs attribute.Set) {
+		if _, ok := attrs.Value("llm.latency.ms"); ok {
+			t.Errorf("%s: latency must not be a metric attribute (unbounded cardinality)", metricName)
+		}
+		if v, ok := attrs.Value("llm.error.code"); ok {
+			if len(v.AsString()) > maxErrorCodeAttrLen {
+				t.Errorf("%s: error code attribute exceeds %d chars (len=%d)", metricName, maxErrorCodeAttrLen, len(v.AsString()))
+			}
+		}
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch data := m.Data.(type) {
+			case metricdata.Sum[int64]:
+				for _, dp := range data.DataPoints {
+					checkAttrs(m.Name, dp.Attributes)
+				}
+			case metricdata.Histogram[float64]:
+				for _, dp := range data.DataPoints {
+					checkAttrs(m.Name, dp.Attributes)
+				}
+			}
+		}
 	}
 }
 

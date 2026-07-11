@@ -352,6 +352,58 @@ exactly how routing, failover, the breaker, and affinity behave over a sequence.
 
 ---
 
+## Tier Duo — `duo`
+
+Two full tingly-box instances in one process, verified end-to-end over **real
+HTTP**: `tb2` (the gateway under test) routes anthropic-scenario rules to
+`tb1`'s production vmodel endpoints, and the harness drives Claude-Code-shaped
+conversations (megabytes of context per turn) through tb2's
+protocol-conversion paths.
+
+```
+client ──(Anthropic v1/beta stream)──▶ tb2 ──(real HTTP)──▶ tb1 /virtual/{openai,anthropic}/... (vmodel)
+```
+
+Every anthropic-source route the vmodel can back is wired:
+
+| route            | source          | target                      | tb1 endpoint                       |
+|------------------|-----------------|-----------------------------|------------------------------------|
+| `beta-chat`      | Anthropic beta  | OpenAI Chat                 | `/virtual/openai/v1/chat/completions` |
+| `beta-responses` | Anthropic beta  | OpenAI Responses            | `/virtual/openai/v1/responses`     |
+| `beta-anthropic` | Anthropic beta  | Anthropic (passthrough)     | `/virtual/anthropic/v1/messages`   |
+| `v1-chat`        | Anthropic v1    | OpenAI Chat                 | `/virtual/openai/v1/chat/completions` |
+| `v1-responses`   | Anthropic v1    | OpenAI Responses            | `/virtual/openai/v1/responses`     |
+| `v1-anthropic`   | Anthropic v1    | Anthropic (passthrough)     | `/virtual/anthropic/v1/messages`   |
+
+(The Google target is deliberately not covered — the vmodel surface skips it
+for now.)
+
+Two phases, both on by default:
+
+- **Functional** — SSE event shape (`message_start` … `message_stop`),
+  assembled content, `stop_reason`, usage propagation, and the non-streaming
+  response body.
+- **Memory** — allocation churn per request, **post-GC retention slope**
+  across two sequential batches (a leak shows as a positive slope; transient
+  spikes do not), and peak live heap under a concurrent burst. This is the
+  setup that pinned down #1255: 823 KB/request retained before the fix,
+  ~0.5 KB after. The run fails if the slope exceeds `--max-slope-kb`
+  (default 32).
+
+```bash
+./harness duo                                   # functional: all routes; memory: beta-chat hot path
+./harness duo --mem-routes all                  # memory slope on every route
+./harness duo --routes beta-responses,v1-responses --skip-memory
+./harness duo --body-mb 4 --batch 30            # heavier sweep
+./harness duo --skip-func --profile-dir /tmp    # memory only, write pprof heap profiles
+go tool pprof -top -inuse_space /tmp/duo-beta-chat-final.pb.gz
+./harness duo --json                            # machine-readable report
+```
+
+The engine lives in `internal/protocoltest/duo.go` and is shared with the
+`TestDuoFunctional` / `TestDuoMemoryRegression` Go tests, so CI guards the
+same slope threshold.
+
 ## Agent reference
 
 | agent      | API style          | gateway endpoint                  | built-in rule UUID  | RequestModel       |
@@ -370,6 +422,7 @@ cli/harness/
                      provider / init-config
   matrix.go          Tier A command — wraps protocoltest.Matrix
   replay.go          Tier B command — fixture replay, upstreams, skip list
+  duo.go             Tier Duo command — wraps protocoltest.DuoEnv (function + memory)
   agent.go           Tier C command — agent CLI subprocess driver (+ env wiring)
   agent_real.go      Tier C real-provider mode: config iteration, per-entry runs
   lb.go              Tier LB command — load-balancing scenario simulator

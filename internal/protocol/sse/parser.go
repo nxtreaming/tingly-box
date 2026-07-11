@@ -330,6 +330,7 @@ func AssembleAnthropicStream(events []string) *ParsedResult {
 			msg, _ := m["message"].(map[string]interface{})
 			if msg != nil {
 				r.Model, _ = msg["model"].(string)
+				mergeAnthropicUsage(r, msg["usage"])
 			}
 		case "content_block_start":
 			cb, _ := m["content_block"].(map[string]interface{})
@@ -362,11 +363,30 @@ func AssembleAnthropicStream(events []string) *ParsedResult {
 			if delta != nil {
 				r.FinishReason, _ = delta["stop_reason"].(string)
 			}
+			mergeAnthropicUsage(r, m["usage"])
 		}
 	}
 	r.Content = content.String()
 	r.ThinkingContent = thinking.String()
 	return r
+}
+
+// mergeAnthropicUsage folds a usage object from message_start (input side)
+// or message_delta (output side) into r.Usage, keeping non-zero values.
+func mergeAnthropicUsage(r *ParsedResult, v interface{}) {
+	usage, _ := v.(map[string]interface{})
+	if usage == nil {
+		return
+	}
+	if r.Usage == nil {
+		r.Usage = &ParsedTokenUsage{}
+	}
+	if in, ok := usage["input_tokens"].(float64); ok && in > 0 {
+		r.Usage.InputTokens = int(in)
+	}
+	if out, ok := usage["output_tokens"].(float64); ok && out > 0 {
+		r.Usage.OutputTokens = int(out)
+	}
 }
 
 // AssembleGoogleStream assembles a ParsedResult from Google GenerateContent SSE event lines.

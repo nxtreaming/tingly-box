@@ -118,6 +118,8 @@ func (s *Server) trackUsageFromContext(c *gin.Context, inputTokens, outputTokens
 		if strings.TrimSpace(c.GetString("enterprise_user_id")) != "" {
 			userTier = "enterprise"
 		}
+		// Metric attributes must stay low-cardinality: pass the bounded error
+		// class, never the raw error message (see classifyErrorCode).
 		s.tokenTracker.RecordUsage(c.Request.Context(), tracker.UsageOptions{
 			Provider:     provider.Name,
 			ProviderUUID: provider.UUID,
@@ -129,7 +131,7 @@ func (s *Server) trackUsageFromContext(c *gin.Context, inputTokens, outputTokens
 			OutputTokens: outputTokens,
 			Streamed:     streamed,
 			Status:       status,
-			ErrorCode:    errorCode,
+			ErrorCode:    classifyErrorCode(err),
 			LatencyMs:    latencyMs,
 			UserTier:     userTier,
 		})
@@ -228,6 +230,8 @@ func (s *Server) trackUsageWithTokenUsage(c *gin.Context, usage *protocol.TokenU
 
 	// 2. Record to OTel with comprehensive usage data
 	if s.tokenTracker != nil {
+		// Metric attributes must stay low-cardinality: pass the bounded error
+		// class, never the raw error message (see classifyErrorCode).
 		s.tokenTracker.RecordUsage(c.Request.Context(), tracker.UsageOptions{
 			Provider:         provider.Name,
 			ProviderUUID:     provider.UUID,
@@ -241,7 +245,7 @@ func (s *Server) trackUsageWithTokenUsage(c *gin.Context, usage *protocol.TokenU
 			SystemTokens:     usage.SystemTokens,
 			Streamed:         streamed,
 			Status:           status,
-			ErrorCode:        errorCode,
+			ErrorCode:        classifyErrorCode(err),
 			LatencyMs:        latencyMs,
 		})
 	}
@@ -271,6 +275,52 @@ func sanitizeErrorCode(err error) string {
 	}
 	// Use error type name as code, avoid exposing sensitive info
 	return err.Error()
+}
+
+// classifyErrorCode maps an error to a small, bounded set of class labels for
+// use as an OTel metric attribute. Metric attributes must be low-cardinality:
+// every distinct value permanently allocates a new data point per instrument
+// in the cumulative metrics SDK, so passing raw err.Error() (which can embed
+// upstream response bodies, IDs and URLs) leaks memory one timeseries at a
+// time (#1255). The detailed message still goes to the usage DB record.
+func classifyErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "client_disconnected"
+	}
+	errStr := strings.ToLower(err.Error())
+	switch {
+	// Same signals as isRateLimitError, tested against the already-lowered
+	// string so a large error payload is not lowercased twice.
+	case strings.Contains(errStr, "429") || strings.Contains(errStr, "rate limit") ||
+		strings.Contains(errStr, "ratelimit") || strings.Contains(errStr, "1302"):
+		return "rate_limit"
+	case strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized"):
+		return "auth_401"
+	case strings.Contains(errStr, "403") || strings.Contains(errStr, "forbidden"):
+		return "auth_403"
+	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline"):
+		return "timeout"
+	case strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "no such host") || strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "eof"):
+		return "connection"
+	case strings.Contains(errStr, "404") || strings.Contains(errStr, "not found"):
+		return "not_found"
+	case strings.Contains(errStr, "400") || strings.Contains(errStr, "invalid_request") ||
+		strings.Contains(errStr, "bad request"):
+		return "bad_request"
+	case strings.Contains(errStr, "overloaded") || strings.Contains(errStr, "529") ||
+		strings.Contains(errStr, "500") || strings.Contains(errStr, "502") ||
+		strings.Contains(errStr, "503") || strings.Contains(errStr, "504"):
+		return "upstream_5xx"
+	case strings.Contains(errStr, "stream"):
+		return "stream_error"
+	default:
+		return "other"
+	}
 }
 
 func isRateLimitError(err error) bool {

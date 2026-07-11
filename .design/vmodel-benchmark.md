@@ -19,7 +19,7 @@ overlapping-but-inconsistent capabilities:
 | | `vmodel/virtualserver.Service` (prod) | `protocoltest.VirtualServer` | `servertest.MockProviderServer` |
 |---|---|---|---|
 | Protocol-correct responses | real vmodel models | `MockResponseBuilder` fixtures | hardcoded JSON maps + `fmt.Printf` spam |
-| Formats | OpenAI chat + Anthropic | + OpenAI Responses + Google (4) | OpenAI chat + Anthropic (crude) |
+| Formats | OpenAI chat + Responses + Anthropic | + Google (4) | OpenAI chat + Anthropic (crude) |
 | Request capture / hit counts | none | yes | partial |
 | Scenario registry | vmodel registry | `GenericRegistry[Scenario]` | none |
 | Error injection (pre/mid-stream) | yes | yes | status + delay only |
