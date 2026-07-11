@@ -43,7 +43,7 @@ Test packages are **secondary consumers** that reuse the same primitives.
 
 | Role | Surface | Consumer |
 |------|---------|----------|
-| Primary (production) | `/virtual/v1/messages`, `/virtual/v1/chat/completions` | `internal/server` mounts `virtualserver.Service` for end-user demos / onboarding / dry-runs |
+| Primary (production) | `/virtual/v1/messages`, `/virtual/v1/chat/completions`, `/virtual/openai/v1/responses` | `internal/server` mounts `virtualserver.Service` for end-user demos / onboarding / dry-runs |
 | Secondary (tests)    | In-process `GenericRegistry[T]`                       | `internal/protocoltest.Scenario`, `cli/harness --mock` |
 
 **Registration discipline.** Anything added to `anthropic.RegisterDefaults` or
@@ -101,9 +101,11 @@ openai.RegisterDefaults(openaiReg)
 ```
 
 A model registered in `anthropic.Registry` is callable only via
-`/virtual/v1/messages`; a model in `openai.Registry` is callable only
-via `/virtual/v1/chat/completions`. The registry **is** the protocol
-context — there is no runtime `Protocols()` declaration, no `byProtocol`
+`/virtual/v1/messages`; a model in `openai.Registry` is callable via
+`/virtual/v1/chat/completions` and `/virtual/openai/v1/responses` (the
+Responses surface renders the same `HandleOpenAIChat(+Stream)` output in
+Responses wire format — see `virtualserver/handler_responses.go`). The
+registry **is** the protocol context — there is no runtime `Protocols()` declaration, no `byProtocol`
 index, and no protocol type assertions in lookup paths.
 
 When a client requests a model that does not exist in the registry for

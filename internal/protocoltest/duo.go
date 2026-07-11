@@ -31,6 +31,7 @@ package protocoltest
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -260,7 +261,7 @@ func (env *DuoEnv) post(route DuoRoute, body []byte) (*http.Response, error) {
 	if route.Beta {
 		path += "?beta=true"
 	}
-	req, err := http.NewRequest(http.MethodPost, env.tb2.URL+path, strings.NewReader(string(body)))
+	req, err := http.NewRequest(http.MethodPost, env.tb2.URL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -313,69 +314,73 @@ func (env *DuoEnv) RunFunctionalChecks(route DuoRoute, bodyBytes int) []DuoCheck
 	add := func(name string, pass bool, detail string) {
 		checks = append(checks, DuoCheck{Route: route.Name, Name: name, Pass: pass, Detail: detail})
 	}
+	env.streamingChecks(route, bodyBytes, add)
+	env.nonStreamingChecks(route, bodyBytes, add)
+	return checks
+}
 
-	// Streaming: event shape + assembled result.
+// streamingChecks verifies SSE event shape and the assembled streaming result.
+func (env *DuoEnv) streamingChecks(route DuoRoute, bodyBytes int, add func(name string, pass bool, detail string)) {
 	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, true))
 	if err != nil {
 		add("stream/http", false, err.Error())
-		return checks
+		return
 	}
-	func() {
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-			add("stream/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, b))
-			return
-		}
-		add("stream/http", true, "200")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		add("stream/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, b))
+		return
+	}
+	add("stream/http", true, "200")
 
-		events, _ := sse.ReadSSELines(resp.Body)
-		joined := strings.Join(events, "\n")
-		for _, evt := range []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"} {
-			add("stream/event/"+evt, strings.Contains(joined, evt), "")
-		}
+	events, _ := sse.ReadSSELines(resp.Body)
+	joined := strings.Join(events, "\n")
+	for _, evt := range []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"} {
+		add("stream/event/"+evt, strings.Contains(joined, evt), "")
+	}
 
-		parsed := sse.AssembleAnthropicStream(events)
-		if parsed == nil {
-			add("stream/assemble", false, "assembler returned nil")
-			return
-		}
-		add("stream/assemble", parsed.Content != "", fmt.Sprintf("content=%dB", len(parsed.Content)))
-		add("stream/finish_reason", parsed.FinishReason != "", parsed.FinishReason)
-		if parsed.Usage == nil {
-			add("stream/usage", false, "no usage in stream")
-		} else {
-			add("stream/usage", parsed.Usage.InputTokens > 0 && parsed.Usage.OutputTokens > 0,
-				fmt.Sprintf("in=%d out=%d", parsed.Usage.InputTokens, parsed.Usage.OutputTokens))
-		}
-	}()
+	parsed := sse.AssembleAnthropicStream(events)
+	if parsed == nil {
+		add("stream/assemble", false, "assembler returned nil")
+		return
+	}
+	add("stream/assemble", parsed.Content != "", fmt.Sprintf("content=%dB", len(parsed.Content)))
+	add("stream/finish_reason", parsed.FinishReason != "", parsed.FinishReason)
+	if parsed.Usage == nil {
+		add("stream/usage", false, "no usage in stream")
+	} else {
+		add("stream/usage", parsed.Usage.InputTokens > 0 && parsed.Usage.OutputTokens > 0,
+			fmt.Sprintf("in=%d out=%d", parsed.Usage.InputTokens, parsed.Usage.OutputTokens))
+	}
+}
 
-	// Non-streaming: response body shape.
-	resp2, err := env.post(route, BuildConversationBody(route, bodyBytes, false))
+// nonStreamingChecks verifies the non-streaming response body shape.
+func (env *DuoEnv) nonStreamingChecks(route DuoRoute, bodyBytes int, add func(name string, pass bool, detail string)) {
+	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, false))
 	if err != nil {
 		add("nonstream/http", false, err.Error())
-		return checks
+		return
 	}
-	defer resp2.Body.Close()
-	raw, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode != http.StatusOK {
-		add("nonstream/http", false, fmt.Sprintf("status %d: %s", resp2.StatusCode, raw[:min(len(raw), 2048)]))
-		return checks
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		add("nonstream/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, raw[:min(len(raw), 2048)]))
+		return
 	}
 	add("nonstream/http", true, "200")
 	var m map[string]interface{}
 	if err := json.Unmarshal(raw, &m); err != nil {
 		add("nonstream/body", false, "invalid JSON: "+err.Error())
-		return checks
+		return
 	}
 	parsed := sse.ParseAnthropicResult(m)
 	if parsed == nil {
 		add("nonstream/body", false, "unparseable anthropic body")
-		return checks
+		return
 	}
 	add("nonstream/content", parsed.Content != "", fmt.Sprintf("content=%dB", len(parsed.Content)))
 	add("nonstream/usage", parsed.Usage != nil && parsed.Usage.InputTokens > 0, "")
-	return checks
 }
 
 // ─── Memory phase ─────────────────────────────────────────────────────────────
@@ -421,7 +426,7 @@ func (c *DuoMemoryConfig) withDefaults() {
 type DuoMemoryReport struct {
 	Route             string  `json:"route"`
 	BodyBytes         int     `json:"body_bytes"`
-	SequentialCount   int     `json:"sequential_requests"`
+	Batch             int     `json:"batch_requests"` // two sequential batches of this size are run
 	BaselineHeapMB    float64 `json:"baseline_heap_mb"`
 	AfterBatch1MB     float64 `json:"after_batch1_delta_mb"`
 	AfterBatch2MB     float64 `json:"after_batch2_delta_mb"`
@@ -459,8 +464,7 @@ func duoWriteHeapProfile(dir, name string) (string, error) {
 
 // RunMemoryPhase measures allocation churn, post-GC retention slope, and
 // concurrent-burst peak heap on one conversion route. A near-zero slope means
-// no per-request leak; the #1255 latency-attribute leak measured 823
-// KB/request here before the fix, 0.5 KB/request after.
+// no per-request leak (reference numbers live with duo_test.go's threshold).
 func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error) {
 	cfg.withDefaults()
 	route := *cfg.Route
@@ -468,7 +472,7 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 	report := &DuoMemoryReport{
 		Route:             route.Name,
 		BodyBytes:         len(body),
-		SequentialCount:   2 * cfg.Batch,
+		Batch:             cfg.Batch,
 		ConcurrentWorkers: cfg.Workers,
 		ConcurrentTotal:   cfg.Workers * cfg.PerWorker,
 	}
@@ -523,7 +527,9 @@ func (env *DuoEnv) RunMemoryPhase(cfg DuoMemoryConfig) (*DuoMemoryReport, error)
 	stop := make(chan struct{})
 	go func() {
 		var peak uint64
-		tick := time.NewTicker(5 * time.Millisecond)
+		// ReadMemStats is a stop-the-world operation; 50ms still catches a
+		// burst peak without perturbing the workload being measured.
+		tick := time.NewTicker(50 * time.Millisecond)
 		defer tick.Stop()
 		for {
 			select {

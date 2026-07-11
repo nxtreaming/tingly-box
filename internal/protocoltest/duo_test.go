@@ -1,16 +1,10 @@
 package protocoltest
 
-// Regression tests over the Duo two-instance environment (see duo.go).
-//
-// TestDuoFunctional covers every anthropic-source conversion route the
-// production vmodel endpoint can back: {v1, beta} × {anthropic passthrough,
-// OpenAI Chat, OpenAI Responses}.
-//
-// TestDuoMemoryRegression guards against the #1255 class of leak on the
-// Claude Code hot path: before the fix this measured 823 KB/request of
-// permanent post-GC retention; after, ~0.5.
-//
-// Heap profiles are written when OOM_PROFILE_DIR is set:
+// Regression tests over the Duo two-instance environment — topology and
+// route matrix are documented on the engine in duo.go. TestDuoFunctional
+// covers every route; TestDuoMemoryRegression guards the #1255 class of leak
+// (numbers with the threshold below). Heap profiles are written when
+// OOM_PROFILE_DIR is set:
 //
 //	OOM_PROFILE_DIR=/tmp go test ./internal/protocoltest/ -run TestDuo -v
 

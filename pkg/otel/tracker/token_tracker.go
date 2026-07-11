@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -186,32 +187,35 @@ func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
 	// Build common attributes.
 	//
 	// Attribute values are retained for the lifetime of the process by the
-	// cumulative metrics SDK, and several of them (model, request model) can
-	// originate from the parsed request body — where SDK JSON decoding yields
-	// substrings that alias the multi-megabyte gjson copy of the entire body.
-	// A retained attribute string would then pin that whole buffer forever
-	// (the #1255 leak: ~0.8MB pinned per request, attributed to
-	// gjson.ParseBytes in heap profiles). strings.Clone detaches every value
-	// from whatever backing array it came from.
+	// cumulative metrics SDK. Values that originate from the parsed request
+	// body — model, request model, and error text — can be substrings ALIASING
+	// the multi-megabyte gjson copy of the entire body (SDK JSON decoding
+	// slices rather than copies), so a retained attribute would pin that whole
+	// buffer forever (the #1255 leak: ~0.8MB pinned per request, attributed to
+	// gjson.ParseBytes in heap profiles). strings.Clone detaches exactly those
+	// values; the remaining attributes are config- or enum-owned strings that
+	// cannot alias a request buffer.
 	commonAttrs := []attribute.KeyValue{
-		attrLLMProvider.String(strings.Clone(opts.Provider)),
-		attrLLMProviderUUID.String(strings.Clone(opts.ProviderUUID)),
+		attrLLMProvider.String(opts.Provider),
+		attrLLMProviderUUID.String(opts.ProviderUUID),
 		attrLLMModel.String(strings.Clone(opts.Model)),
 		attrLLMRequestModel.String(strings.Clone(opts.RequestModel)),
-		attrLLMScenario.String(strings.Clone(opts.Scenario)),
+		attrLLMScenario.String(opts.Scenario),
 		attrLLMStreaming.Bool(opts.Streamed),
-		attrLLMResponseStatus.String(strings.Clone(opts.Status)),
+		attrLLMResponseStatus.String(opts.Status),
 	}
 
 	if opts.RuleUUID != "" {
-		commonAttrs = append(commonAttrs, attrLLMRuleUUID.String(strings.Clone(opts.RuleUUID)))
+		commonAttrs = append(commonAttrs, attrLLMRuleUUID.String(opts.RuleUUID))
 	}
 	if opts.UserTier != "" {
-		commonAttrs = append(commonAttrs, attrLLMUserTier.String(strings.Clone(opts.UserTier)))
+		commonAttrs = append(commonAttrs, attrLLMUserTier.String(opts.UserTier))
 	}
 	if opts.ErrorCode != "" {
 		code := opts.ErrorCode
 		if len(code) > maxErrorCodeAttrLen {
+			// The truncated slice still aliases the original backing array, so
+			// the clone below is what actually bounds retained memory.
 			code = code[:maxErrorCodeAttrLen]
 		}
 		commonAttrs = append(commonAttrs, attrLLMErrorCode.String(strings.Clone(code)))
@@ -239,15 +243,17 @@ func (tt *TokenTracker) RecordUsage(ctx context.Context, opts UsageOptions) {
 		tt.totalTokens.Add(ctx, int64(totalTokens), metric.WithAttributes(commonAttrs...))
 	}
 
-	// Record cache tokens
+	// Record cache tokens. slices.Clone before append: two appends off the
+	// same commonAttrs base would otherwise share its backing array and the
+	// second could overwrite the first's token_type element.
 	if opts.CacheInputTokens > 0 {
-		cacheAttrs := append(commonAttrs, attrLLMTokenType.String("cache"))
+		cacheAttrs := append(slices.Clone(commonAttrs), attrLLMTokenType.String("cache"))
 		tt.cacheInputTokens.Add(ctx, int64(opts.CacheInputTokens), metric.WithAttributes(cacheAttrs...))
 	}
 
 	// Record system tokens
 	if opts.SystemTokens > 0 {
-		systemAttrs := append(commonAttrs, attrLLMTokenType.String("system"))
+		systemAttrs := append(slices.Clone(commonAttrs), attrLLMTokenType.String("system"))
 		tt.systemTokens.Add(ctx, int64(opts.SystemTokens), metric.WithAttributes(systemAttrs...))
 	}
 

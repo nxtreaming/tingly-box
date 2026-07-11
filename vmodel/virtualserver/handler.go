@@ -227,11 +227,12 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 
 		var explicitUsage *vmodel.MockUsage
 		var stopReason string
-		// Accumulate streamed text so the terminal usage fallback can estimate
-		// output tokens. Real Anthropic ALWAYS reports usage (input on
-		// message_start, output on message_delta); models without an explicit
+		// Count streamed text bytes so the terminal usage fallback can estimate
+		// output tokens (the len/4 rule of token.EstimateTokensString — no need
+		// to retain the text itself). Real Anthropic ALWAYS reports usage (input
+		// on message_start, output on message_delta); models without an explicit
 		// UsageEvent get the same estimate the non-streaming handler uses.
-		var streamedText string
+		var streamedBytes int
 		estimatedInput := token.EstimateBetaAnthropicTokens(req.Messages)
 
 		// Track which content-block indices have an open content_block_start so
@@ -298,7 +299,7 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 				})
 				fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", data)
 			case anthropicvm.TextDeltaEvent:
-				streamedText += e.Text
+				streamedBytes += len(e.Text)
 				startTextBlock(e.Index)
 				data, _ := json.Marshal(AnthropicStreamEvent{
 					Type:  "content_block_delta",
@@ -361,8 +362,9 @@ func (h *Handler) handleAnthropicStreaming(c *gin.Context, req *AnthropicMessage
 				} else {
 					// Estimate fallback, mirroring the non-streaming handler:
 					// real Anthropic always reports terminal usage here.
+					// (len+3)/4 matches token.EstimateTokensString.
 					usageMap["input_tokens"] = estimatedInput
-					usageMap["output_tokens"] = token.EstimateTokensString(streamedText)
+					usageMap["output_tokens"] = int64((streamedBytes + 3) / 4)
 				}
 				deltaPayload["usage"] = usageMap
 				data, _ := json.Marshal(deltaPayload)

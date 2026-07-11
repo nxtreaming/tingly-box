@@ -292,7 +292,10 @@ func classifyErrorCode(err error) string {
 	}
 	errStr := strings.ToLower(err.Error())
 	switch {
-	case isRateLimitError(err):
+	// Same signals as isRateLimitError, tested against the already-lowered
+	// string so a large error payload is not lowercased twice.
+	case strings.Contains(errStr, "429") || strings.Contains(errStr, "rate limit") ||
+		strings.Contains(errStr, "ratelimit") || strings.Contains(errStr, "1302"):
 		return "rate_limit"
 	case strings.Contains(errStr, "401") || strings.Contains(errStr, "unauthorized"):
 		return "auth_401"

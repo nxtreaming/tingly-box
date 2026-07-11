@@ -12,19 +12,9 @@ import (
 	"github.com/tingly-dev/tingly-box/internal/protocoltest"
 )
 
-// DuoCmd is Tier "Duo" — two full tingly-box instances in one process:
-// tb2 (the gateway under test) routes to tb1's vmodel endpoints over real
-// HTTP, and the harness drives Claude-Code-shaped conversations through
-// tb2's protocol-conversion paths. It verifies both FUNCTION (SSE shape,
-// assembled content, usage propagation) and MEMORY (post-GC retention slope,
-// allocation churn, concurrent-burst peak) — the setup that pinned down the
-// #1255 OOM (823 KB/request retained before the fix vs 0.5 KB after).
-//
-// Covered routes (all anthropic-source conversions the vmodel can back):
-//
-//	{v1, beta} × {anthropic passthrough, OpenAI Chat, OpenAI Responses}
-//
-//	client ──(Anthropic v1/beta stream)──▶ tb2 ──(real HTTP)──▶ tb1 /virtual/{openai,anthropic}/...
+// DuoCmd is Tier "Duo": two-instance e2e verification (function + memory)
+// over every anthropic-source conversion route. The topology, route matrix,
+// and #1255 background live on the engine — see internal/protocoltest/duo.go.
 type DuoCmd struct {
 	Routes     string  `kong:"name='routes',default='all',help='Comma-separated route names for the functional phase, or \"all\" (routes: beta-chat, beta-responses, beta-anthropic, v1-chat, v1-responses, v1-anthropic)'"`
 	MemRoutes  string  `kong:"name='mem-routes',default='beta-chat',help='Comma-separated route names for the memory phase, or \"all\" (default: the Claude Code hot path)'"`
@@ -174,8 +164,8 @@ func (cmd *DuoCmd) Run() error {
 				}
 				fmt.Printf("  %s:\n", route.Name)
 				fmt.Printf("    baseline post-GC heap      %8.2f MB\n", report.BaselineHeapMB)
-				fmt.Printf("    retained after %3d reqs    %+8.2f MB\n", report.SequentialCount/2, report.AfterBatch1MB)
-				fmt.Printf("    retained after %3d reqs    %+8.2f MB\n", report.SequentialCount, report.AfterBatch2MB)
+				fmt.Printf("    retained after %3d reqs    %+8.2f MB\n", report.Batch, report.AfterBatch1MB)
+				fmt.Printf("    retained after %3d reqs    %+8.2f MB\n", 2*report.Batch, report.AfterBatch2MB)
 				fmt.Printf("    retention slope            %8.1f KB/request   %s\n", report.SlopeKBPerRequest, verdict)
 				fmt.Printf("    allocation churn           %8.2f MB/request\n", report.ChurnMBPerRequest)
 				fmt.Printf("    burst peak heap (%d×%d)     %8.2f MB (post-GC %+.2f MB)\n",

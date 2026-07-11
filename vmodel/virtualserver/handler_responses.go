@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -118,10 +119,22 @@ func responsesInputText(raw json.RawMessage) string {
 	return sb.String()
 }
 
-// responsesOutputItems renders a VModelResponse as Responses output items.
-func responsesOutputItems(itemID string, resp *openaivm.VModelResponse) []map[string]interface{} {
+// respCounter disambiguates response IDs minted within the same second, so
+// concurrent requests never share a respID/itemID.
+var respCounter atomic.Int64
+
+func newRespID() string {
+	return fmt.Sprintf("resp-virtual-%d-%d", time.Now().Unix(), respCounter.Add(1))
+}
+
+// responsesOutputItems renders output items: a message item when the response
+// carries text (or nothing else), plus one function_call item per tool call.
+// includeEmptyMessage forces the message item even with empty text — the
+// streaming path always announces the message item up front, so its terminal
+// output array must list it to keep streamed output_index values aligned.
+func responsesOutputItems(itemID string, resp *openaivm.VModelResponse, includeEmptyMessage bool) []map[string]interface{} {
 	var output []map[string]interface{}
-	if resp.Content != "" || len(resp.ToolCalls) == 0 {
+	if includeEmptyMessage || resp.Content != "" || len(resp.ToolCalls) == 0 {
 		output = append(output, map[string]interface{}{
 			"id":     itemID,
 			"type":   "message",
@@ -153,6 +166,27 @@ func responsesUsageMap(inputText string, outputTokens int64) map[string]interfac
 	}
 }
 
+// responsesEnvelope is the single source of the Responses `response` object
+// shape, shared by response.created, response.completed, and the
+// non-streaming body.
+func responsesEnvelope(respID, model, status string, createdAt int64, output []map[string]interface{}, usage map[string]interface{}) map[string]interface{} {
+	envelope := map[string]interface{}{
+		"id":         respID,
+		"object":     "response",
+		"created_at": createdAt,
+		"model":      model,
+		"status":     status,
+		"output":     output,
+	}
+	if output == nil {
+		envelope["output"] = []interface{}{}
+	}
+	if usage != nil {
+		envelope["usage"] = usage
+	}
+	return envelope
+}
+
 func (h *Handler) handleResponsesNonStreaming(c *gin.Context, model, inputText string, chatReq *ChatCompletionRequest, vm openaivm.VirtualModel) {
 	if d := vm.SimulatedDelay(); d > 0 {
 		time.Sleep(d)
@@ -166,16 +200,10 @@ func (h *Handler) handleResponsesNonStreaming(c *gin.Context, model, inputText s
 		return
 	}
 
-	respID := fmt.Sprintf("resp-virtual-%d", time.Now().Unix())
-	c.JSON(http.StatusOK, map[string]interface{}{
-		"id":         respID,
-		"object":     "response",
-		"created_at": time.Now().Unix(),
-		"model":      model,
-		"status":     "completed",
-		"output":     responsesOutputItems("item-"+respID, &resp),
-		"usage":      responsesUsageMap(inputText, token.EstimateTokensString(resp.Content)),
-	})
+	respID := newRespID()
+	c.JSON(http.StatusOK, responsesEnvelope(respID, model, "completed", time.Now().Unix(),
+		responsesOutputItems("item-"+respID, &resp, false),
+		responsesUsageMap(inputText, token.EstimateTokensString(resp.Content))))
 }
 
 func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText string, chatReq *ChatCompletionRequest, vm openaivm.VirtualModel) {
@@ -192,8 +220,9 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 		return
 	}
 
-	respID := fmt.Sprintf("resp-virtual-%d", time.Now().Unix())
+	respID := newRespID()
 	itemID := "item-" + respID
+	createdAt := time.Now().Unix()
 	send := func(payload map[string]interface{}) {
 		data, _ := json.Marshal(payload)
 		c.SSEvent("", string(data))
@@ -206,11 +235,8 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 		}
 
 		send(map[string]interface{}{
-			"type": "response.created",
-			"response": map[string]interface{}{
-				"id": respID, "object": "response", "created_at": time.Now().Unix(),
-				"model": model, "status": "in_progress", "output": []interface{}{},
-			},
+			"type":     "response.created",
+			"response": responsesEnvelope(respID, model, "in_progress", createdAt, nil, nil),
 		})
 		send(map[string]interface{}{
 			"type": "response.output_item.added", "response_id": respID, "output_index": 0,
@@ -221,6 +247,7 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 		})
 
 		final := openaivm.VModelResponse{FinishReason: "stop"}
+		var content strings.Builder
 		toolIndex := 0
 		err := vm.HandleOpenAIChatStream(c.Request.Context(), chatReq, func(ev any) {
 			select {
@@ -230,7 +257,7 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 			}
 			switch e := ev.(type) {
 			case openaivm.DeltaEvent:
-				final.Content += e.Content
+				content.WriteString(e.Content)
 				send(map[string]interface{}{
 					"type": "response.output_text.delta", "response_id": respID,
 					"item_id": itemID, "output_index": 0, "content_index": 0,
@@ -259,11 +286,18 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 				final.FinishReason = e.FinishReason
 			}
 		})
+		final.Content = content.String()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": gin.H{
-				"message": err.Error(),
-				"type":    "api_error",
-			}})
+			// The SSE stream is already committed (200 + frames flushed), so an
+			// HTTP error body would be spliced into the event stream. Frame the
+			// failure as an SSE error event instead, mirroring real providers.
+			send(map[string]interface{}{
+				"type": "error",
+				"error": map[string]interface{}{
+					"type":    "api_error",
+					"message": err.Error(),
+				},
+			})
 			return false
 		}
 
@@ -272,14 +306,14 @@ func (h *Handler) handleResponsesStreaming(c *gin.Context, model, inputText stri
 			"item_id": itemID, "output_index": 0, "content_index": 0,
 			"text": final.Content,
 		})
+		// includeEmptyMessage: streaming announced the message item at
+		// output_index 0 up front, so the terminal output array must include
+		// it even for tool-only responses to keep indices aligned.
 		send(map[string]interface{}{
 			"type": "response.completed",
-			"response": map[string]interface{}{
-				"id": respID, "object": "response", "created_at": time.Now().Unix(),
-				"model": model, "status": "completed",
-				"output": responsesOutputItems(itemID, &final),
-				"usage":  responsesUsageMap(inputText, token.EstimateTokensString(final.Content)),
-			},
+			"response": responsesEnvelope(respID, model, "completed", createdAt,
+				responsesOutputItems(itemID, &final, true),
+				responsesUsageMap(inputText, token.EstimateTokensString(final.Content))),
 		})
 		c.SSEvent("", "[DONE]")
 		c.Writer.Flush()

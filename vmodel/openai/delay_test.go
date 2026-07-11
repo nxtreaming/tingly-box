@@ -69,8 +69,8 @@ func (ts *metricsTestServer) addDelayProvider(t *testing.T, requestModel string,
 		ResponseModel: delayModelResponseID,
 		Services:      []*loadbalance.Service{svc},
 		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticAdaptive,
-			Params: typ.DefaultAdaptiveParams(),
+			Type:   loadbalance.TacticRandom,
+			Params: typ.NewRandomParams(),
 		},
 		Active: true,
 	}
