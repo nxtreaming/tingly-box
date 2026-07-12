@@ -14,6 +14,15 @@ import (
 	"time"
 )
 
+// DuoDefaultMaxSlopeKB is the default per-instance retention-slope failure
+// threshold in KB/request — the single number shared by the CLI
+// (`harness duo --max-slope-kb`) and the Go regression test, so tuning it is
+// a one-place change. The #1255 leak measured 823 KB/request on the gateway
+// instance; healthy builds measure ~0.5. 32 leaves generous headroom against
+// GC noise while still catching any per-request pin of a request-body-sized
+// buffer by orders of magnitude.
+const DuoDefaultMaxSlopeKB = 32.0
+
 // DuoMemoryConfig parameterizes RunMemoryPhase.
 type DuoMemoryConfig struct {
 	Route     *DuoRoute // conversion route to drive (default DuoDefaultRoute)

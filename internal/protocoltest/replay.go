@@ -161,7 +161,7 @@ func (env *AgentTestEnv) ReplayFixture(agentType AgentType, body []byte, streami
 		result.StreamEvents = events
 		result.RawBody = raw
 		parsed := assembleFromEvents(events, style)
-		fillFromParsedResult(result, parsed, style, true)
+		fillFromParsedResult(result, parsed)
 	} else {
 		raw, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -169,7 +169,7 @@ func (env *AgentTestEnv) ReplayFixture(agentType AgentType, body []byte, streami
 		}
 		result.RawBody = raw
 		parsed := parseFromJSON(raw, style)
-		fillFromParsedResult(result, parsed, style, false)
+		fillFromParsedResult(result, parsed)
 	}
 	return result, nil
 }

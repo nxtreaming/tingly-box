@@ -22,7 +22,7 @@ type DuoCmd struct {
 	Batch       int     `kong:"name='batch',default='15',help='Requests per sequential batch (two batches measure the retention slope)'"`
 	Workers     int     `kong:"name='workers',default='4',help='Concurrent workers in the burst phase'"`
 	PerWorker   int     `kong:"name='per-worker',default='5',help='Requests per worker in the burst phase'"`
-	MaxSlopeKB  float64 `kong:"name='max-slope-kb',default='32',help='Fail if either instance retains more than this many KB/request post-GC'"`
+	MaxSlopeKB  float64 `kong:"name='max-slope-kb',help='Fail if either instance retains more than this many KB/request post-GC (default: the shared regression threshold, 32)'"`
 	StreamKB    int     `kong:"name='stream-kb',default='256',help='Backpressure (-slow) routes: tb1 vmodel response size in KB'"`
 	StreamMS    int     `kong:"name='stream-ms',default='500',help='Backpressure (-slow) routes: tb1 vmodel delay parameter in ms (stream wall time is roughly 2x)'"`
 	ReadDelayMS int     `kong:"name='read-delay-ms',default='15',help='Backpressure (-slow) routes: client-side pause between SSE reads in ms'"`
@@ -74,6 +74,10 @@ func duoRouteNames() string {
 }
 
 func (cmd *DuoCmd) Run() error {
+	if cmd.MaxSlopeKB <= 0 {
+		// Same threshold the Go regression test enforces, defined in one place.
+		cmd.MaxSlopeKB = protocoltest.DuoDefaultMaxSlopeKB
+	}
 	funcRoutes, err := resolveRoutes(cmd.Routes)
 	if err != nil {
 		return err

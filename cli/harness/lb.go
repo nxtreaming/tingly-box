@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,12 +26,24 @@ import (
 //go:embed testdata/lb/*.yaml
 var lbExampleFS embed.FS
 
-// lbExampleNames is the canonical ordered list of built-in example names
-// (matches the testdata/lb/*.yaml basenames). Used by --all and the unknown-
-// example error message.
-var lbExampleNames = []string{
-	"cascade", "flat", "grid", "single", "regression", "ratelimit", "authflip",
-	"crossmodel", "halfopen", "degrade", "inactive", "withintier", "multiaffinity",
+// lbExampleNames lists the built-in example names, derived from the
+// testdata/lb/*.yaml basenames at init so adding an example is a one-file
+// change. Used by --all and the unknown-example error message.
+var lbExampleNames = listLBExamples()
+
+func listLBExamples() []string {
+	entries, err := lbExampleFS.ReadDir("testdata/lb")
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if name, ok := strings.CutSuffix(e.Name(), ".yaml"); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // LbCmd is Tier "LB" — it drives the real load-balancing path (selection +
@@ -590,9 +603,3 @@ func formatBreakers(m map[string]string) string {
 	return strings.Join(parts, "  ")
 }
 
-// ---- built-in examples ----
-
-func sess(s string) *string { return &s }
-
-func ptrInt(i int) *int       { return &i }
-func ptrStr(s string) *string { return &s }

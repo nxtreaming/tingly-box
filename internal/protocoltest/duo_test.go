@@ -24,13 +24,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// The #1255 leak measured 823 KB/request on the gateway instance. Healthy
-// builds measure ~0.5 KB/request; 32 KB leaves generous headroom against GC
-// noise while still catching any per-request pin of a request-body-sized
-// buffer. Applied to each instance separately: tb2 guards the
-// gateway/conversion path, tb1 the vmodel serving path.
-const duoMaxSlopeKB = 32.0
-
+// The threshold is DuoDefaultMaxSlopeKB (shared with the CLI), applied to
+// each instance separately: tb2 guards the gateway/conversion path, tb1 the
+// vmodel serving path.
 func assertDuoSlopes(t *testing.T, report *DuoMemoryReport) {
 	t.Helper()
 	for _, im := range report.Instances() {
@@ -41,9 +37,9 @@ func assertDuoSlopes(t *testing.T, report *DuoMemoryReport) {
 		if im.BaselineProfile != "" {
 			t.Logf("%s profiles: %s %s", im.Instance, im.BaselineProfile, im.FinalProfile)
 		}
-		if im.SlopeKBPerRequest > duoMaxSlopeKB {
+		if im.SlopeKBPerRequest > DuoDefaultMaxSlopeKB {
 			t.Errorf("%s post-GC retention slope %.1f KB/request exceeds %.0f KB/request — a per-request memory pin (see #1255)",
-				im.Instance, im.SlopeKBPerRequest, duoMaxSlopeKB)
+				im.Instance, im.SlopeKBPerRequest, DuoDefaultMaxSlopeKB)
 		}
 	}
 }

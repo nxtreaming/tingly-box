@@ -401,9 +401,8 @@ func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path
 
 		result.HTTPStatus = resp.StatusCode
 		result.StreamEvents, result.RawBody = sse.ReadSSELines(resp.Body)
-		fillFromParsedResult(result, sse.ParsedResult{}, sourceToStyle(source), true)
 		parsed := assembleFromEvents(result.StreamEvents, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), true)
+		fillFromParsedResult(result, parsed)
 	} else {
 		req, err := http.NewRequest("POST", path, bytes.NewReader(body))
 		if err != nil {
@@ -417,7 +416,7 @@ func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path
 		result.HTTPStatus = w.Code
 		result.RawBody = w.Body.Bytes()
 		parsed := parseFromJSON(result.RawBody, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), false)
+		fillFromParsedResult(result, parsed)
 	}
 
 	return result, nil
@@ -581,7 +580,7 @@ func assembleFromEvents(events []string, style protocol.APIStyle) sse.ParsedResu
 	return *r
 }
 
-func fillFromParsedResult(result *RoundTripResult, parsed sse.ParsedResult, _ protocol.APIStyle, _ bool) {
+func fillFromParsedResult(result *RoundTripResult, parsed sse.ParsedResult) {
 	result.Role = parsed.Role
 	result.Content = parsed.Content
 	result.Model = parsed.Model

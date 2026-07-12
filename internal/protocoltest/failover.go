@@ -381,7 +381,7 @@ func (env *TestEnv) SendWithModel(t *testing.T, source protocol.APIType, modelNa
 		result.HTTPStatus = resp.StatusCode
 		result.StreamEvents, result.RawBody = sse.ReadSSELines(resp.Body)
 		parsed := assembleFromEvents(result.StreamEvents, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), true)
+		fillFromParsedResult(result, parsed)
 	} else {
 		req, err := http.NewRequest("POST", path, bytes.NewReader(body))
 		if err != nil {
@@ -395,7 +395,7 @@ func (env *TestEnv) SendWithModel(t *testing.T, source protocol.APIType, modelNa
 		result.HTTPStatus = w.Code
 		result.RawBody = w.Body.Bytes()
 		parsed := parseFromJSON(result.RawBody, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), false)
+		fillFromParsedResult(result, parsed)
 	}
 
 	return result

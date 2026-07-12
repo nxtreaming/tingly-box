@@ -54,5 +54,5 @@ func newRoundTripResult(spec SendSpec) *RoundTripResult {
 // object (SDK accumulators, subprocess drivers re-marshaling).
 func normalizeResultJSON(result *RoundTripResult, raw []byte, source protocol.APIType, streaming bool) {
 	parsed := parseFromJSON(raw, sourceToStyle(source))
-	fillFromParsedResult(result, parsed, sourceToStyle(source), streaming)
+	fillFromParsedResult(result, parsed)
 }
