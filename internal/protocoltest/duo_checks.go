@@ -2,14 +2,18 @@ package protocoltest
 
 // Functional phase of the duo environment: protocol correctness of one
 // conversion route, driven end-to-end over real HTTP through both processes.
+//
+// The client-facing surface is always Anthropic (v1 or beta), so responses
+// are parsed into the shared RoundTripResult shape and verified with the same
+// check.Assertion vocabulary the matrix and replay tiers use — one DuoCheck
+// per assertion. Only the assertion lists below are duo-specific.
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
+	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/sse"
 )
 
@@ -21,6 +25,27 @@ type DuoCheck struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// duoStreamingAssertions verifies a streaming pass: full Anthropic SSE frame
+// shape, assembled content, a stop reason, and usage propagated through the
+// stream's terminal frames.
+func duoStreamingAssertions() []Assertion {
+	return []Assertion{
+		AnthropicStreamShape(),
+		AssertContentNonEmpty(),
+		AssertFinishReasonNonEmpty(),
+		AssertUsagePropagated(),
+	}
+}
+
+// duoNonStreamingAssertions verifies a non-streaming pass: response body
+// content and usage.
+func duoNonStreamingAssertions() []Assertion {
+	return []Assertion{
+		AssertContentNonEmpty(),
+		AssertUsagePropagated(),
+	}
+}
+
 // RunFunctionalChecks verifies protocol correctness of one conversion route
 // with a bodyBytes-sized conversation: streaming SSE shape, assembled
 // content, usage propagation, and the non-streaming response body.
@@ -29,71 +54,49 @@ func (env *DuoEnv) RunFunctionalChecks(route DuoRoute, bodyBytes int) []DuoCheck
 	add := func(name string, pass bool, detail string) {
 		checks = append(checks, DuoCheck{Route: route.Name, Name: name, Pass: pass, Detail: detail})
 	}
-	env.streamingChecks(route, bodyBytes, add)
-	env.nonStreamingChecks(route, bodyBytes, add)
+	env.functionalPass(route, bodyBytes, true, add)
+	env.functionalPass(route, bodyBytes, false, add)
 	return checks
 }
 
-// streamingChecks verifies SSE event shape and the assembled streaming result.
-func (env *DuoEnv) streamingChecks(route DuoRoute, bodyBytes int, add func(name string, pass bool, detail string)) {
-	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, true))
+// functionalPass drives one request over the route, parses the response into
+// the shared RoundTripResult shape, and runs the pass's assertion list.
+func (env *DuoEnv) functionalPass(route DuoRoute, bodyBytes int, streaming bool, add func(name string, pass bool, detail string)) {
+	prefix := "nonstream"
+	assertions := duoNonStreamingAssertions()
+	if streaming {
+		prefix = "stream"
+		assertions = duoStreamingAssertions()
+	}
+
+	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, streaming))
 	if err != nil {
-		add("stream/http", false, err.Error())
+		add(prefix+"/http", false, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		add("stream/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, b))
+		add(prefix+"/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, b))
 		return
 	}
-	add("stream/http", true, "200")
+	add(prefix+"/http", true, "200")
 
-	events, _ := sse.ReadSSELines(resp.Body)
-	joined := strings.Join(events, "\n")
-	for _, evt := range []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"} {
-		add("stream/event/"+evt, strings.Contains(joined, evt), "")
-	}
-
-	parsed := sse.AssembleAnthropicStream(events)
-	if parsed == nil {
-		add("stream/assemble", false, "assembler returned nil")
-		return
-	}
-	add("stream/assemble", parsed.Content != "", fmt.Sprintf("content=%dB", len(parsed.Content)))
-	add("stream/finish_reason", parsed.FinishReason != "", parsed.FinishReason)
-	if parsed.Usage == nil {
-		add("stream/usage", false, "no usage in stream")
+	result := &RoundTripResult{IsStreaming: streaming, HTTPStatus: resp.StatusCode}
+	if streaming {
+		result.StreamEvents, result.RawBody = sse.ReadSSELines(resp.Body)
+		fillFromParsedResult(result, assembleFromEvents(result.StreamEvents, protocol.APIStyleAnthropic))
 	} else {
-		add("stream/usage", parsed.Usage.InputTokens > 0 && parsed.Usage.OutputTokens > 0,
-			fmt.Sprintf("in=%d out=%d", parsed.Usage.InputTokens, parsed.Usage.OutputTokens))
+		raw, _ := io.ReadAll(resp.Body)
+		result.RawBody = raw
+		fillFromParsedResult(result, parseFromJSON(raw, protocol.APIStyleAnthropic))
 	}
-}
 
-// nonStreamingChecks verifies the non-streaming response body shape.
-func (env *DuoEnv) nonStreamingChecks(route DuoRoute, bodyBytes int, add func(name string, pass bool, detail string)) {
-	resp, err := env.post(route, BuildConversationBody(route, bodyBytes, false))
-	if err != nil {
-		add("nonstream/http", false, err.Error())
-		return
+	for _, a := range assertions {
+		if aerr := a.Check(result); aerr != nil {
+			add(prefix+"/"+a.Name, false, aerr.Error())
+		} else {
+			add(prefix+"/"+a.Name, true, "")
+		}
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		add("nonstream/http", false, fmt.Sprintf("status %d: %s", resp.StatusCode, raw[:min(len(raw), 2048)]))
-		return
-	}
-	add("nonstream/http", true, "200")
-	var m map[string]interface{}
-	if err := json.Unmarshal(raw, &m); err != nil {
-		add("nonstream/body", false, "invalid JSON: "+err.Error())
-		return
-	}
-	parsed := sse.ParseAnthropicResult(m)
-	if parsed == nil {
-		add("nonstream/body", false, "unparseable anthropic body")
-		return
-	}
-	add("nonstream/content", parsed.Content != "", fmt.Sprintf("content=%dB", len(parsed.Content)))
-	add("nonstream/usage", parsed.Usage != nil && parsed.Usage.InputTokens > 0, "")
 }

@@ -48,6 +48,32 @@ func AgentSourceAPIType(at AgentType) protocol.APIType {
 	return protocol.TypeAnthropicV1
 }
 
+// AnthropicStreamShape pins the canonical Anthropic SSE frame sequence a
+// client-facing /v1/messages stream must carry, independent of content. It is
+// the shared event-shape vocabulary of the duo functional phase and replay's
+// streaming runs for anthropic-style agents.
+func AnthropicStreamShape() Assertion {
+	return AssertStreamEventsContain(
+		"message_start", "content_block_start", "content_block_delta",
+		"content_block_stop", "message_delta", "message_stop",
+	)
+}
+
+// ResponsesStreamShape pins the OpenAI Responses SSE lifecycle frames a
+// client-facing /v1/responses stream must carry.
+func ResponsesStreamShape() Assertion {
+	return AssertStreamEventsContain("response.created", "response.completed")
+}
+
+// StreamShapeForAgent returns the event-shape assertion matching the stream
+// format the given agent's CLI consumes.
+func StreamShapeForAgent(at AgentType) Assertion {
+	if at == AgentTypeCodex {
+		return ResponsesStreamShape()
+	}
+	return AnthropicStreamShape()
+}
+
 // repointBuiltinRule updates the agent's built-in rule so its fixed
 // RequestModel routes to a single service{providerUUID, upstreamModel}.
 // It is the shared core of the SetupVirtualAgentScenario / SetupVModelAgent

@@ -248,9 +248,16 @@ func (r *ReplayCmd) runOne(agentName, scenarioName string, realEntry *protocolte
 	// For the virtual upstream the response is deterministic, so the
 	// scenario's content-level assertions apply. For vmodel / real the
 	// response is not controlled by the test — only structural checks.
-	assertions := sc.matrix.Structural
+	base := sc.matrix.Structural
 	if r.Upstream == "virtual" {
-		assertions = sc.matrix.Assertions
+		base = sc.matrix.Assertions
+	}
+	assertions := append([]protocoltest.Assertion{}, base...)
+	if sc.streaming {
+		// The client-facing stream must carry the full event shape of the
+		// agent's protocol (not just "some events") — same vocabulary as the
+		// duo functional phase.
+		assertions = append(assertions, protocoltest.StreamShapeForAgent(agentType))
 	}
 	for _, a := range assertions {
 		if aerr := a.Check(result); aerr != nil {

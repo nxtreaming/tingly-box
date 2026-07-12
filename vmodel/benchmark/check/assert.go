@@ -252,3 +252,61 @@ func AssertModelContains(substring string) Assertion {
 		},
 	}
 }
+
+// AssertStreamEventsContain returns an Assertion that every marker appears
+// somewhere in the raw SSE event lines. Use it to pin a streaming response's
+// event shape (e.g. the Anthropic message_start…message_stop frame sequence)
+// independently of its content.
+func AssertStreamEventsContain(markers ...string) Assertion {
+	return Assertion{
+		Name: "stream_events_contain",
+		Check: func(r *RoundTripResult) error {
+			joined := strings.Join(r.StreamEvents, "\n")
+			var missing []string
+			for _, m := range markers {
+				if !strings.Contains(joined, m) {
+					missing = append(missing, m)
+				}
+			}
+			if len(missing) > 0 {
+				return fmt.Errorf("stream missing expected event markers %v (%d event lines)", missing, len(r.StreamEvents))
+			}
+			return nil
+		},
+	}
+}
+
+// AssertFinishReasonNonEmpty returns an Assertion that a finish/stop reason was
+// extracted at all — upstream-independent, unlike AssertFinishReason which pins
+// an exact value.
+func AssertFinishReasonNonEmpty() Assertion {
+	return Assertion{
+		Name: "finish_reason_non_empty",
+		Check: func(r *RoundTripResult) error {
+			if r.FinishReason == "" {
+				return fmt.Errorf("no finish/stop reason extracted")
+			}
+			return nil
+		},
+	}
+}
+
+// AssertUsagePropagated returns an Assertion that token usage was extracted
+// with both input and output counts > 0 — including for streaming responses,
+// where usage rides the terminal frames (e.g. Anthropic message_delta). Use it
+// when the pipeline under test must propagate usage end-to-end;
+// AssertUsageNonZero is the softer variant that skips streaming.
+func AssertUsagePropagated() Assertion {
+	return Assertion{
+		Name: "usage_propagated",
+		Check: func(r *RoundTripResult) error {
+			if r.Usage == nil {
+				return fmt.Errorf("no usage extracted")
+			}
+			if r.Usage.InputTokens <= 0 || r.Usage.OutputTokens <= 0 {
+				return fmt.Errorf("usage not fully propagated (input=%d, output=%d)", r.Usage.InputTokens, r.Usage.OutputTokens)
+			}
+			return nil
+		},
+	}
+}
