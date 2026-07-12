@@ -57,8 +57,8 @@ func skipTransitiveKey(chain TransitiveChain, scenarioName string) (string, bool
 	return "", false
 }
 
-// RunTransitive executes two-hop transitive tests for all chains × scenarios.
-// For each chain A→B→C:
+// RunTransitive executes two-hop transitive tests for all chains × scenarios
+// as subtests under t. For each chain A→B→C:
 //  1. Send as A with target B → get result1 (in A's response format)
 //  2. Send as B with target C → get result2 (in B's response format)
 //  3. Assert result1 and result2 are semantically equivalent
@@ -66,9 +66,10 @@ func skipTransitiveKey(chain TransitiveChain, scenarioName string) (string, bool
 // This catches information loss that single-hop tests miss: if A→B drops a
 // field that B→C needs, the results will diverge.
 //
-// A single TestEnv is shared per scenario to limit file descriptor usage;
-// chains within a scenario run sequentially to avoid "too many open files"
-// under heavy parallelism.
+// Each chain runs the same executeTransitiveChain implementation the CLI
+// path uses; the testing.T layer only provisions one env per scenario (to
+// limit file descriptor usage — chains run sequentially within a scenario)
+// and reports the TestResult.
 func (m *Matrix) RunTransitive(t *testing.T) {
 	t.Helper()
 
@@ -78,7 +79,6 @@ func (m *Matrix) RunTransitive(t *testing.T) {
 	}
 
 	for _, scenario := range m.Scenarios {
-		scenario := scenario
 		if scenario.SkipTransitive {
 			continue
 		}
@@ -86,76 +86,21 @@ func (m *Matrix) RunTransitive(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Parallel()
 
-			env := NewTestEnv(t)
+			env, err := NewTestEnvForCLI(m.testEnvOpts()...)
+			if err != nil {
+				t.Fatalf("create test env: %v", err)
+			}
 			defer env.Close()
 
 			for _, chain := range chains {
-				chain := chain
 				for _, streaming := range m.Streaming {
-					streaming := streaming
-					modeSuffix := "nonstream"
-					if streaming {
-						modeSuffix = "stream"
-					}
-					label := fmt.Sprintf("%s/%s", chain, modeSuffix)
-
-					t.Run(label, func(t *testing.T) {
-						if reason, skip := skipTransitiveKey(chain, scenario.Name); skip {
-							t.Skipf("skipped: %s", reason)
-							return
-						}
-
-						if streaming && !scenarioSupportsStreaming(scenario) {
-							t.Skip("scenario does not support streaming")
-							return
-						}
-						if !streaming && scenarioRequiresStreaming(scenario) {
-							t.Skip("scenario requires streaming mode")
-							return
-						}
-
-						// Hop 1: A→B
-						env.SetupRoute(chain.First.Source, chain.First.Target, scenario)
-						result1 := env.SendAs(t, chain.First.Source, chain.First.Target, scenario, streaming)
-
-						// Hop 2: B→C
-						env.SetupRoute(chain.Second.Source, chain.Second.Target, scenario)
-						result2 := env.SendAs(t, chain.Second.Source, chain.Second.Target, scenario, streaming)
-
-						// Both hops must individually succeed
-						for _, a := range scenario.Assertions {
-							if err := a.Check(result1); err != nil {
-								t.Errorf("hop1 (%s→%s) assertion %q failed: %v",
-									chain.First.Source, chain.First.Target, a.Name, err)
-							}
-							if err := a.Check(result2); err != nil {
-								t.Errorf("hop2 (%s→%s) assertion %q failed: %v",
-									chain.Second.Source, chain.Second.Target, a.Name, err)
-							}
-						}
-
-						// Semantic equivalence between the two hops
-						checkSemanticEquivalence(t, chain, result1, result2)
+					t.Run(fmt.Sprintf("%s/%s", chain, streamMode(streaming)), func(t *testing.T) {
+						result := m.executeTransitiveChain(env, scenario, chain, streaming)
+						reportTestResult(t, &result)
 					})
 				}
 			}
 		})
-	}
-}
-
-// checkSemanticEquivalence verifies that two RoundTripResults carry the same
-// semantic payload despite being in different protocol formats.
-func checkSemanticEquivalence(t *testing.T, chain TransitiveChain, r1, r2 *RoundTripResult) {
-	t.Helper()
-	assertSemanticEquivalence(t, chain.String(), r1, r2)
-}
-
-// assertSemanticEquivalence verifies that two RoundTripResults carry the same
-// semantic payload despite being in different protocol formats.
-func assertSemanticEquivalence(t *testing.T, label string, r1, r2 *RoundTripResult) {
-	t.Helper()
-	for _, e := range semanticEquivalenceErrors(label, r1, r2) {
-		t.Errorf("%s: %s", e.Assertion, e.Error)
 	}
 }
 

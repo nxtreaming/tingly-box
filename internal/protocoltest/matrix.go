@@ -282,65 +282,55 @@ func (m *Matrix) RunFull(t *testing.T) {
 	})
 }
 
-// Run executes all matrix combinations as subtests under t.
-// Each combination runs in its own TestEnv so state is isolated.
+// Run executes all matrix combinations as subtests under t. Each combination
+// runs the same executeTest implementation the CLI path uses — the testing.T
+// layer only provisions an env per subtest and reports the TestResult, so the
+// skip logic and assertion loop exist exactly once.
 func (m *Matrix) Run(t *testing.T) {
 	t.Helper()
 
 	for _, scenario := range m.Scenarios {
-		scenario := scenario
 		t.Run(scenario.Name, func(t *testing.T) {
 			for _, pair := range m.Pairs {
-				pair := pair
 				t.Run(string(pair.Source), func(t *testing.T) {
 					t.Run(string(pair.Target), func(t *testing.T) {
 						for _, streaming := range m.Streaming {
-							streaming := streaming
-							modeSuffix := "nonstream"
-							if streaming {
-								modeSuffix = "stream"
-							}
-							t.Run(modeSuffix, func(t *testing.T) {
+							t.Run(streamMode(streaming), func(t *testing.T) {
 								t.Parallel()
 
-								srcScenarioKey := fmt.Sprintf("%s|%s", pair.Source, scenario.Name)
-								if reason, skip := skipSourceScenarios[srcScenarioKey]; skip {
-									t.Skipf("skipped: %s", reason)
-									return
+								env, err := NewTestEnvForCLI(m.testEnvOpts()...)
+								if err != nil {
+									t.Fatalf("create test env: %v", err)
 								}
-								if reason, skip := m.clientSkipReason(pair.Source, scenario.Name); skip {
-									t.Skipf("skipped: %s", reason)
-									return
-								}
-
-								if streaming && !scenarioSupportsStreaming(scenario) {
-									t.Skip("scenario does not support streaming")
-									return
-								}
-								if !streaming && scenarioRequiresStreaming(scenario) {
-									t.Skip("scenario requires streaming mode")
-									return
-								}
-
-								env := NewTestEnv(t, m.testEnvOpts()...)
 								defer env.Close()
 
-								env.SetupRoute(pair.Source, pair.Target, scenario)
-
-								result := env.SendAs(t, pair.Source, pair.Target, scenario, streaming)
-
-								for _, a := range scenario.Assertions {
-									if err := a.Check(result); err != nil {
-										t.Errorf("assertion %q failed: %v\n  body: %s",
-											a.Name, err, truncate(string(result.RawBody), 300))
-									}
-								}
+								reportTestResult(t, m.executeTest(env, scenario, pair.Source, pair.Target, streaming))
 							})
 						}
 					})
 				})
 			}
 		})
+	}
+}
+
+// reportTestResult surfaces a CLI-shaped TestResult under t — the bridge that
+// lets the go-test entry points share the CLI execution path instead of
+// re-implementing setup, skip logic, and assertion loops.
+func reportTestResult(t *testing.T, r *TestResult) {
+	t.Helper()
+	if r == nil {
+		return
+	}
+	if r.Skipped {
+		t.Skipf("skipped: %s", r.SkipReason)
+	}
+	for _, e := range r.Errors {
+		if e.Context != "" {
+			t.Errorf("%s: %s\n  body: %s", e.Assertion, e.Error, e.Context)
+		} else {
+			t.Errorf("%s: %s", e.Assertion, e.Error)
+		}
 	}
 }
 

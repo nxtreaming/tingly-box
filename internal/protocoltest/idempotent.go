@@ -149,17 +149,16 @@ func (env *TestEnv) setupChainHopRoute(source, target protocol.APIType, s Scenar
 	_ = env.appConfig.GetGlobalConfig().AddRequestConfig(rule)
 }
 
-// RunIdempotent executes round-trip idempotency tests for all cases × scenarios.
-// For each case it wires three routes in a single gateway, drives the baseline
-// and round-trip requests, and asserts the client-visible results are
-// semantically equivalent.
+// RunIdempotent executes round-trip idempotency tests for all cases ×
+// scenarios as subtests under t. Each case runs the same
+// executeIdempotentCase implementation the CLI path uses; the testing.T
+// layer only provisions one env per scenario and reports the TestResult.
 func (m *Matrix) RunIdempotent(t *testing.T) {
 	t.Helper()
 
 	cases := DefaultIdempotentCases()
 
 	for _, scenario := range m.Scenarios {
-		scenario := scenario
 		// Error / truncation scenarios are not round-trippable: the inner
 		// gateway wraps upstream errors and a mid-stream cut surfaces as an
 		// error on one hop but partial content on another, so the two paths
@@ -171,72 +170,17 @@ func (m *Matrix) RunIdempotent(t *testing.T) {
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Parallel()
 
-			env := NewTestEnv(t)
+			env, err := NewTestEnvForCLI(m.testEnvOpts()...)
+			if err != nil {
+				t.Fatalf("create test env: %v", err)
+			}
 			defer env.Close()
 
 			for _, ic := range cases {
-				ic := ic
 				for _, streaming := range m.Streaming {
-					streaming := streaming
-					modeSuffix := "nonstream"
-					if streaming {
-						modeSuffix = "stream"
-					}
-					label := fmt.Sprintf("%s/%s", ic.Name, modeSuffix)
-
-					t.Run(label, func(t *testing.T) {
-						// Both hops must be supported for this scenario.
-						if reason, skip := skipIdempotentScenario(ic, scenario.Name); skip {
-							t.Skipf("skipped: %s", reason)
-							return
-						}
-						if streaming && !scenarioSupportsStreaming(scenario) {
-							t.Skip("scenario does not support streaming")
-							return
-						}
-						if !streaming && scenarioRequiresStreaming(scenario) {
-							t.Skip("scenario requires streaming mode")
-							return
-						}
-
-						// Baseline: A → A' passthrough through the virtual server.
-						env.SetupRoute(ic.Source, ic.Baseline, scenario)
-						baseModel := env.findRouteModel(ic.Source, ic.Baseline, scenario.Name)
-
-						// Chain tail: B → A' through the virtual server.
-						env.SetupRoute(ic.Mid, ic.Baseline, scenario)
-						tailModel := env.findRouteModel(ic.Mid, ic.Baseline, scenario.Name)
-
-						// Chain head: A → B, forwarding back into the gateway
-						// carrying tailModel.
-						headModel := fmt.Sprintf("idem-%s-%s", ic.Name, scenario.Name)
-						env.setupChainHopRoute(ic.Source, ic.Mid, scenario, headModel, tailModel)
-
-						baseline, err := env.sendModel(ic.Source, ic.Baseline, scenario.Name, baseModel, streaming)
-						if err != nil {
-							t.Fatalf("baseline send: %v", err)
-						}
-						roundtrip, err := env.sendModel(ic.Source, ic.Mid, scenario.Name, headModel, streaming)
-						if err != nil {
-							t.Fatalf("round-trip send: %v", err)
-						}
-
-						// Each path must independently satisfy the scenario.
-						for _, a := range scenario.Assertions {
-							if err := a.Check(baseline); err != nil {
-								t.Errorf("baseline (%s→%s) assertion %q failed: %v\n  body: %s",
-									ic.Source, ic.Baseline, a.Name, err, truncate(string(baseline.RawBody), 300))
-							}
-							if err := a.Check(roundtrip); err != nil {
-								t.Errorf("round-trip (%s→%s→%s) assertion %q failed: %v\n  body: %s",
-									ic.Source, ic.Mid, ic.Baseline, a.Name, err, truncate(string(roundtrip.RawBody), 300))
-							}
-						}
-
-						// The whole point: baseline and round-trip must agree.
-						chainLabel := fmt.Sprintf("%s→%s→%s vs %s→%s",
-							ic.Source, ic.Mid, ic.Baseline, ic.Source, ic.Baseline)
-						assertSemanticEquivalence(t, chainLabel, baseline, roundtrip)
+					t.Run(fmt.Sprintf("%s/%s", ic.Name, streamMode(streaming)), func(t *testing.T) {
+						result := m.executeIdempotentCase(env, scenario, ic, streaming)
+						reportTestResult(t, &result)
 					})
 				}
 			}
