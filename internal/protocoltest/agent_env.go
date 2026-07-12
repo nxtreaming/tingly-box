@@ -15,6 +15,13 @@ import (
 	"github.com/tingly-dev/tingly-box/vmodel/virtualserver"
 )
 
+// VirtualMockAnswerMarker is a substring guaranteed to appear in the default
+// virtual upstream's answer (the shared TextScenario's fixed reply, "The
+// capital of France is Paris."). Agent-CLI callers use it to verify that the
+// gateway round trip's content actually reached the CLI's output — a zero
+// exit code alone can mask a CLI that printed an error and exited cleanly.
+const VirtualMockAnswerMarker = "Paris"
+
 // AgentType represents the type of agent Agent to test
 type AgentType string
 
@@ -131,14 +138,15 @@ func NewAgentTestEnv(AgentType AgentType) (*AgentTestEnv, error) {
 		return nil, fmt.Errorf("create app config: %w", err)
 	}
 
-	// Start virtual server (mock provider) and register default scenarios
+	// Start the virtual server (mock provider) with the shared text scenario
+	// as its only pre-registered mock. Agent CLIs send their built-in request
+	// model (not a scenario-encoded one), so the responder serves its fallback
+	// scenario — keeping exactly one registered makes the fallback
+	// deterministic, and its fixed answer (VirtualMockAnswerMarker) lets
+	// callers assert the round trip's content in the CLI's output. Replay
+	// registers additional scenarios on demand (SetupVirtualAgentScenario).
 	virtualServer := NewVirtualServerForCLI()
-	for _, ps := range AgentScenarios() {
-		virtualServer.RegisterScenario(Scenario{
-			Name:          ps.Name,
-			MockResponses: ps.MockResponses,
-		})
-	}
+	virtualServer.RegisterScenario(TextScenario())
 
 	// Create gateway server with real routing
 	gatewayServer := server.NewServer(appConfig.GetGlobalConfig())
