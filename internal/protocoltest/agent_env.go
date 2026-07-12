@@ -7,13 +7,18 @@ import (
 	"os"
 
 	"github.com/tingly-dev/tingly-box/internal/config"
-	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
-	"github.com/tingly-dev/tingly-box/internal/server"
 	serverconfig "github.com/tingly-dev/tingly-box/internal/server/config"
 	"github.com/tingly-dev/tingly-box/internal/typ"
 	"github.com/tingly-dev/tingly-box/vmodel/virtualserver"
 )
+
+// VirtualMockAnswerMarker is a substring guaranteed to appear in the default
+// virtual upstream's answer (the shared TextScenario's fixed reply, "The
+// capital of France is Paris."). Agent-CLI callers use it to verify that the
+// gateway round trip's content actually reached the CLI's output — a zero
+// exit code alone can mask a CLI that printed an error and exited cleanly.
+const VirtualMockAnswerMarker = "Paris"
 
 // AgentType represents the type of agent Agent to test
 type AgentType string
@@ -118,40 +123,27 @@ type AgentTestEnv struct {
 // The environment is isolated with a temporary config directory
 // and must be cleaned up with Close() when done
 func NewAgentTestEnv(AgentType AgentType) (*AgentTestEnv, error) {
-	// Create temporary config directory
-	configDir, err := os.MkdirTemp("", "harness-Agent-*")
+	core, err := newGatewayCore("harness-agent-*", nil)
 	if err != nil {
-		return nil, fmt.Errorf("create temp config dir: %w", err)
+		return nil, err
 	}
 
-	// Create app config
-	appConfig, err := config.NewAppConfig(config.WithConfigDir(configDir))
-	if err != nil {
-		os.RemoveAll(configDir)
-		return nil, fmt.Errorf("create app config: %w", err)
-	}
-
-	// Start virtual server (mock provider) and register default scenarios
-	virtualServer := NewVirtualServerForCLI()
-	for _, ps := range AgentScenarios() {
-		virtualServer.RegisterScenario(Scenario{
-			Name:          ps.Name,
-			MockResponses: ps.MockResponses,
-		})
-	}
-
-	// Create gateway server with real routing
-	gatewayServer := server.NewServer(appConfig.GetGlobalConfig())
-	router := gatewayServer.GetRouter()
-	ts := httptest.NewServer(router)
+	// Pre-register the shared text scenario as the virtual server's only
+	// mock. Agent CLIs send their built-in request model (not a
+	// scenario-encoded one), so the responder serves its fallback scenario —
+	// keeping exactly one registered makes the fallback deterministic, and
+	// its fixed answer (VirtualMockAnswerMarker) lets callers assert the
+	// round trip's content in the CLI's output. Replay registers additional
+	// scenarios on demand (SetupVirtualAgentScenario).
+	core.virtual.RegisterScenario(TextScenario())
 
 	return &AgentTestEnv{
-		configDir:        configDir,
-		appConfig:        appConfig,
-		gatewayServer:    ts,
-		virtualServer:    virtualServer,
-		baseURL:          ts.URL,
-		modelToken:       appConfig.GetGlobalConfig().GetModelToken(),
+		configDir:        core.configDir,
+		appConfig:        core.appConfig,
+		gatewayServer:    core.gateway,
+		virtualServer:    core.virtual,
+		baseURL:          core.gateway.URL,
+		modelToken:       core.modelToken,
 		capturedRequests: make([]*CapturedRequest, 0),
 		closed:           false,
 	}, nil
@@ -172,6 +164,11 @@ func (env *AgentTestEnv) Close(preserve bool) error {
 	// Close virtual server
 	if env.virtualServer != nil {
 		env.virtualServer.Close()
+	}
+
+	// Release the config's database handles (see TestEnv.Close for why)
+	if env.appConfig != nil {
+		_ = env.appConfig.GetGlobalConfig().CloseStores()
 	}
 
 	// Clean up config directory unless preserved
@@ -242,52 +239,9 @@ func (env *AgentTestEnv) SetupAgent(AgentType AgentType, providerName string, mo
 		return fmt.Errorf("add provider: %w", err)
 	}
 
-	// Find the existing built-in rule and update it with our test service.
-	// Built-in rules are initialized with empty services; we inject the virtual server service.
-	scenario := AgentType.Scenario()
-
-	// Resolve the built-in rule UUID and its request model
-	var builtinUUID string
-	var requestModel string
-	switch AgentType {
-	case AgentTypeClaudeCode:
-		builtinUUID = "builtin:claude_code:cc"
-		requestModel = "tingly/cc"
-	case AgentTypeCodex:
-		builtinUUID = serverconfig.RuleUUIDCodex
-		requestModel = "tingly-codex"
-	case AgentTypeOpenCode:
-		builtinUUID = serverconfig.RuleUUIDOpenCode
-		requestModel = "tingly-opencode"
-	default:
-		return fmt.Errorf("unknown Agent type: %s", AgentType)
-	}
-
-	rule := typ.Rule{
-		UUID:          builtinUUID,
-		Scenario:      scenario,
-		RequestModel:  requestModel,
-		ResponseModel: modelName,
-		Services: []*loadbalance.Service{
-			{
-				Provider: providerName,
-				Model:    modelName,
-				Weight:   1,
-				Active:   true,
-			},
-		},
-		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticRandom,
-			Params: typ.DefaultRandomParams(),
-		},
-		Active: true,
-	}
-
-	if err := env.appConfig.GetGlobalConfig().UpdateRequestConfigByUUID(builtinUUID, rule); err != nil {
-		return fmt.Errorf("update rule: %w", err)
-	}
-
-	return nil
+	// Built-in rules are seeded with empty services; repoint injects the
+	// virtual-server service.
+	return env.repointBuiltinRule(AgentType, providerName, modelName)
 }
 
 // SetupRealAgent configures the environment to route through a real upstream provider.
@@ -310,49 +264,7 @@ func (env *AgentTestEnv) SetupRealAgent(AgentType AgentType, providerName string
 		return fmt.Errorf("add provider: %w", err)
 	}
 
-	scenario := AgentType.Scenario()
-
-	var builtinUUID string
-	var requestModel string
-	switch AgentType {
-	case AgentTypeClaudeCode:
-		builtinUUID = "builtin:claude_code:cc"
-		requestModel = "tingly/cc"
-	case AgentTypeCodex:
-		builtinUUID = serverconfig.RuleUUIDCodex
-		requestModel = "tingly-codex"
-	case AgentTypeOpenCode:
-		builtinUUID = serverconfig.RuleUUIDOpenCode
-		requestModel = "tingly-opencode"
-	default:
-		return fmt.Errorf("unknown Agent type: %s", AgentType)
-	}
-
-	rule := typ.Rule{
-		UUID:          builtinUUID,
-		Scenario:      scenario,
-		RequestModel:  requestModel,
-		ResponseModel: modelName,
-		Services: []*loadbalance.Service{
-			{
-				Provider: providerName,
-				Model:    modelName,
-				Weight:   1,
-				Active:   true,
-			},
-		},
-		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticRandom,
-			Params: typ.DefaultRandomParams(),
-		},
-		Active: true,
-	}
-
-	if err := env.appConfig.GetGlobalConfig().UpdateRequestConfigByUUID(builtinUUID, rule); err != nil {
-		return fmt.Errorf("update rule: %w", err)
-	}
-
-	return nil
+	return env.repointBuiltinRule(AgentType, providerName, modelName)
 }
 
 // SetupVModelAgent configures the environment so the agent's built-in rule

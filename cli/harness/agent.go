@@ -240,6 +240,14 @@ func runVirtualAgentTest(agentName string, prompt string, writer *summaryWriter,
 	r.ExitCode = inner.ExitCode
 	r.Duration = inner.Duration
 
+	// The virtual upstream's answer is fixed, so a zero exit code alone is not
+	// success: the CLI's output must carry the round-trip content. This catches
+	// a CLI that prints an error (or drops the response) yet exits cleanly.
+	if r.Success && !strings.Contains(r.Output, protocoltest.VirtualMockAnswerMarker) {
+		r.Success = false
+		r.Error = fmt.Sprintf("agent output does not contain the mock answer marker %q — the gateway round trip's content never reached the CLI output", protocoltest.VirtualMockAnswerMarker)
+	}
+
 	printRealAgentTestResult(r)
 	fmt.Println()
 	if writer != nil {
@@ -263,17 +271,10 @@ func virtualAPIStyle(agentType protocoltest.AgentType) string {
 }
 
 // builtinRequestModel returns the fixed RequestModel used by the built-in rule
-// for each agent type. This is what the agent CLI actually sends to the gateway.
+// for each agent type — what the agent CLI actually sends to the gateway.
+// Thin alias over the engine's single copy of the mapping.
 func builtinRequestModel(agentType protocoltest.AgentType) string {
-	switch agentType {
-	case protocoltest.AgentTypeClaudeCode:
-		return "tingly/cc"
-	case protocoltest.AgentTypeCodex:
-		return "tingly-codex"
-	case protocoltest.AgentTypeOpenCode:
-		return "tingly-opencode"
-	}
-	return ""
+	return protocoltest.BuiltinRequestModel(agentType)
 }
 
 // batchAgents is the ordered list of agents to run in batch mode.
@@ -411,6 +412,25 @@ type AgentTestResult struct {
 	SettingsPath string
 }
 
+// finishAgentResult records the shared outcome fields of one agent CLI run —
+// the single implementation of the timeout / error / success classification
+// every executor uses.
+func finishAgentResult(result *AgentTestResult, start time.Time, output []byte, timedOut bool, err error) {
+	result.Duration = time.Since(start)
+	result.Output = string(output)
+	switch {
+	case timedOut:
+		result.Error = fmt.Sprintf("timeout after %s", agentRunTimeout)
+		result.ExitCode = -1
+		result.TimedOut = true
+	case err != nil:
+		result.Error = err.Error()
+		result.ExitCode = exitCode(err)
+	default:
+		result.Success = true
+	}
+}
+
 // executeAgentCommand executes the actual agent CLI command against the virtual-model gateway.
 func executeAgentCommand(agentType protocoltest.AgentType, prompt string) (*AgentTestResult, error) {
 	switch agentType {
@@ -495,24 +515,7 @@ func executeClaudeWithEnv(env *protocoltest.AgentTestEnv, prompt string) (*Agent
 	cmd.Env = os.Environ()
 
 	output, timedOut, err := runAgentCmdWithTimeout(cmd)
-
-	result.Duration = time.Since(start)
-	result.Output = string(output)
-
-	switch {
-	case timedOut:
-		result.Error = fmt.Sprintf("timeout after %s", agentRunTimeout)
-		result.ExitCode = -1
-		result.Success = false
-		result.TimedOut = true
-	case err != nil:
-		result.Error = err.Error()
-		result.ExitCode = exitCode(err)
-		result.Success = false
-	default:
-		result.Success = true
-	}
-
+	finishAgentResult(result, start, output, timedOut, err)
 	return result, nil
 }
 
@@ -587,24 +590,7 @@ wire_api = "responses"
 	cmd := exec.Command(binPath, "exec", "--dangerously-bypass-approvals-and-sandbox", prompt)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("CODEX_HOME=%s", codexHome))
 	output, timedOut, err := runAgentCmdWithTimeout(cmd)
-
-	result.Duration = time.Since(start)
-	result.Output = string(output)
-
-	switch {
-	case timedOut:
-		result.Error = fmt.Sprintf("timeout after %s", agentRunTimeout)
-		result.ExitCode = -1
-		result.Success = false
-		result.TimedOut = true
-	case err != nil:
-		result.Error = err.Error()
-		result.ExitCode = exitCode(err)
-		result.Success = false
-	default:
-		result.Success = true
-	}
-
+	finishAgentResult(result, start, output, timedOut, err)
 	return result, nil
 }
 
@@ -682,24 +668,7 @@ func executeOpenCodeWithEnv(env *protocoltest.AgentTestEnv, model string, prompt
 	cmd := exec.Command(binPath, "run", "-m", fmt.Sprintf("%s/%s", providerKey, model), prompt)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("XDG_CONFIG_HOME=%s", xdgDir))
 	output, timedOut, err := runAgentCmdWithTimeout(cmd)
-
-	result.Duration = time.Since(start)
-	result.Output = string(output)
-
-	switch {
-	case timedOut:
-		result.Error = fmt.Sprintf("timeout after %s", agentRunTimeout)
-		result.ExitCode = -1
-		result.Success = false
-		result.TimedOut = true
-	case err != nil:
-		result.Error = err.Error()
-		result.ExitCode = exitCode(err)
-		result.Success = false
-	default:
-		result.Success = true
-	}
-
+	finishAgentResult(result, start, output, timedOut, err)
 	return result, nil
 }
 

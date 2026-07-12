@@ -34,18 +34,10 @@ type Matrix struct {
 	Scenarios  []Scenario
 	Streaming  []bool
 	RecordDir  string // Optional directory for recording requests/responses
-	ServerMode string // Server reuse mode: auto, all, pair
 	BatchCount int    // Number of times to run each test
 	MCPEnabled bool   // Enable MCP feature flag in test env
 	Client     Client // Client driver (nil = raw HTTP default)
 }
-
-// ServerMode constants
-const (
-	ServerModeAuto = "auto" // Per-scenario (default)
-	ServerModeAll  = "all"  // Single server for all tests
-	ServerModePair = "pair" // Per source-target pair
-)
 
 // DefaultPairs is the canonical list of (source → target) conversion
 // paths the matrix exercises. Adding a new dispatch path means appending
@@ -178,13 +170,6 @@ func (m *Matrix) WithRecordDir(recordDir string) *Matrix {
 	return out
 }
 
-// WithServerMode returns a copy of the Matrix with the server reuse mode set.
-func (m *Matrix) WithServerMode(mode string) *Matrix {
-	out := m.clone()
-	out.ServerMode = mode
-	return out
-}
-
 // WithBatchCount returns a copy of the Matrix with the batch count set.
 func (m *Matrix) WithBatchCount(count int) *Matrix {
 	out := m.clone()
@@ -221,11 +206,24 @@ func (m *Matrix) testEnvOpts() []TestEnvOption {
 	return opts
 }
 
-// skipSourceScenarios lists source+scenario combinations that are known to be broken.
+// skipSourceScenarios is the single registry of source+scenario combinations
+// that are known to be broken. Every entry is a real gateway defect, not a
+// test artifact; remove it when the defect is fixed. All tiers derive their
+// skips from this map (the matrix directly, replay via KnownDefectReason), so
+// closing a defect is a one-line deletion.
 var skipSourceScenarios = map[string]string{
 	// openai_responses source: tool_call conversion from provider back to Responses format loses tool calls
 	"openai_responses|tool_use":           "Responses API source: tool_use conversion incomplete",
 	"openai_responses|streaming_tool_use": "Responses API source: streaming tool_use conversion incomplete",
+}
+
+// KnownDefectReason reports whether a (source protocol, scenario) combination
+// is in the known-defect registry, and why. Consumers outside the matrix
+// (e.g. `harness replay`) use this to skip runs that exercise a documented
+// gateway bug instead of keeping their own copy of the list.
+func KnownDefectReason(source protocol.APIType, scenarioName string) (string, bool) {
+	reason, skip := skipSourceScenarios[fmt.Sprintf("%s|%s", source, scenarioName)]
+	return reason, skip
 }
 
 // clientSkipScenarios lists client|source|scenario[|mode] combinations that are
@@ -269,65 +267,55 @@ func (m *Matrix) RunFull(t *testing.T) {
 	})
 }
 
-// Run executes all matrix combinations as subtests under t.
-// Each combination runs in its own TestEnv so state is isolated.
+// Run executes all matrix combinations as subtests under t. Each combination
+// runs the same executeTest implementation the CLI path uses — the testing.T
+// layer only provisions an env per subtest and reports the TestResult, so the
+// skip logic and assertion loop exist exactly once.
 func (m *Matrix) Run(t *testing.T) {
 	t.Helper()
 
 	for _, scenario := range m.Scenarios {
-		scenario := scenario
 		t.Run(scenario.Name, func(t *testing.T) {
 			for _, pair := range m.Pairs {
-				pair := pair
 				t.Run(string(pair.Source), func(t *testing.T) {
 					t.Run(string(pair.Target), func(t *testing.T) {
 						for _, streaming := range m.Streaming {
-							streaming := streaming
-							modeSuffix := "nonstream"
-							if streaming {
-								modeSuffix = "stream"
-							}
-							t.Run(modeSuffix, func(t *testing.T) {
+							t.Run(streamMode(streaming), func(t *testing.T) {
 								t.Parallel()
 
-								srcScenarioKey := fmt.Sprintf("%s|%s", pair.Source, scenario.Name)
-								if reason, skip := skipSourceScenarios[srcScenarioKey]; skip {
-									t.Skipf("skipped: %s", reason)
-									return
+								env, err := NewTestEnvForCLI(m.testEnvOpts()...)
+								if err != nil {
+									t.Fatalf("create test env: %v", err)
 								}
-								if reason, skip := m.clientSkipReason(pair.Source, scenario.Name); skip {
-									t.Skipf("skipped: %s", reason)
-									return
-								}
-
-								if streaming && !scenarioSupportsStreaming(scenario) {
-									t.Skip("scenario does not support streaming")
-									return
-								}
-								if !streaming && scenarioRequiresStreaming(scenario) {
-									t.Skip("scenario requires streaming mode")
-									return
-								}
-
-								env := NewTestEnv(t, m.testEnvOpts()...)
 								defer env.Close()
 
-								env.SetupRoute(pair.Source, pair.Target, scenario)
-
-								result := env.SendAs(t, pair.Source, pair.Target, scenario, streaming)
-
-								for _, a := range scenario.Assertions {
-									if err := a.Check(result); err != nil {
-										t.Errorf("assertion %q failed: %v\n  body: %s",
-											a.Name, err, truncate(string(result.RawBody), 300))
-									}
-								}
+								reportTestResult(t, m.executeTest(env, scenario, pair.Source, pair.Target, streaming))
 							})
 						}
 					})
 				})
 			}
 		})
+	}
+}
+
+// reportTestResult surfaces a CLI-shaped TestResult under t — the bridge that
+// lets the go-test entry points share the CLI execution path instead of
+// re-implementing setup, skip logic, and assertion loops.
+func reportTestResult(t *testing.T, r *TestResult) {
+	t.Helper()
+	if r == nil {
+		return
+	}
+	if r.Skipped {
+		t.Skipf("skipped: %s", r.SkipReason)
+	}
+	for _, e := range r.Errors {
+		if e.Context != "" {
+			t.Errorf("%s: %s\n  body: %s", e.Assertion, e.Error, e.Context)
+		} else {
+			t.Errorf("%s: %s", e.Assertion, e.Error)
+		}
 	}
 }
 
@@ -382,27 +370,10 @@ func truncate(s string, max int) string {
 // This is a pure function that can be called from both tests and CLI.
 // It does not use testing.T, making it suitable for standalone execution.
 //
-// Server reuse strategies based on ServerMode:
-// - auto (default): Reuses TestEnv per scenario
-// - all: Uses a single TestEnv for all tests (fastest, potential for interference)
-// - pair: Reuses TestEnv per source-target pair (balanced approach)
+// One TestEnv is created per scenario and reused for all of its combinations
+// — routes are keyed by (source, target, scenario), so combinations within a
+// scenario cannot interfere, and env boots stay off the hot path.
 func (m *Matrix) ExecuteAll() []TestResult {
-	var results []TestResult
-
-	switch m.ServerMode {
-	case ServerModeAll:
-		results = m.executeAllWithSingleServer()
-	case ServerModePair:
-		results = m.executeAllWithPairServer()
-	default: // ServerModeAuto
-		results = m.executeAllWithScenarioServer()
-	}
-
-	return results
-}
-
-// executeAllWithScenarioServer executes tests with per-scenario server reuse (default).
-func (m *Matrix) executeAllWithScenarioServer() []TestResult {
 	var results []TestResult
 
 	// For each scenario, create one TestEnv and reuse it for all combinations
@@ -443,77 +414,6 @@ func (m *Matrix) executeAllWithScenarioServer() []TestResult {
 		}
 
 		// Close env explicitly after processing all combinations for this scenario
-		env.Close()
-	}
-
-	return results
-}
-
-// executeAllWithSingleServer executes all tests with a single server.
-func (m *Matrix) executeAllWithSingleServer() []TestResult {
-	var results []TestResult
-
-	// Create a single TestEnv for all tests
-	env, err := NewTestEnvForCLI(m.testEnvOpts()...)
-	if err != nil {
-		// All tests fail with setup error
-		return m.allSetupError(err)
-	}
-	defer env.Close()
-
-	// Run all combinations
-	for _, scenario := range m.Scenarios {
-		for _, pair := range m.Pairs {
-			for _, streaming := range m.Streaming {
-				if result := m.executeTest(env, scenario, pair.Source, pair.Target, streaming); result != nil {
-					results = append(results, *result)
-				}
-			}
-		}
-	}
-
-	return results
-}
-
-// executeAllWithPairServer executes tests with per source-target pair server reuse.
-func (m *Matrix) executeAllWithPairServer() []TestResult {
-	var results []TestResult
-
-	// For each source-target pair, create one TestEnv
-	for _, pair := range m.Pairs {
-		// Create TestEnv for this pair
-		env, err := NewTestEnvForCLI(m.testEnvOpts()...)
-		if err != nil {
-			// All tests for this pair fail with setup error
-			for _, scenario := range m.Scenarios {
-				for _, streaming := range m.Streaming {
-					results = append(results, TestResult{
-						Name:      m.buildTestName(scenario.Name, pair.Source, pair.Target, streaming),
-						Scenario:  scenario.Name,
-						Source:    pair.Source,
-						Target:    pair.Target,
-						Streaming: streaming,
-						Passed:    false,
-						Errors: []AssertionError{{
-							Assertion: "setup",
-							Error:     fmt.Sprintf("failed to create test env: %v", err),
-						}},
-					})
-				}
-			}
-			continue
-		}
-		defer env.Close()
-
-		// Run all scenarios for this pair
-		for _, scenario := range m.Scenarios {
-			for _, streaming := range m.Streaming {
-				if result := m.executeTest(env, scenario, pair.Source, pair.Target, streaming); result != nil {
-					results = append(results, *result)
-				}
-			}
-		}
-
 		env.Close()
 	}
 
@@ -567,99 +467,6 @@ func (m *Matrix) executeTest(env *TestEnv, scenario Scenario, source, target pro
 
 	result := m.executeOneWithEnv(env, scenario, source, target, streaming)
 	return &result
-}
-
-// allSetupError returns results all marked as setup errors.
-func (m *Matrix) allSetupError(err error) []TestResult {
-	var results []TestResult
-	for _, scenario := range m.Scenarios {
-		for _, pair := range m.Pairs {
-			for _, streaming := range m.Streaming {
-				results = append(results, TestResult{
-					Name:      m.buildTestName(scenario.Name, pair.Source, pair.Target, streaming),
-					Scenario:  scenario.Name,
-					Source:    pair.Source,
-					Target:    pair.Target,
-					Streaming: streaming,
-					Passed:    false,
-					Errors: []AssertionError{{
-						Assertion: "setup",
-						Error:     fmt.Sprintf("failed to create test env: %v", err),
-					}},
-				})
-			}
-		}
-	}
-	return results
-}
-
-// executeOne runs a single test combination and returns the result.
-// Creates a new TestEnv for this test only.
-func (m *Matrix) executeOne(s Scenario, source, target protocol.APIType, streaming bool) TestResult {
-	start := time.Now()
-
-	// Create test environment
-	env, err := NewTestEnvForCLI(m.testEnvOpts()...)
-	if err != nil {
-		return TestResult{
-			Name:      m.buildTestName(s.Name, source, target, streaming),
-			Scenario:  s.Name,
-			Source:    source,
-			Target:    target,
-			Streaming: streaming,
-			Passed:    false,
-			Errors: []AssertionError{{
-				Assertion: "setup",
-				Error:     fmt.Sprintf("failed to create test env: %v", err),
-			}},
-		}
-	}
-	defer env.Close()
-
-	env.SetupRoute(source, target, s)
-	result, err := env.SendAsCLI(source, target, s, streaming)
-	if err != nil {
-		return TestResult{
-			Name:      m.buildTestName(s.Name, source, target, streaming),
-			Scenario:  s.Name,
-			Source:    source,
-			Target:    target,
-			Streaming: streaming,
-			Passed:    false,
-			Errors: []AssertionError{{
-				Assertion: "send",
-				Error:     fmt.Sprintf("failed to send request: %v", err),
-			}},
-			Duration: time.Since(start),
-		}
-	}
-
-	// Check assertions
-	var errors []AssertionError
-	passed := true
-	for _, a := range s.Assertions {
-		if err := a.Check(result); err != nil {
-			passed = false
-			errors = append(errors, AssertionError{
-				Assertion: a.Name,
-				Error:     err.Error(),
-				Context:   truncate(string(result.RawBody), 300),
-			})
-		}
-	}
-
-	return TestResult{
-		Name:       m.buildTestName(s.Name, source, target, streaming),
-		Scenario:   s.Name,
-		Source:     source,
-		Target:     target,
-		Streaming:  streaming,
-		Passed:     passed,
-		Errors:     errors,
-		Duration:   time.Since(start),
-		HTTPStatus: result.HTTPStatus,
-		Response:   result,
-	}
 }
 
 // executeOneWithEnv runs a single test combination using the provided TestEnv.

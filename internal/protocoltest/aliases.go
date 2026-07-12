@@ -47,6 +47,9 @@ var (
 	AssertHTTPStatusAtLeast    = check.AssertHTTPStatusAtLeast
 	AssertErrorMessageContains = check.AssertErrorMessageContains
 	AssertModelContains        = check.AssertModelContains
+	AssertStreamEventsContain  = check.AssertStreamEventsContain
+	AssertFinishReasonNonEmpty = check.AssertFinishReasonNonEmpty
+	AssertUsagePropagated      = check.AssertUsagePropagated
 )
 
 // ─── scenario: types + format constants ────────────────────────────────────────

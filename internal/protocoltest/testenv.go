@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"github.com/tingly-dev/tingly-box/ai"
 	"github.com/tingly-dev/tingly-box/internal/config"
 	"github.com/tingly-dev/tingly-box/internal/constant"
-	"github.com/tingly-dev/tingly-box/internal/loadbalance"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
 	"github.com/tingly-dev/tingly-box/internal/protocol/sse"
 	"github.com/tingly-dev/tingly-box/internal/server"
@@ -36,11 +36,8 @@ import (
 // to provider format, and forwards to the virtual server which speaks provider
 // native APIs (/v1/chat/completions, /v1/messages, etc.).
 type TestEnv struct {
-	appConfig *config.AppConfig
-	ginEngine interface {
-		ServeHTTP(http.ResponseWriter, *http.Request)
-	}
-	gatewayServer *httptest.Server // real HTTP server for streaming support
+	appConfig     *config.AppConfig
+	gatewayServer *httptest.Server // real HTTP server; every request traverses it
 	virtual       *VirtualServer
 	modelToken    string
 	client        Client // driver used by sendModel (default: raw HTTP)
@@ -83,43 +80,60 @@ func NewTestEnvOptionWithClient(c Client) TestEnvOption {
 	}
 }
 
-// NewTestEnv creates a TestEnv with a fresh gateway config and a new VirtualServer.
-// All resources are cleaned up via t.Cleanup. Only the client option is
-// honored in test mode; recording is a CLI-only concern.
-func NewTestEnv(t *testing.T, opts ...TestEnvOption) *TestEnv {
-	t.Helper()
+// gatewayCore is the shared skeleton every single-process harness env builds
+// on: a temp config dir, an app config, a real gateway httptest.Server, and a
+// VirtualServer mock provider. TestEnv (matrix/flags) and AgentTestEnv
+// (replay/agent) both assemble from it, so the boot sequence exists once.
+type gatewayCore struct {
+	configDir  string
+	appConfig  *config.AppConfig
+	gateway    *httptest.Server
+	virtual    *VirtualServer
+	modelToken string
+}
 
-	cfg := &testEnvConfig{}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-
-	configDir, err := os.MkdirTemp("", "pv-test-*")
+// newGatewayCore boots the skeleton. configure (optional) runs after the app
+// config exists but before the server is created, for settings the server
+// reads at construction time (e.g. the MCP extension flag).
+func newGatewayCore(dirPattern string, configure func(*config.AppConfig), serverOpts ...server.ServerOption) (*gatewayCore, error) {
+	configDir, err := os.MkdirTemp("", dirPattern)
 	if err != nil {
-		t.Fatalf("create temp config dir: %v", err)
+		return nil, fmt.Errorf("create temp config dir: %w", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(configDir) })
 
 	appConfig, err := config.NewAppConfig(config.WithConfigDir(configDir))
 	if err != nil {
-		t.Fatalf("create app config: %v", err)
+		os.RemoveAll(configDir)
+		return nil, fmt.Errorf("create app config: %w", err)
+	}
+	if configure != nil {
+		configure(appConfig)
 	}
 
-	gatewayServer := server.NewServer(appConfig.GetGlobalConfig())
-	router := gatewayServer.GetRouter()
-	ts := httptest.NewServer(router)
-	t.Cleanup(ts.Close)
+	gatewayServer := server.NewServer(appConfig.GetGlobalConfig(), serverOpts...)
+	ts := httptest.NewServer(gatewayServer.GetRouter())
 
-	return &TestEnv{
-		appConfig:     appConfig,
-		ginEngine:     router,
-		gatewayServer: ts,
-		virtual:       NewVirtualServer(t),
-		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
-		client:        clientOrDefault(cfg.client),
-		routeModels:   make(map[string]string),
-		setupRoutes:   make(map[string]bool),
+	return &gatewayCore{
+		configDir:  configDir,
+		appConfig:  appConfig,
+		gateway:    ts,
+		virtual:    NewVirtualServerForCLI(),
+		modelToken: appConfig.GetGlobalConfig().GetModelToken(),
+	}, nil
+}
+
+// NewTestEnv creates a TestEnv with a fresh gateway config and a new
+// VirtualServer, cleaned up via t.Cleanup. It is the testing.T wrapper over
+// NewTestEnvForCLI — one construction path for both entry points.
+func NewTestEnv(t *testing.T, opts ...TestEnvOption) *TestEnv {
+	t.Helper()
+
+	env, err := NewTestEnvForCLI(opts...)
+	if err != nil {
+		t.Fatalf("create test env: %v", err)
 	}
+	t.Cleanup(env.Close)
+	return env
 }
 
 // clientOrDefault returns the configured client or the raw HTTP default.
@@ -130,68 +144,57 @@ func clientOrDefault(c Client) Client {
 	return NewHTTPClient()
 }
 
-// Close cleans up resources. For testing mode, it's a no-op (resources are cleaned up via t.Cleanup).
-// For CLI mode, it closes the servers and removes the config directory.
+// Close shuts down the gateway and virtual servers, releases the config's
+// database handles, and removes the config directory. Closing the stores
+// matters: e2e suites create hundreds of envs in one process, and an
+// unclosed SQLite handle per env exhausts the fd limit. Safe to call more
+// than once (t.Cleanup plus an explicit defer).
 func (env *TestEnv) Close() {
-	// For CLI mode, close the gateway server
 	if env.gatewayServer != nil {
 		env.gatewayServer.Close()
 	}
-	// For CLI mode, clean up virtual server
 	if env.virtual != nil {
 		env.virtual.Close()
 	}
-	// For CLI mode, remove config directory
+	if env.appConfig != nil {
+		_ = env.appConfig.GetGlobalConfig().CloseStores()
+	}
 	if env.configDir != "" {
 		os.RemoveAll(env.configDir)
 	}
 }
 
-// NewTestEnvForCLI creates a TestEnv for CLI use (without testing.T).
-// Resources must be cleaned up via explicit Close() call.
+// NewTestEnvForCLI creates a TestEnv without a testing.T.
+// Resources must be cleaned up via an explicit Close() call.
 func NewTestEnvForCLI(opts ...TestEnvOption) (*TestEnv, error) {
-	// Apply options
 	cfg := &testEnvConfig{}
 	for _, opt := range opts {
 		opt(cfg)
 	}
 
-	configDir, err := os.MkdirTemp("", "pv-cli-*")
-	if err != nil {
-		return nil, fmt.Errorf("create temp config dir: %w", err)
-	}
-
-	appConfig, err := config.NewAppConfig(config.WithConfigDir(configDir))
-	if err != nil {
-		os.RemoveAll(configDir)
-		return nil, fmt.Errorf("create app config: %w", err)
-	}
-
-	// Build server options
 	var serverOpts []server.ServerOption
 	if cfg.recordDir != "" {
 		serverOpts = append(serverOpts, server.WithRecordDir(cfg.recordDir))
 	}
-	if cfg.mcpEnabled {
-		_ = appConfig.GetGlobalConfig().SetScenarioFlag(typ.ScenarioGlobal, serverconfig.ExtensionMCP, true)
+
+	core, err := newGatewayCore("pv-env-*", func(ac *config.AppConfig) {
+		if cfg.mcpEnabled {
+			_ = ac.GetGlobalConfig().SetScenarioFlag(typ.ScenarioGlobal, serverconfig.ExtensionMCP, true)
+		}
+	}, serverOpts...)
+	if err != nil {
+		return nil, err
 	}
 
-	gatewayServer := server.NewServer(appConfig.GetGlobalConfig(), serverOpts...)
-	router := gatewayServer.GetRouter()
-	ts := httptest.NewServer(router)
-
-	virtual := NewVirtualServerForCLI()
-
 	return &TestEnv{
-		appConfig:     appConfig,
-		ginEngine:     router,
-		gatewayServer: ts,
-		virtual:       virtual,
-		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
+		appConfig:     core.appConfig,
+		gatewayServer: core.gateway,
+		virtual:       core.virtual,
+		modelToken:    core.modelToken,
 		client:        clientOrDefault(cfg.client),
 		routeModels:   make(map[string]string),
 		setupRoutes:   make(map[string]bool),
-		configDir:     configDir, // Store for cleanup
+		configDir:     core.configDir,
 	}, nil
 }
 
@@ -271,28 +274,8 @@ func (env *TestEnv) setupRouteCore(source, target protocol.APIType, s Scenario, 
 	}
 	_ = env.appConfig.AddProvider(provider)
 
-	ruleScenario := sourceToRuleScenario(source)
-
-	rule := typ.Rule{
-		UUID:          requestModel,
-		Scenario:      ruleScenario,
-		RequestModel:  requestModel,
-		ResponseModel: providerModel,
-		Services: []*loadbalance.Service{
-			{
-				Provider:   providerName,
-				Model:      providerModel,
-				Weight:     1,
-				Active:     true,
-				TimeWindow: 300,
-			},
-		},
-		LBTactic: typ.Tactic{
-			Type:   loadbalance.TacticRandom,
-			Params: typ.NewRandomParams(),
-		},
-		Active: true,
-	}
+	rule := newHarnessRule(requestModel, sourceToRuleScenario(source), requestModel, providerModel,
+		harnessService(providerName, providerModel))
 	if flags != nil {
 		rule.Flags = *flags
 	}
@@ -369,6 +352,11 @@ func (env *TestEnv) sendModel(source, target protocol.APIType, scenarioName, req
 // It is the shared core behind sendModel and the flag-behavior sender, so both
 // exercise the identical gateway path; extraHeaders are applied on top of the
 // default Content-Type / Authorization headers (nil for none).
+//
+// Both modes go over the real httptest.Server: an in-memory recorder would
+// skip the HTTP transport (and its request contexts, write paths, timeouts),
+// which has hidden real bugs — the same "diagnostics must traverse the real
+// path" rule the debug module follows.
 func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path string, body []byte, extraHeaders map[string]string, streaming bool) (*RoundTripResult, error) {
 	result := &RoundTripResult{
 		SourceProtocol: source,
@@ -377,48 +365,36 @@ func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path
 		IsStreaming:    streaming,
 	}
 
-	setHeaders := func(h http.Header) {
-		h.Set("Content-Type", "application/json")
-		h.Set("Authorization", "Bearer "+env.modelToken)
-		for k, v := range extraHeaders {
-			h.Set(k, v)
-		}
+	req, err := http.NewRequest("POST", env.gatewayServer.URL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.modelToken)
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	result.HTTPStatus = resp.StatusCode
+	var parsed sse.ParsedResult
 	if streaming {
-		url := env.gatewayServer.URL + path
-		req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("new request: %w", err)
-		}
-		setHeaders(req.Header)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("do streaming request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		result.HTTPStatus = resp.StatusCode
 		result.StreamEvents, result.RawBody = sse.ReadSSELines(resp.Body)
-		fillFromParsedResult(result, sse.ParsedResult{}, sourceToStyle(source), true)
-		parsed := assembleFromEvents(result.StreamEvents, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), true)
+		parsed = assembleFromEvents(result.StreamEvents, sourceToStyle(source))
 	} else {
-		req, err := http.NewRequest("POST", path, bytes.NewReader(body))
+		raw, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("new request: %w", err)
+			return nil, fmt.Errorf("read response body: %w", err)
 		}
-		setHeaders(req.Header)
-
-		w := httptest.NewRecorder()
-		env.ginEngine.ServeHTTP(w, req)
-
-		result.HTTPStatus = w.Code
-		result.RawBody = w.Body.Bytes()
-		parsed := parseFromJSON(result.RawBody, sourceToStyle(source))
-		fillFromParsedResult(result, parsed, sourceToStyle(source), false)
+		result.RawBody = raw
+		parsed = parseFromJSON(raw, sourceToStyle(source))
 	}
+	fillFromParsedResult(result, parsed)
 
 	return result, nil
 }
@@ -581,7 +557,7 @@ func assembleFromEvents(events []string, style protocol.APIStyle) sse.ParsedResu
 	return *r
 }
 
-func fillFromParsedResult(result *RoundTripResult, parsed sse.ParsedResult, _ protocol.APIStyle, _ bool) {
+func fillFromParsedResult(result *RoundTripResult, parsed sse.ParsedResult) {
 	result.Role = parsed.Role
 	result.Content = parsed.Content
 	result.Model = parsed.Model

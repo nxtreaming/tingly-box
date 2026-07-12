@@ -8,22 +8,22 @@ Status legend: `TODO` not started · `WIP` in progress · `DONE` shipped ·
 
 ---
 
-## 1. Close the `replaySkip` defect list
+## 1. Close the known-defect registry
 
-`replaySkip` in `replay.go` is a list of **real gateway bugs** surfaced by
-replay, not test artifacts. The goal is an empty skip list.
+`skipSourceScenarios` in `internal/protocoltest/matrix.go` is the **single**
+registry of real gateway bugs; the matrix reads it directly and replay
+derives its skips via `KnownDefectReason`. The goal is an empty registry.
 
-| entry                 | root cause                                                              | status |
-|-----------------------|-------------------------------------------------------------------------|--------|
-| `*/codex/tool_use`    | Responses-API source path's tool_call conversion is incomplete; mirrors Tier A's `skipSourceScenarios["openai_responses\|tool_use"]` | TODO   |
+| entry                                 | root cause                                              | status |
+|---------------------------------------|----------------------------------------------------------|--------|
+| `openai_responses\|tool_use` (+ streaming) | Responses-API source path's tool_call conversion is incomplete | TODO   |
 
-When the Responses→{Anthropic,Chat} tool_call conversion is completed, remove
-the three `*/codex/tool_use` entries **and** the corresponding
-`skipSourceScenarios` entry in `internal/protocoltest/matrix.go` together —
-they describe the same defect at two tiers.
+When the Responses→{Anthropic,Chat} tool_call conversion is completed, delete
+the registry entries — one place, and both the matrix cells and every
+`codex/tool_use` replay run come back automatically.
 
 **Done when:** `replay batch --upstream {virtual,vmodel,real}` is fully green
-with an empty `replaySkip`.
+with an empty registry.
 
 ---
 
@@ -42,13 +42,12 @@ gateway pipeline:
 | `error`              | `ErrorScenario()`               | fixture that should 4xx; assert it   | TODO   |
 
 Each new scenario needs:
-1. an entry in `replayScenarios` (matrix scenario + `structural` assertions +
-   `defaultVModel`),
+1. an entry in `replayScenarios` (matrix scenario ctor + `defaultVModel` —
+   both assertion tiers already live on the Scenario itself:
+   content `Assertions` for the virtual upstream, upstream-independent
+   `Structural` for vmodel/real),
 2. a fixture per API style under `testdata/fixtures/<style>/<scenario>.json`,
 3. an entry in `replayScenarioOrder`.
-
-Reuse the matrix `Scenario.Assertions` for the `virtual` upstream so the same
-content checks run at Tier A and Tier B.
 
 ---
 
@@ -70,12 +69,26 @@ fixture refresh a one-command operation when an agent CLI updates.
 
 ## 4. CI integration
 
-- `TODO` run `replay batch --upstream virtual` and `--upstream vmodel` on every
-  PR — both are hermetic (no network, no secrets) and fast (~1–2s total).
-- `TODO` gate merges on a green replay run; surface the summary table in the
-  PR check output.
-- `--upstream real` stays **manual / nightly** — it needs `providers.yaml` with
-  live credentials and is non-deterministic.
+Wired: `.github/workflows/harness-matrix.yml` runs every hermetic mode in
+parallel legs — matrix (single / transitive / idempotent / flags), one matrix
+leg per client driver (gosdk / python / node / aisdk), `replay batch` on the
+virtual and vmodel upstreams, `lb --all`, `duo --skip-memory`, and `routing`
+— gated by a single required `Harness result` status. `DONE`.
+
+Deliberate carve-outs:
+
+- The duo **memory phase** stays out of shared-runner CI — noisy neighbors
+  make retention-slope thresholds flaky. `TestDuoMemoryRegression` guards the
+  slope in the Go suite (same `DuoDefaultMaxSlopeKB`).
+- `--upstream real` stays **manual / nightly** — it needs `providers.yaml`
+  with live credentials and is non-deterministic.
+
+Open (policy, not wiring):
+
+- `TODO` the workflow triggers on `ci/**` pushes, `v*` tags, and manual
+  dispatch — not on PRs to the default branch. Decide whether the fast legs
+  (matrix http + replay, ~seconds) should also gate PRs, leaving the
+  toolchain-heavy client-driver legs on the current triggers.
 
 ---
 
@@ -87,6 +100,33 @@ fixture refresh a one-command operation when an agent CLI updates.
 - `TODO` `--upstream real`: allow running **all** runnable config entries, not
   just `firstRunnableEntry`, so replay can sweep a provider matrix the way
   `agent --config` does.
+
+---
+
+## 6. Full single-process e2e run exhausts file descriptors
+
+`go test -tags e2e ./internal/protocoltest/` (every e2e test in ONE process,
+~1500 envs) fails on low-ulimit machines with `too many open files`; each
+section run individually (the documented usage, and what CI runs) is green.
+Reproduced identically on the pre-refactor baseline — pre-existing, surfaced
+by running the whole suite at once.
+
+Evidence from an fd probe (one TestEnv, `/proc/self/fd`): an env holds ~8
+db fds; `Config.CloseStores()` (added, closes the store-manager and
+provider-model gorm pools) returns no error but releases only the
+provider-model connection — the store-manager pool's tingly.db connections
+stay open after `sql.DB.Close`, i.e. they are held in-use somewhere in the
+init path (Migrate / InsertDefaultRule / HydrateRules are the suspects), and
+the guardrails `ProtectedCredentialStore` pool (guardrails.db, opened by
+`server.NewServer`) has no close path at all.
+
+- `TODO` audit the store-manager query paths for whatever keeps connections
+  checked out (leaked Rows / Tx / prepared stmt), so `CloseStores` actually
+  drains the pool.
+- `TODO` give `ProtectedCredentialStore` a Close and call it on server
+  teardown.
+- **Done when:** the fd probe shows 0 remaining fds after `TestEnv.Close`,
+  and the full single-process `-tags e2e` run passes at `ulimit -n 4096`.
 
 ---
 

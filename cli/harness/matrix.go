@@ -30,7 +30,6 @@ type MatrixCmd struct {
 	JsonOutput bool     `kong:"name='json',help='Output results as JSON'"`
 	Verbose    int      `kong:"name='verbose',short='v',type='counter',help='Verbose output (repeat for more detail)'"`
 	RecordDir  string   `kong:"name='record-dir',env='HARNESS_RECORD_DIR',help='Directory for recording requests/responses (default: disabled)'"`
-	ServerMode string   `kong:"name='server-mode',default='auto',help='Server reuse mode: auto (per-scenario), all (single server), pair (per source-target)'"`
 	BatchCount int      `kong:"name='batch',default='1',help='Number of times to run each test (for stability/performance testing)'"`
 	MCPEnabled bool     `kong:"name='mcp',help='Enable MCP feature flag in test env'"`
 }
@@ -132,9 +131,6 @@ func (m *MatrixCmd) Run() error {
 	}
 	if m.RecordDir != "" {
 		matrix = matrix.WithRecordDir(m.RecordDir)
-	}
-	if m.ServerMode != "" && m.ServerMode != "auto" {
-		matrix = matrix.WithServerMode(m.ServerMode)
 	}
 	if m.BatchCount > 1 {
 		matrix = matrix.WithBatchCount(m.BatchCount)

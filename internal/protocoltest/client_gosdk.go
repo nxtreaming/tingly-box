@@ -261,7 +261,7 @@ func (c *goSDKClient) sendOpenAIResponses(ctx context.Context, spec SendSpec) (*
 	// openai-go has no Responses stream accumulator; reuse the harness's SSE
 	// assembly over the SDK-parsed events to extract semantics.
 	parsed := assembleFromEvents(sseLines, sourceToStyle(spec.Source))
-	fillFromParsedResult(result, parsed, sourceToStyle(spec.Source), true)
+	fillFromParsedResult(result, parsed)
 	if len(sseLines) > 0 {
 		result.RawBody = []byte(sseLines[len(sseLines)-1])
 	}
