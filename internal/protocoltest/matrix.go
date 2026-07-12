@@ -34,18 +34,10 @@ type Matrix struct {
 	Scenarios  []Scenario
 	Streaming  []bool
 	RecordDir  string // Optional directory for recording requests/responses
-	ServerMode string // Server reuse mode: auto, all, pair
 	BatchCount int    // Number of times to run each test
 	MCPEnabled bool   // Enable MCP feature flag in test env
 	Client     Client // Client driver (nil = raw HTTP default)
 }
-
-// ServerMode constants
-const (
-	ServerModeAuto = "auto" // Per-scenario (default)
-	ServerModeAll  = "all"  // Single server for all tests
-	ServerModePair = "pair" // Per source-target pair
-)
 
 // DefaultPairs is the canonical list of (source → target) conversion
 // paths the matrix exercises. Adding a new dispatch path means appending
@@ -175,13 +167,6 @@ func (m *Matrix) OnlyStreaming(streaming bool) *Matrix {
 func (m *Matrix) WithRecordDir(recordDir string) *Matrix {
 	out := m.clone()
 	out.RecordDir = recordDir
-	return out
-}
-
-// WithServerMode returns a copy of the Matrix with the server reuse mode set.
-func (m *Matrix) WithServerMode(mode string) *Matrix {
-	out := m.clone()
-	out.ServerMode = mode
 	return out
 }
 
@@ -385,27 +370,10 @@ func truncate(s string, max int) string {
 // This is a pure function that can be called from both tests and CLI.
 // It does not use testing.T, making it suitable for standalone execution.
 //
-// Server reuse strategies based on ServerMode:
-// - auto (default): Reuses TestEnv per scenario
-// - all: Uses a single TestEnv for all tests (fastest, potential for interference)
-// - pair: Reuses TestEnv per source-target pair (balanced approach)
+// One TestEnv is created per scenario and reused for all of its combinations
+// — routes are keyed by (source, target, scenario), so combinations within a
+// scenario cannot interfere, and env boots stay off the hot path.
 func (m *Matrix) ExecuteAll() []TestResult {
-	var results []TestResult
-
-	switch m.ServerMode {
-	case ServerModeAll:
-		results = m.executeAllWithSingleServer()
-	case ServerModePair:
-		results = m.executeAllWithPairServer()
-	default: // ServerModeAuto
-		results = m.executeAllWithScenarioServer()
-	}
-
-	return results
-}
-
-// executeAllWithScenarioServer executes tests with per-scenario server reuse (default).
-func (m *Matrix) executeAllWithScenarioServer() []TestResult {
 	var results []TestResult
 
 	// For each scenario, create one TestEnv and reuse it for all combinations
@@ -446,77 +414,6 @@ func (m *Matrix) executeAllWithScenarioServer() []TestResult {
 		}
 
 		// Close env explicitly after processing all combinations for this scenario
-		env.Close()
-	}
-
-	return results
-}
-
-// executeAllWithSingleServer executes all tests with a single server.
-func (m *Matrix) executeAllWithSingleServer() []TestResult {
-	var results []TestResult
-
-	// Create a single TestEnv for all tests
-	env, err := NewTestEnvForCLI(m.testEnvOpts()...)
-	if err != nil {
-		// All tests fail with setup error
-		return m.allSetupError(err)
-	}
-	defer env.Close()
-
-	// Run all combinations
-	for _, scenario := range m.Scenarios {
-		for _, pair := range m.Pairs {
-			for _, streaming := range m.Streaming {
-				if result := m.executeTest(env, scenario, pair.Source, pair.Target, streaming); result != nil {
-					results = append(results, *result)
-				}
-			}
-		}
-	}
-
-	return results
-}
-
-// executeAllWithPairServer executes tests with per source-target pair server reuse.
-func (m *Matrix) executeAllWithPairServer() []TestResult {
-	var results []TestResult
-
-	// For each source-target pair, create one TestEnv
-	for _, pair := range m.Pairs {
-		// Create TestEnv for this pair
-		env, err := NewTestEnvForCLI(m.testEnvOpts()...)
-		if err != nil {
-			// All tests for this pair fail with setup error
-			for _, scenario := range m.Scenarios {
-				for _, streaming := range m.Streaming {
-					results = append(results, TestResult{
-						Name:      m.buildTestName(scenario.Name, pair.Source, pair.Target, streaming),
-						Scenario:  scenario.Name,
-						Source:    pair.Source,
-						Target:    pair.Target,
-						Streaming: streaming,
-						Passed:    false,
-						Errors: []AssertionError{{
-							Assertion: "setup",
-							Error:     fmt.Sprintf("failed to create test env: %v", err),
-						}},
-					})
-				}
-			}
-			continue
-		}
-		defer env.Close()
-
-		// Run all scenarios for this pair
-		for _, scenario := range m.Scenarios {
-			for _, streaming := range m.Streaming {
-				if result := m.executeTest(env, scenario, pair.Source, pair.Target, streaming); result != nil {
-					results = append(results, *result)
-				}
-			}
-		}
-
 		env.Close()
 	}
 
@@ -570,30 +467,6 @@ func (m *Matrix) executeTest(env *TestEnv, scenario Scenario, source, target pro
 
 	result := m.executeOneWithEnv(env, scenario, source, target, streaming)
 	return &result
-}
-
-// allSetupError returns results all marked as setup errors.
-func (m *Matrix) allSetupError(err error) []TestResult {
-	var results []TestResult
-	for _, scenario := range m.Scenarios {
-		for _, pair := range m.Pairs {
-			for _, streaming := range m.Streaming {
-				results = append(results, TestResult{
-					Name:      m.buildTestName(scenario.Name, pair.Source, pair.Target, streaming),
-					Scenario:  scenario.Name,
-					Source:    pair.Source,
-					Target:    pair.Target,
-					Streaming: streaming,
-					Passed:    false,
-					Errors: []AssertionError{{
-						Assertion: "setup",
-						Error:     fmt.Sprintf("failed to create test env: %v", err),
-					}},
-				})
-			}
-		}
-	}
-	return results
 }
 
 // executeOneWithEnv runs a single test combination using the provided TestEnv.

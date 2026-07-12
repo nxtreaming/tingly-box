@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,11 +37,8 @@ import (
 // to provider format, and forwards to the virtual server which speaks provider
 // native APIs (/v1/chat/completions, /v1/messages, etc.).
 type TestEnv struct {
-	appConfig *config.AppConfig
-	ginEngine interface {
-		ServeHTTP(http.ResponseWriter, *http.Request)
-	}
-	gatewayServer *httptest.Server // real HTTP server for streaming support
+	appConfig     *config.AppConfig
+	gatewayServer *httptest.Server // real HTTP server; every request traverses it
 	virtual       *VirtualServer
 	modelToken    string
 	client        Client // driver used by sendModel (default: raw HTTP)
@@ -112,7 +110,6 @@ func NewTestEnv(t *testing.T, opts ...TestEnvOption) *TestEnv {
 
 	return &TestEnv{
 		appConfig:     appConfig,
-		ginEngine:     router,
 		gatewayServer: ts,
 		virtual:       NewVirtualServer(t),
 		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
@@ -184,7 +181,6 @@ func NewTestEnvForCLI(opts ...TestEnvOption) (*TestEnv, error) {
 
 	return &TestEnv{
 		appConfig:     appConfig,
-		ginEngine:     router,
 		gatewayServer: ts,
 		virtual:       virtual,
 		modelToken:    appConfig.GetGlobalConfig().GetModelToken(),
@@ -369,6 +365,11 @@ func (env *TestEnv) sendModel(source, target protocol.APIType, scenarioName, req
 // It is the shared core behind sendModel and the flag-behavior sender, so both
 // exercise the identical gateway path; extraHeaders are applied on top of the
 // default Content-Type / Authorization headers (nil for none).
+//
+// Both modes go over the real httptest.Server: an in-memory recorder would
+// skip the HTTP transport (and its request contexts, write paths, timeouts),
+// which has hidden real bugs — the same "diagnostics must traverse the real
+// path" rule the debug module follows.
 func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path string, body []byte, extraHeaders map[string]string, streaming bool) (*RoundTripResult, error) {
 	result := &RoundTripResult{
 		SourceProtocol: source,
@@ -377,47 +378,36 @@ func (env *TestEnv) dispatch(source, target protocol.APIType, scenarioName, path
 		IsStreaming:    streaming,
 	}
 
-	setHeaders := func(h http.Header) {
-		h.Set("Content-Type", "application/json")
-		h.Set("Authorization", "Bearer "+env.modelToken)
-		for k, v := range extraHeaders {
-			h.Set(k, v)
-		}
+	req, err := http.NewRequest("POST", env.gatewayServer.URL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+env.modelToken)
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	result.HTTPStatus = resp.StatusCode
+	var parsed sse.ParsedResult
 	if streaming {
-		url := env.gatewayServer.URL + path
-		req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("new request: %w", err)
-		}
-		setHeaders(req.Header)
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("do streaming request: %w", err)
-		}
-		defer resp.Body.Close()
-
-		result.HTTPStatus = resp.StatusCode
 		result.StreamEvents, result.RawBody = sse.ReadSSELines(resp.Body)
-		parsed := assembleFromEvents(result.StreamEvents, sourceToStyle(source))
-		fillFromParsedResult(result, parsed)
+		parsed = assembleFromEvents(result.StreamEvents, sourceToStyle(source))
 	} else {
-		req, err := http.NewRequest("POST", path, bytes.NewReader(body))
+		raw, err := io.ReadAll(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("new request: %w", err)
+			return nil, fmt.Errorf("read response body: %w", err)
 		}
-		setHeaders(req.Header)
-
-		w := httptest.NewRecorder()
-		env.ginEngine.ServeHTTP(w, req)
-
-		result.HTTPStatus = w.Code
-		result.RawBody = w.Body.Bytes()
-		parsed := parseFromJSON(result.RawBody, sourceToStyle(source))
-		fillFromParsedResult(result, parsed)
+		result.RawBody = raw
+		parsed = parseFromJSON(raw, sourceToStyle(source))
 	}
+	fillFromParsedResult(result, parsed)
 
 	return result, nil
 }
