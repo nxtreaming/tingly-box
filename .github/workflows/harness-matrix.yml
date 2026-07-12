@@ -37,6 +37,8 @@ on:
           - aisdk
           - replay
           - lb
+          - duo
+          - routing
 
 permissions:
   contents: read
@@ -113,6 +115,20 @@ jobs:
             tier: lb
             focus: lb
             cmd: lb --all
+          # Duo-topology legs: two full server child processes over real TCP.
+          # The functional phase (protocol correctness per conversion route)
+          # and the smart-routing scenarios are deterministic and CI-safe;
+          # the memory phase (retention slopes) stays out of shared-runner CI
+          # — noisy neighbors make slope thresholds flaky — and is guarded by
+          # TestDuoMemoryRegression in the Go suite instead.
+          - name: duo-functional
+            tier: duo
+            focus: duo
+            cmd: duo --skip-memory
+          - name: routing
+            tier: routing
+            focus: routing
+            cmd: routing
     steps:
       - name: Skip unfocused leg
         id: gate

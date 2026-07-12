@@ -69,12 +69,26 @@ fixture refresh a one-command operation when an agent CLI updates.
 
 ## 4. CI integration
 
-- `TODO` run `replay batch --upstream virtual` and `--upstream vmodel` on every
-  PR — both are hermetic (no network, no secrets) and fast (~1–2s total).
-- `TODO` gate merges on a green replay run; surface the summary table in the
-  PR check output.
-- `--upstream real` stays **manual / nightly** — it needs `providers.yaml` with
-  live credentials and is non-deterministic.
+Wired: `.github/workflows/harness-matrix.yml` runs every hermetic mode in
+parallel legs — matrix (single / transitive / idempotent / flags), one matrix
+leg per client driver (gosdk / python / node / aisdk), `replay batch` on the
+virtual and vmodel upstreams, `lb --all`, `duo --skip-memory`, and `routing`
+— gated by a single required `Harness result` status. `DONE`.
+
+Deliberate carve-outs:
+
+- The duo **memory phase** stays out of shared-runner CI — noisy neighbors
+  make retention-slope thresholds flaky. `TestDuoMemoryRegression` guards the
+  slope in the Go suite (same `DuoDefaultMaxSlopeKB`).
+- `--upstream real` stays **manual / nightly** — it needs `providers.yaml`
+  with live credentials and is non-deterministic.
+
+Open (policy, not wiring):
+
+- `TODO` the workflow triggers on `ci/**` pushes, `v*` tags, and manual
+  dispatch — not on PRs to the default branch. Decide whether the fast legs
+  (matrix http + replay, ~seconds) should also gate PRs, leaving the
+  toolchain-heavy client-driver legs on the current triggers.
 
 ---
 

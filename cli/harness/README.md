@@ -33,6 +33,31 @@ construction). The duo-topology rungs (duo / routing) trade speed for
 process-level fidelity: two full `server.Start()` child processes and real
 TCP between them.
 
+### Scope
+
+The harness guards the **AI data plane** — protocol conversion, traffic
+routing/dispatch, agent-client compatibility, and the resource health of that
+path — because that is the product's core. This boundary is deliberate:
+
+- **In scope:** everything a request touches between an agent client and an
+  upstream model — transforms, rules, smart routing, LB/breaker/affinity,
+  streaming, memory behavior under agentic traffic.
+- **Out of scope (by design):** the management plane (CRUD APIs, GUI,
+  frontend), remote control, and other non-gateway subsystems — those are
+  covered by their own unit/integration tests. duo/routing intentionally
+  *cross* two management surfaces (the rule API and the `/api/v1/requests`
+  trace) because user configuration and explainability are part of the data
+  plane's contract, but the harness does not aim to e2e the management plane.
+- **Known open axes** (product-decision-gated, not accidental gaps): the
+  Google target path, multimodal (image-block) scenarios, and automated
+  real-provider conformance (Tier D). Roadmapped work lives in
+  [PLANNING.md](./PLANNING.md).
+
+Every hermetic mode runs in CI — see
+[`.github/workflows/harness-matrix.yml`](../../.github/workflows/harness-matrix.yml)
+and PLANNING §4 for the leg list and the deliberate carve-outs (duo memory
+phase, real upstreams).
+
 ---
 
 ## Quick start
