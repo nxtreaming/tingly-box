@@ -649,10 +649,10 @@ export default function DashboardPage() {
                                 value={`${cacheHitRate.toFixed(1)}%`}
                                 subtitle={`${formatNumber(totalCacheTokens)} cached`}
                                 icon={<CachedIcon />}
-                                // Higher is better: green when healthy, otherwise neutral —
-                                // a low cache-hit rate is sub-optimal, not an error, so it
-                                // never turns amber/red.
-                                color={cacheHitRate >= 50 ? 'success' : 'secondary'}
+                                // Health gauge, inverted from Error Rate: higher is better,
+                                // so a too-low cache-hit rate is a problem.
+                                // green healthy (>=50%) -> amber low (>=20%) -> red too low.
+                                color={cacheHitRate >= 50 ? 'success' : cacheHitRate >= 20 ? 'warning' : 'error'}
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
