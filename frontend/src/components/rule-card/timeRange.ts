@@ -46,11 +46,60 @@ export const isValidTimeRange = (value: TimeRangeValue | null): value is TimeRan
 export const formatTimeRange = (value: string): string | null => {
     const range = parseTimeRange(value);
     if (!range) return null;
-    return `${range.outside ? 'Outside' : 'During'} ${range.start}–${range.end} · ${range.timezone}`;
+    return `${range.outside ? 'Outside' : 'During'} ${range.start}–${range.end} · ${timezoneLabel(range.timezone)}`;
 };
 
-export const timezoneOptions = (): string[] => {
-    const supportedValuesOf = Intl.supportedValuesOf;
-    if (typeof supportedValuesOf !== 'function') return ['UTC'];
-    return ['UTC', ...supportedValuesOf('timeZone').filter((timezone) => timezone !== 'UTC')];
+// A curated set of common IANA zones — one representative city per UTC offset,
+// matching the convention used by most scheduling UIs (Google Calendar, GitHub
+// Actions cron, etc.) instead of the full ~400-entry IANA database.
+const COMMON_TIMEZONES: string[] = [
+    'UTC',
+    'Pacific/Midway',
+    'Pacific/Honolulu',
+    'America/Anchorage',
+    'America/Los_Angeles',
+    'America/Denver',
+    'America/Chicago',
+    'America/New_York',
+    'America/Sao_Paulo',
+    'Atlantic/Azores',
+    'Europe/London',
+    'Europe/Paris',
+    'Europe/Berlin',
+    'Europe/Athens',
+    'Europe/Moscow',
+    'Asia/Dubai',
+    'Asia/Karachi',
+    'Asia/Kolkata',
+    'Asia/Dhaka',
+    'Asia/Bangkok',
+    'Asia/Shanghai',
+    'Asia/Tokyo',
+    'Australia/Sydney',
+    'Pacific/Auckland',
+];
+
+const zoneCity = (timezone: string): string => timezone.split('/').pop()?.replace(/_/g, ' ') ?? timezone;
+
+const zoneOffsetMinutes = (timezone: string): number => {
+    try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'longOffset' }).formatToParts(new Date());
+        const offset = parts.find((part) => part.type === 'timeZoneName')?.value ?? 'GMT+0';
+        const match = /GMT([+-])(\d{1,2})(?::?(\d{2}))?/.exec(offset);
+        if (!match) return 0;
+        const sign = match[1] === '-' ? -1 : 1;
+        return sign * (Number(match[2]) * 60 + Number(match[3] ?? 0));
+    } catch {
+        return 0;
+    }
 };
+
+export const timezoneLabel = (timezone: string): string => {
+    const minutes = zoneOffsetMinutes(timezone);
+    const sign = minutes < 0 ? '-' : '+';
+    const abs = Math.abs(minutes);
+    const offset = `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`;
+    return timezone === 'UTC' ? offset : `${offset} ${zoneCity(timezone)}`;
+};
+
+export const timezoneOptions = (): string[] => COMMON_TIMEZONES.slice().sort((a, b) => zoneOffsetMinutes(a) - zoneOffsetMinutes(b));
