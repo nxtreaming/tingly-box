@@ -677,8 +677,10 @@ export default function DashboardPage() {
                     </Grid>
 
                     {/* Chart view toggle: Summary trend, By Request (hourly only),
-                        or the 180-day Activity heatmap. */}
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                        or the 12-month Activity heatmap. flex: 1 so the active
+                        view can use the full pane height (the Activity grid
+                        centers itself vertically in it). */}
+                    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                         <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
                             <ToggleButtonGroup
                                 value={effectiveViewMode}

@@ -7,11 +7,10 @@ import { type DailyUsage, TokenHeatmap } from './TokenHeatmap';
 
 // The activity heatmap is a fixed, long-window overview: it always shows the
 // last N days regardless of the dashboard's selected range, mirroring the
-// GitHub contribution-graph convention. It lives at the bottom of the Usage
-// Dashboard so the page has a single time-range control (the range selector
-// drives the tiles / chart / table above); this section is a stable
-// at-a-glance activity view. Only the Provider filter is shared.
-const HEATMAP_DAYS = 180;
+// GitHub contribution-graph convention (a full year → 52 week columns, which
+// also gives the grid the right proportions for the wide chart pane). Only
+// the Provider filter is shared with the rest of the dashboard.
+const HEATMAP_DAYS = 365;
 
 const toLocalISOString = (date: Date): string => {
     const tzOffset = -date.getTimezoneOffset();
@@ -96,13 +95,16 @@ export default function DashboardHeatmapSection({ provider, refreshKey = 0 }: Da
     }, [loadData, provider, refreshKey]);
 
     return (
-        <Box>
+        // flex: 1 lets the section fill the chart pane (whose height is set by
+        // the sibling column) so the grid can center vertically instead of
+        // floating at the top with dead space below.
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 2 }}>
                 <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '0.9375rem' }}>
                     Token Activity
                 </Typography>
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                    · Last {HEATMAP_DAYS} days
+                    · Last 12 months
                 </Typography>
                 <Tooltip
                     title={`Fixed ${HEATMAP_DAYS}-day window — not affected by the range selector (the Provider filter still applies).`}
@@ -112,13 +114,15 @@ export default function DashboardHeatmapSection({ provider, refreshKey = 0 }: Da
                 </Tooltip>
             </Box>
 
-            {dailyData.length > 0 ? (
-                <TokenHeatmap data={dailyData} cellSize={13} gap={0.5} />
-            ) : (
-                <Box sx={{ py: 6, color: 'text.secondary', textAlign: 'center' }}>
-                    <Typography variant="body2">No activity in the last {HEATMAP_DAYS} days.</Typography>
-                </Box>
-            )}
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                {dailyData.length > 0 ? (
+                    <TokenHeatmap data={dailyData} />
+                ) : (
+                    <Box sx={{ py: 6, color: 'text.secondary', textAlign: 'center' }}>
+                        <Typography variant="body2">No activity in the last {HEATMAP_DAYS} days.</Typography>
+                    </Box>
+                )}
+            </Box>
         </Box>
     );
 }
