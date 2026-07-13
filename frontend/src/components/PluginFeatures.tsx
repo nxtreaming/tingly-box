@@ -33,8 +33,17 @@ const PLUGIN_FEATURES: PluginFeatureConfig[] = [
 
 const VISION_PROXY_SERVICE_KEY = 'vision_proxy_service';
 
+// Endpoints that don't speak the chat/completion shape. Thinking effort,
+// Smart Compact (conversation-history pruning) and Vision Proxy have no meaning
+// for an embedding or image-generation endpoint, so we hide them there instead
+// of showing dead controls. Kept as a blacklist so any new *chat* scenario
+// automatically inherits the full plugin set. See UX principle #9 (reduce
+// visual noise) / #1 (organize around the user's real question).
+const NON_CHAT_SCENARIOS = new Set(['embed', 'imagegen']);
+
 const PluginFeatures: React.FC<PluginFeaturesProps> = ({ scenario }) => {
     const baseScenario = scenario.includes(':') ? scenario.split(':')[0] : scenario;
+    const isChatShaped = !NON_CHAT_SCENARIOS.has(baseScenario);
 
     const [features, setFeatures] = useState<Record<string, boolean>>({});
     const [effort, setEffort] = useState<string>('');
@@ -45,7 +54,11 @@ const PluginFeatures: React.FC<PluginFeaturesProps> = ({ scenario }) => {
     const [visionService, setVisionService] = useState<VisionService | null>(null);
     const [providers, setProviders] = useState<Provider[]>([]);
 
-    const visibleFeatures = PLUGIN_FEATURES.filter(f => !f.scenarios || f.scenarios.includes(baseScenario as any));
+    // Smart Compact only applies to chat-shaped endpoints; drop it (and any
+    // other conversation-oriented boolean plugin) for embedding / image gen.
+    const visibleFeatures = isChatShaped
+        ? PLUGIN_FEATURES.filter(f => !f.scenarios || f.scenarios.includes(baseScenario as any))
+        : [];
 
     const loadData = async () => {
         try {
@@ -162,11 +175,13 @@ const PluginFeatures: React.FC<PluginFeaturesProps> = ({ scenario }) => {
                         label: 'Plugins',
                         content: (
                             <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 1.5, rowGap: 1, width: '100%' }}>
-                                <ThinkingEffortControl
-                                    value={effort}
-                                    disabled={updating.thinking_effort}
-                                    onChange={setEffortLevel}
-                                />
+                                {isChatShaped && (
+                                    <ThinkingEffortControl
+                                        value={effort}
+                                        disabled={updating.thinking_effort}
+                                        onChange={setEffortLevel}
+                                    />
+                                )}
                                 {visibleFeatures.map(feature => (
                                     <PluginToggleButton
                                         key={feature.key}
@@ -177,12 +192,14 @@ const PluginFeatures: React.FC<PluginFeaturesProps> = ({ scenario }) => {
                                         onChange={v => setFeature(feature.key, v)}
                                     />
                                 ))}
-                                <VisionProxyControl
-                                    value={visionService}
-                                    providers={providers}
-                                    disabled={updating.vision_proxy_service || false}
-                                    onChange={handleVisionChange}
-                                />
+                                {isChatShaped && (
+                                    <VisionProxyControl
+                                        value={visionService}
+                                        providers={providers}
+                                        disabled={updating.vision_proxy_service || false}
+                                        onChange={handleVisionChange}
+                                    />
+                                )}
                                 <RecordingV2Control
                                     value={recordV2Mode}
                                     disabled={updating.recording_v2 || false}

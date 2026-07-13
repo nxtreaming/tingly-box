@@ -48,7 +48,6 @@ import GuardrailsCredentialsPage from './pages/guardrails/CredentialsPage';
 import GuardrailsGroupsPage from './pages/guardrails/GroupsPage';
 import GuardrailsHistoryPage from './pages/guardrails/HistoryPage';
 import DashboardPage from './pages/DashboardPage';
-import OverviewPage from './pages/OverviewPage.tsx';
 import ModelTestPage from './pages/ModelTestPage';
 import UserPage from './pages/prompt/UserPage';
 import SkillPage from './pages/prompt/SkillPage';
@@ -218,9 +217,10 @@ function AppContent() {
                     {/* Dashboard routes with time range */}
                     <Route path="/dashboard" element={<Navigate to="/dashboard/7d" replace />} />
                     <Route path="/dashboard/:timeRange" element={<DashboardPage />} />
-                    {/* Overview / Token Heatmap routes */}
-                    <Route path="/overview" element={<Navigate to="/overview/90d" replace />} />
-                    <Route path="/overview/:timeRange" element={<OverviewPage />} />
+                    {/* Token Heatmap merged into the Usage Dashboard; keep old
+                        /overview links working by redirecting to the dashboard. */}
+                    <Route path="/overview" element={<Navigate to="/dashboard/7d" replace />} />
+                    <Route path="/overview/:timeRange" element={<Navigate to="/dashboard/7d" replace />} />
                     <Route path="/model-test/:providerUuid" element={<ModelTestPage />} />
                     {/* Prompt routes */}
                     <Route path="/prompt/user" element={<UserPage />} />

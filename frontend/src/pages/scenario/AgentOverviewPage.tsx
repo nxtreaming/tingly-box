@@ -4,15 +4,24 @@ import {
     CardActionArea,
     Chip,
     Grid,
+    IconButton,
     Stack,
-    Switch,
+    Tooltip,
     Typography,
     alpha,
 } from '@mui/material';
-import { AiAgents as IconAiAgents, Photo as IconPhoto, Vector as IconVector, Users as IconUsers } from '@/components/icons';
+import {
+    AiAgents as IconAiAgents,
+    Photo as IconPhoto,
+    Vector as IconVector,
+    Users as IconUsers,
+    Visibility as IconVisibility,
+    VisibilityOff as IconVisibilityOff,
+} from '@/components/icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+import { api } from '@/services/api';
 import {
     Anthropic,
     Claude,
@@ -214,6 +223,31 @@ const AgentOverviewPage: React.FC = () => {
 
     const scenarios = useMemo(() => SCENARIOS, []);
 
+    // Per-scenario rule counts drive the card status line ("3 rules" /
+    // "Not configured yet"), so this overview answers the user's real question
+    // — "which have I set up, which still need attention?" — instead of being a
+    // pure launcher (UX principle #1). undefined = still loading / unavailable,
+    // in which case the card simply omits the status line.
+    const [ruleCounts, setRuleCounts] = useState<Record<string, number | undefined>>({});
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const entries = await Promise.all(
+                SCENARIOS.map(async (s) => {
+                    try {
+                        const res = await api.getRules(s.id);
+                        const rules = Array.isArray(res?.data) ? res.data : [];
+                        return [s.id, rules.length] as const;
+                    } catch {
+                        return [s.id, undefined] as const;
+                    }
+                }),
+            );
+            if (!cancelled) setRuleCounts(Object.fromEntries(entries));
+        })();
+        return () => { cancelled = true; };
+    }, []);
+
     return (
         <PageLayout loading={false}>
             <Box sx={{ maxWidth: 1280, mx: 'auto' }}>
@@ -230,20 +264,52 @@ const AgentOverviewPage: React.FC = () => {
                 <Grid container spacing={2}>
                     {scenarios.map((s) => {
                         const hidden = s.hideable && isHidden(s.id);
+                        const count = ruleCounts[s.id];
                         return (
                             <Grid key={s.id} size={{ xs: 12, sm: 6, md: 4, lg: 3 }}>
                                 <Card
                                     variant="outlined"
                                     sx={{
+                                        position: 'relative',
                                         opacity: hidden ? 0.55 : 1,
                                         boxShadow: 'none',
                                         transition: 'opacity 0.15s, border-color 0.15s, background-color 0.15s',
+                                        // Reveal the visibility toggle on hover/focus so it stays
+                                        // available (principle #10) without competing with the
+                                        // scenario name for attention (principle #9).
+                                        '&:hover .scenario-visibility-toggle, &:focus-within .scenario-visibility-toggle': {
+                                            opacity: 1,
+                                        },
                                         '&:hover': {
                                             borderColor: 'primary.main',
                                             bgcolor: (theme) => alpha(theme.palette.primary.main, 0.04),
                                         },
                                     }}
                                 >
+                                    {s.hideable && (
+                                        <Tooltip
+                                            title={hidden ? t('scenarioOverview.showInSidebar') : t('scenarioOverview.hideFromSidebar', { defaultValue: 'Hide from sidebar' })}
+                                            arrow
+                                        >
+                                            <IconButton
+                                                className="scenario-visibility-toggle"
+                                                size="small"
+                                                onClick={(e) => { e.stopPropagation(); toggleHidden(s.id); }}
+                                                sx={{
+                                                    position: 'absolute',
+                                                    top: 6,
+                                                    right: 6,
+                                                    zIndex: 1,
+                                                    color: 'text.disabled',
+                                                    // Keep it visible when hidden (so the state is
+                                                    // discoverable), otherwise fade until hover.
+                                                    opacity: hidden ? 1 : 0,
+                                                }}
+                                            >
+                                                {hidden ? <IconVisibilityOff fontSize="small" /> : <IconVisibility fontSize="small" />}
+                                            </IconButton>
+                                        </Tooltip>
+                                    )}
                                     <CardActionArea
                                         onClick={() => navigate(s.path)}
                                         sx={{ p: 2 }}
@@ -280,30 +346,20 @@ const AgentOverviewPage: React.FC = () => {
                                         >
                                             {t(s.descKey)}
                                         </Typography>
+                                        <Box sx={{ mt: 1, minHeight: 20, display: 'flex', alignItems: 'center' }}>
+                                            {count === undefined ? null : count > 0 ? (
+                                                <Typography variant="caption" sx={{ color: 'success.main', fontWeight: 500 }}>
+                                                    {count === 1
+                                                        ? t('scenarioOverview.ruleCountOne', { defaultValue: '1 rule' })
+                                                        : t('scenarioOverview.ruleCount', { count, defaultValue: '{{count}} rules' })}
+                                                </Typography>
+                                            ) : (
+                                                <Typography variant="caption" color="text.disabled">
+                                                    {t('scenarioOverview.notConfigured', { defaultValue: 'Not configured yet' })}
+                                                </Typography>
+                                            )}
+                                        </Box>
                                     </CardActionArea>
-                                    <Box
-                                        sx={{
-                                            px: 2,
-                                            py: 1,
-                                            borderTop: '1px solid',
-                                            borderColor: 'divider',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            visibility: s.hideable ? 'visible' : 'hidden',
-                                        }}
-                                    >
-                                        <Typography variant="caption" color="text.secondary">
-                                            {t('scenarioOverview.showInSidebar')}
-                                        </Typography>
-                                        <Switch
-                                            size="small"
-                                            checked={!hidden}
-                                            disabled={!s.hideable}
-                                            onChange={() => toggleHidden(s.id)}
-                                            onClick={(e) => e.stopPropagation()}
-                                        />
-                                    </Box>
                                 </Card>
                             </Grid>
                         );

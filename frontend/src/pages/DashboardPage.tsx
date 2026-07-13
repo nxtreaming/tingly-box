@@ -20,7 +20,7 @@ import {
     useTheme,
 } from '@mui/material';
 import { Refresh as RefreshIcon, Outbound as CallMadeIcon, ErrorOutline as ErrorOutlineIcon, Token as PaidIcon, Stream as StreamIcon, Autorenew as CachedIcon, FilterOff, ChevronLeft, ChevronRight } from '@/components/icons';
-import { StatCard, DailyTokenHistoryChart, HourlyTokenHistoryChart, ServiceStatsTable, AgentQuickNav, RequestsView, formatNumber } from '@/components/dashboard';
+import { StatCard, DailyTokenHistoryChart, HourlyTokenHistoryChart, ServiceStatsTable, AgentQuickNav, RequestsView, DashboardHeatmapSection, formatNumber } from '@/components/dashboard';
 import type { TimeSeriesData, AggregatedStat, UsageRecord } from '@/components/dashboard';
 import { ToggleButtonGroup, ToggleButton } from '@mui/material';
 import PageHeader from '@/components/PageHeader';
@@ -119,9 +119,16 @@ export default function DashboardPage() {
     const [selectedUser, setSelectedUser] = useState<string>('all');
     const [modelsPage, setModelsPage] = useState(0);
     const [modelsPerPage] = useState(10);
+    // Bumped on manual refresh so the fixed-window activity heatmap refetches too.
+    const [heatmapRefresh, setHeatmapRefresh] = useState(0);
 
-    // By-request view state
-    const [viewMode, setViewMode] = useState<'summary' | 'requests'>('summary');
+    // Chart view mode: the trend chart ('summary'), the per-request list
+    // ('requests', hourly ranges only), or the fixed 180-day activity heatmap
+    // ('activity').
+    const [viewMode, setViewMode] = useState<'summary' | 'requests' | 'activity'>('summary');
+    // "By Request" only exists for hourly ranges; fall back to the trend if a
+    // stale 'requests' selection carries into a daily range.
+    const effectiveViewMode = viewMode === 'requests' && !isHourlyRange ? 'summary' : viewMode;
     const [records, setRecords] = useState<UsageRecord[]>([]);
     const [recordsLoading, setRecordsLoading] = useState(false);
     const [recordsTimeParams, setRecordsTimeParams] = useState<{ start_time: string; end_time: string } | null>(null);
@@ -323,6 +330,7 @@ export default function DashboardPage() {
         setRefreshing(true);
         loadFilterOptions();
         loadData(selectedProvider, selectedModel, selectedUser, timeRange);
+        setHeatmapRefresh((n) => n + 1);
     };
 
     // Calculate totals from stats
@@ -621,7 +629,8 @@ export default function DashboardPage() {
                                 value={totalRequests.toLocaleString()}
                                 subtitle={TIME_RANGE_CONFIG[timeRange].label}
                                 icon={<CallMadeIcon />}
-                                color="primary"
+                                // Volume metric — no health judgment, so keep it neutral.
+                                color="secondary"
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -630,7 +639,8 @@ export default function DashboardPage() {
                                 value={formatNumber(totalTokens)}
                                 subtitle={`Input: ${formatNumber(totalInputTokens)} + Cache: ${formatNumber(totalCacheTokens)}\nOutput: ${formatNumber(totalOutputTokens)}`}
                                 icon={<PaidIcon />}
-                                color="success"
+                                // Volume metric — no health judgment, so keep it neutral.
+                                color="secondary"
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -639,7 +649,10 @@ export default function DashboardPage() {
                                 value={`${cacheHitRate.toFixed(1)}%`}
                                 subtitle={`${formatNumber(totalCacheTokens)} cached`}
                                 icon={<CachedIcon />}
-                                color={cacheHitRate >= 50 ? 'success' : cacheHitRate >= 20 ? 'info' : 'warning'}
+                                // Health gauge, inverted from Error Rate: higher is better,
+                                // so a too-low cache-hit rate is a problem.
+                                // green healthy (>=50%) -> amber low (>=20%) -> red too low.
+                                color={cacheHitRate >= 50 ? 'success' : cacheHitRate >= 20 ? 'warning' : 'error'}
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -648,7 +661,8 @@ export default function DashboardPage() {
                                 value={`${errorRate.toFixed(2)}%`}
                                 subtitle={`${totalErrors} errors`}
                                 icon={<ErrorOutlineIcon />}
-                                color={errorRate > 5 ? 'error' : errorRate > 1 ? 'warning' : 'info'}
+                                // Health gauge: green healthy → amber elevated → red high.
+                                color={errorRate > 5 ? 'error' : errorRate > 1 ? 'warning' : 'success'}
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -662,31 +676,35 @@ export default function DashboardPage() {
                         </Grid>
                     </Grid>
 
-                    {/* Chart / Requests toggle */}
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                        {isHourlyRange && (
-                            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                <ToggleButtonGroup
-                                    value={viewMode}
-                                    exclusive
-                                    onChange={(_, v) => v && setViewMode(v)}
-                                    size="small"
-                                    sx={{
-                                        '& .MuiToggleButton-root': {
-                                            px: 1.75,
-                                            py: 0.375,
-                                            fontSize: '0.78rem',
-                                            textTransform: 'none',
-                                        },
-                                    }}
-                                >
-                                    <ToggleButton value="summary">Summary</ToggleButton>
-                                    <ToggleButton value="requests">By Request</ToggleButton>
-                                </ToggleButtonGroup>
-                            </Box>
-                        )}
+                    {/* Chart view toggle: Summary trend, By Request (hourly only),
+                        or the 12-month Activity heatmap. flex: 1 so the active
+                        view can use the full pane height (the Activity grid
+                        centers itself vertically in it). */}
+                    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <ToggleButtonGroup
+                                value={effectiveViewMode}
+                                exclusive
+                                onChange={(_, v) => v && setViewMode(v)}
+                                size="small"
+                                sx={{
+                                    '& .MuiToggleButton-root': {
+                                        px: 1.75,
+                                        py: 0.375,
+                                        fontSize: '0.78rem',
+                                        textTransform: 'none',
+                                    },
+                                }}
+                            >
+                                <ToggleButton value="summary">Summary</ToggleButton>
+                                {isHourlyRange && <ToggleButton value="requests">By Request</ToggleButton>}
+                                <ToggleButton value="activity">Activity</ToggleButton>
+                            </ToggleButtonGroup>
+                        </Box>
 
-                        {viewMode === 'summary' ? (
+                        {effectiveViewMode === 'activity' ? (
+                            <DashboardHeatmapSection provider={selectedProvider} refreshKey={heatmapRefresh} />
+                        ) : effectiveViewMode === 'summary' ? (
                             timeRange === 'today' || timeRange === 'yesterday' ? (
                                 <HourlyTokenHistoryChart data={timeSeries} />
                             ) : (

@@ -5,7 +5,6 @@ import { OpenAI, Anthropic, Claude, OpenCode, Xcode, VSCode, Telegram, Feishu, L
 import {
     SettingsApplications,
     BarChart as IconChartBar,
-    GridView as IconGridDots,
     EventNote as IconCalendarClock,
     CalendarToday as IconCalendar,
     Event as IconCalendarEvent,
@@ -89,11 +88,13 @@ export function useActivityItems(): ActivityItem[] {
             group.filter(s => !hiddenScenarios.has(s.id)).map(s => s.nav);
 
         const codingTools = visible([
+            // Claude Desktop leads so all Claude-branded scenarios stay grouped
+            // at the front, right after the Claude Code block.
+            { id: 'claude_desktop', nav: { path: '/agent/claude_desktop', label: t('layout.nav.useClaudeDesktop', { defaultValue: 'Claude Desktop' }), icon: <ClaudeDesktop size={20} /> } },
             { id: 'codex', nav: { path: '/agent/codex', label: t('layout.nav.useCodex', { defaultValue: 'Codex' }), icon: <Codex size={20} /> } },
             { id: 'opencode', nav: { path: '/agent/opencode', label: t('layout.nav.useOpenCode', { defaultValue: 'OpenCode' }), icon: <OpenCode size={20} /> } },
             { id: 'xcode', nav: { path: '/agent/xcode', label: t('layout.nav.useXcode', { defaultValue: 'Xcode' }), icon: <Xcode size={20} /> } },
             { id: 'vscode', nav: { path: '/agent/vscode', label: t('layout.nav.useVSCode', { defaultValue: 'VS Code' }), icon: <VSCode size={20} /> } },
-            { id: 'claude_desktop', nav: { path: '/agent/claude_desktop', label: t('layout.nav.useClaudeDesktop', { defaultValue: 'Claude Desktop' }), icon: <ClaudeDesktop size={20} /> } },
         ]);
         const sdkTools = visible([
             { id: 'openai', nav: { path: '/agent/openai', label: t('layout.nav.useOpenAI', { defaultValue: 'OpenAI' }), icon: <OpenAI size={20} /> } },
@@ -149,8 +150,6 @@ export function useActivityItems(): ActivityItem[] {
                     { path: '/dashboard/7d', label: `7 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
                     { path: '/dashboard/30d', label: `30 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
                     { path: '/dashboard/90d', label: `90 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
-                    { type: 'divider' },
-                    { path: '/overview/90d', label: t('layout.heatmap'), icon: <IconGridDots sx={{ fontSize: 20 }} /> },
                 ],
             },
             ...(isFullEdition && promptMenuItems.length > 0 ? [{
