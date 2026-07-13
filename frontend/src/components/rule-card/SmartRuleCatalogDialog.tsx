@@ -529,8 +529,6 @@ export const SmartRuleCatalogDialog: React.FC<SmartRuleCatalogDialogProps> = ({
                                                                                 </Select>
                                                                             </FormControl>
                                                                             <Stack direction="row" spacing={1}>
-                                                                                <TextField size="small" label="Start" type="time" value={range.start} onChange={(e) => updateTimeRange(op, { start: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
-                                                                                <TextField size="small" label="End" type="time" value={range.end} onChange={(e) => updateTimeRange(op, { end: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
                                                                                 <Autocomplete
                                                                                     size="small"
                                                                                     fullWidth
@@ -542,6 +540,8 @@ export const SmartRuleCatalogDialog: React.FC<SmartRuleCatalogDialogProps> = ({
                                                                                     renderInput={(params) => <TextField {...params} label="Timezone" />}
                                                                                     sx={{ minWidth: 200 }}
                                                                                 />
+                                                                                <TextField size="small" label="Start" type="time" value={range.start} onChange={(e) => updateTimeRange(op, { start: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
+                                                                                <TextField size="small" label="End" type="time" value={range.end} onChange={(e) => updateTimeRange(op, { end: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
                                                                             </Stack>
                                                                             <Typography variant="caption" color="text.secondary">
                                                                                 Routing converts the current UTC time into this timezone. Start is included, end is excluded; overnight windows work.
