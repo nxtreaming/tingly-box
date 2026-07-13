@@ -57,6 +57,14 @@ export const SCENARIOS: ScenarioDescriptor[] = [
         hideable: true,
     },
     {
+        id: 'claude_desktop',
+        labelKey: 'layout.nav.useClaudeDesktop',
+        descKey: 'scenarioOverview.descriptions.claude_desktop',
+        path: '/agent/claude_desktop',
+        icon: (size) => <ClaudeDesktop size={size} />,
+        hideable: true,
+    },
+    {
         id: 'codex',
         labelKey: 'layout.nav.useCodex',
         descKey: 'scenarioOverview.descriptions.codex',
@@ -86,14 +94,6 @@ export const SCENARIOS: ScenarioDescriptor[] = [
         descKey: 'scenarioOverview.descriptions.vscode',
         path: '/agent/vscode',
         icon: (size) => <VSCode size={size} />,
-        hideable: true,
-    },
-    {
-        id: 'claude_desktop',
-        labelKey: 'layout.nav.useClaudeDesktop',
-        descKey: 'scenarioOverview.descriptions.claude_desktop',
-        path: '/agent/claude_desktop',
-        icon: (size) => <ClaudeDesktop size={size} />,
         hideable: true,
     },
     {
