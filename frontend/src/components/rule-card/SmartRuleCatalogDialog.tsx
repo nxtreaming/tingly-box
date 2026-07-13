@@ -516,32 +516,33 @@ export const SmartRuleCatalogDialog: React.FC<SmartRuleCatalogDialogProps> = ({
                                                                 {op.meta?.type === 'time_range' && op.operation && (() => {
                                                                     const range = parseTimeRange(op.value) || DEFAULT_TIME_RANGE;
                                                                     return (
-                                                                        <Stack spacing={1} sx={{ maxWidth: 440 }}>
+                                                                        <Stack spacing={1} sx={{ maxWidth: 560 }}>
+                                                                            <FormControl size="small" fullWidth>
+                                                                                <InputLabel>Apply</InputLabel>
+                                                                                <Select
+                                                                                    value={range.outside ? 'outside' : 'during'}
+                                                                                    label="Apply"
+                                                                                    onChange={(e) => updateTimeRange(op, { outside: e.target.value === 'outside' })}
+                                                                                >
+                                                                                    <MenuItem value="during">During this window</MenuItem>
+                                                                                    <MenuItem value="outside">Outside this window</MenuItem>
+                                                                                </Select>
+                                                                            </FormControl>
                                                                             <Stack direction="row" spacing={1}>
-                                                                                <FormControl size="small" fullWidth>
-                                                                                    <InputLabel>Apply</InputLabel>
-                                                                                    <Select
-                                                                                        value={range.outside ? 'outside' : 'during'}
-                                                                                        label="Apply"
-                                                                                        onChange={(e) => updateTimeRange(op, { outside: e.target.value === 'outside' })}
-                                                                                    >
-                                                                                        <MenuItem value="during">During this window</MenuItem>
-                                                                                        <MenuItem value="outside">Outside this window</MenuItem>
-                                                                                    </Select>
-                                                                                </FormControl>
                                                                                 <TextField size="small" label="Start" type="time" value={range.start} onChange={(e) => updateTimeRange(op, { start: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
                                                                                 <TextField size="small" label="End" type="time" value={range.end} onChange={(e) => updateTimeRange(op, { end: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
+                                                                                <Autocomplete
+                                                                                    size="small"
+                                                                                    fullWidth
+                                                                                    disableClearable
+                                                                                    options={timezones.includes(range.timezone) ? timezones : [range.timezone, ...timezones]}
+                                                                                    getOptionLabel={timezoneLabel}
+                                                                                    value={range.timezone}
+                                                                                    onChange={(_e, value) => value && updateTimeRange(op, { timezone: value })}
+                                                                                    renderInput={(params) => <TextField {...params} label="Timezone" />}
+                                                                                    sx={{ minWidth: 200 }}
+                                                                                />
                                                                             </Stack>
-                                                                            <Autocomplete
-                                                                                size="small"
-                                                                                fullWidth
-                                                                                disableClearable
-                                                                                options={timezones.includes(range.timezone) ? timezones : [range.timezone, ...timezones]}
-                                                                                getOptionLabel={timezoneLabel}
-                                                                                value={range.timezone}
-                                                                                onChange={(_e, value) => value && updateTimeRange(op, { timezone: value })}
-                                                                                renderInput={(params) => <TextField {...params} label="Timezone" />}
-                                                                            />
                                                                             <Typography variant="caption" color="text.secondary">
                                                                                 Routing converts the current UTC time into this timezone. Start is included, end is excluded; overnight windows work.
                                                                             </Typography>
