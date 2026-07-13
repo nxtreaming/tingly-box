@@ -152,10 +152,17 @@ export const ProviderConfigCard: React.FC<ProviderConfigCardProps> = ({
                                     </Tooltip>
                                 ),
                                 actions: (
-                                    <EnvironmentModeSwitcher
-                                        value={envMode}
-                                        onChange={setEnvMode}
-                                    />
+                                    <>
+                                        <Tooltip title={`Copy ${baseUrlLabel}`} arrow>
+                                            <IconButton onClick={() => onCopy(fullUrl, `${title} ${baseUrlLabel}`)} size="small">
+                                                <CopyIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                        <EnvironmentModeSwitcher
+                                            value={envMode}
+                                            onChange={setEnvMode}
+                                        />
+                                    </>
                                 ),
                             },
                         ]}
@@ -185,11 +192,18 @@ export const ProviderConfigCard: React.FC<ProviderConfigCardProps> = ({
                                     </Tooltip>
                                 ),
                                 actions: (
-                                    <Tooltip title="View Full Token">
-                                        <IconButton onClick={() => setShowTokenModal(true)} size="small">
-                                            <VisibilityIcon fontSize="small" />
-                                        </IconButton>
-                                    </Tooltip>
+                                    <>
+                                        <Tooltip title="Copy API Key" arrow>
+                                            <IconButton onClick={() => onCopy(token, 'API Key')} size="small">
+                                                <CopyIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                        <Tooltip title="View Full Token">
+                                            <IconButton onClick={() => setShowTokenModal(true)} size="small">
+                                                <VisibilityIcon fontSize="small" />
+                                            </IconButton>
+                                        </Tooltip>
+                                    </>
                                 ),
                             },
                         ]}

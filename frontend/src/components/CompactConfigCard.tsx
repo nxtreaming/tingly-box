@@ -1,4 +1,4 @@
-import { Visibility as VisibilityIcon } from '@/components/icons';
+import { Visibility as VisibilityIcon, ContentCopy as CopyIcon } from '@/components/icons';
 import { IconButton, Tooltip, Typography } from '@mui/material';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -91,11 +91,18 @@ export const CompactConfigCard: React.FC<CompactConfigCardProps> = ({
                 </Tooltip>
             ),
             actions: (
-                <EnvironmentModeSwitcher
-                    value={envMode}
-                    onChange={setEnvMode}
-                    modes={environmentModes}
-                />
+                <>
+                    <Tooltip title={`Copy ${baseUrlLabel}`} arrow>
+                        <IconButton onClick={() => onCopy(fullUrl, title || baseUrlLabel)} size="small">
+                            <CopyIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <EnvironmentModeSwitcher
+                        value={envMode}
+                        onChange={setEnvMode}
+                        modes={environmentModes}
+                    />
+                </>
             ),
         },
         {
@@ -113,11 +120,18 @@ export const CompactConfigCard: React.FC<CompactConfigCardProps> = ({
                 </Tooltip>
             ),
             actions: (
-                <Tooltip title="View Full Token">
-                    <IconButton onClick={() => setShowTokenModal(true)} size="small">
-                        <VisibilityIcon fontSize="small" />
-                    </IconButton>
-                </Tooltip>
+                <>
+                    <Tooltip title={`Copy ${apiKeyLabel}`} arrow>
+                        <IconButton onClick={() => onCopy(token, apiKeyLabel)} size="small">
+                            <CopyIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="View Full Token">
+                        <IconButton onClick={() => setShowTokenModal(true)} size="small">
+                            <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                    </Tooltip>
+                </>
             ),
         },
     ];

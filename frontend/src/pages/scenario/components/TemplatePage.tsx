@@ -406,7 +406,7 @@ const TemplatePage: React.FC<TemplatePageProps> = (props) => {
                             py: 8,
                             color: 'text.secondary'
                         }}>
-                            No rules yet. Click "Create Rule" to add one.
+                            No rules yet. Click "New Rule" to add one.
                         </Box>
                     ) : (
                         rules.map((rule, index) => {
