@@ -629,7 +629,8 @@ export default function DashboardPage() {
                                 value={totalRequests.toLocaleString()}
                                 subtitle={TIME_RANGE_CONFIG[timeRange].label}
                                 icon={<CallMadeIcon />}
-                                color="primary"
+                                // Volume metric — no health judgment, so keep it neutral.
+                                color="secondary"
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -638,7 +639,8 @@ export default function DashboardPage() {
                                 value={formatNumber(totalTokens)}
                                 subtitle={`Input: ${formatNumber(totalInputTokens)} + Cache: ${formatNumber(totalCacheTokens)}\nOutput: ${formatNumber(totalOutputTokens)}`}
                                 icon={<PaidIcon />}
-                                color="success"
+                                // Volume metric — no health judgment, so keep it neutral.
+                                color="secondary"
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -647,7 +649,10 @@ export default function DashboardPage() {
                                 value={`${cacheHitRate.toFixed(1)}%`}
                                 subtitle={`${formatNumber(totalCacheTokens)} cached`}
                                 icon={<CachedIcon />}
-                                color={cacheHitRate >= 50 ? 'success' : cacheHitRate >= 20 ? 'info' : 'warning'}
+                                // Higher is better: green when healthy, otherwise neutral —
+                                // a low cache-hit rate is sub-optimal, not an error, so it
+                                // never turns amber/red.
+                                color={cacheHitRate >= 50 ? 'success' : 'secondary'}
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
@@ -656,7 +661,8 @@ export default function DashboardPage() {
                                 value={`${errorRate.toFixed(2)}%`}
                                 subtitle={`${totalErrors} errors`}
                                 icon={<ErrorOutlineIcon />}
-                                color={errorRate > 5 ? 'error' : errorRate > 1 ? 'warning' : 'info'}
+                                // Health gauge: green healthy → amber elevated → red high.
+                                color={errorRate > 5 ? 'error' : errorRate > 1 ? 'warning' : 'success'}
                             />
                         </Grid>
                         <Grid size={{ xs: 6, sm: 4, md: 2.4 }}>
