@@ -300,15 +300,15 @@ const ApiKeyTable = ({
                                         <Stack
                                             direction="column"
                                             spacing={0.5}
-                                            alignItems="stretch"
+                                            alignItems="flex-start"
                                         >
                                             <ApiStyleBadge
                                                 apiStyle="openai"
-                                                sx={{width: "100%", justifyContent: "center"}}
+                                                sx={{minWidth: "110px", justifyContent: "center"}}
                                             />
                                             <ApiStyleBadge
                                                 apiStyle="anthropic"
-                                                sx={{width: "100%", justifyContent: "center"}}
+                                                sx={{minWidth: "110px", justifyContent: "center"}}
                                             />
                                         </Stack>
                                     ) : (
