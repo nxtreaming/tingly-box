@@ -556,8 +556,12 @@ func (h *Handler) ApplyCodexConfigFromState(c *gin.Context) {
 	writeCatalog := req.WriteCatalog == nil || *req.WriteCatalog
 
 	authMode := config.CodexAuthMode(req.AuthMode)
+	// ChatGPT mode requires a stored Codex OAuth provider; hybrid mode can use
+	// one (materialized into auth.json) but also works without (auth.json left
+	// untouched so an existing `codex login` survives).
 	var chatgptTokens *config.CodexChatGPTTokens
-	if authMode == config.CodexAuthChatGPT {
+	switch authMode {
+	case config.CodexAuthChatGPT:
 		tokens, err := h.loadCodexChatGPTTokens(req.OAuthProviderUUID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, ApplyCodexConfigResponse{
@@ -567,19 +571,36 @@ func (h *Handler) ApplyCodexConfigFromState(c *gin.Context) {
 			return
 		}
 		chatgptTokens = tokens
+	case config.CodexAuthHybrid:
+		if req.OAuthProviderUUID != "" {
+			tokens, err := h.loadCodexChatGPTTokens(req.OAuthProviderUUID)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, ApplyCodexConfigResponse{
+					Success: false,
+					Message: err.Error(),
+				})
+				return
+			}
+			chatgptTokens = tokens
+		}
 	}
 
 	// ChatGPT mode: clear tingly gateway keys from config.toml so codex CLI
 	// uses its own defaults, then leave the rest of config.toml untouched.
-	// Gateway mode: full rewrite as before.
+	// Hybrid mode: full gateway rewrite, but the gateway token rides in the
+	// provider stanza (experimental_bearer_token) instead of auth.json.
+	// Gateway (apikey) mode: full rewrite, token in auth.json as before.
 	var (
 		configResult *config.ApplyResult
 		err          error
 	)
-	if authMode == config.CodexAuthChatGPT {
+	switch authMode {
+	case config.CodexAuthChatGPT:
 		configResult, err = config.ClearCodexGatewayConfig()
-	} else {
-		configResult, err = config.ApplyCodexConfigWithContextWindows(codexBaseURL, models, prefs, writeCatalog, contextWindows)
+	case config.CodexAuthHybrid:
+		configResult, err = config.ApplyCodexConfigWithContextWindows(codexBaseURL, models, prefs, writeCatalog, contextWindows, apiKey)
+	default:
+		configResult, err = config.ApplyCodexConfigWithContextWindows(codexBaseURL, models, prefs, writeCatalog, contextWindows, "")
 	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ApplyCodexConfigResponse{
@@ -664,7 +685,14 @@ func (h *Handler) GetCodexConfigPreview(c *gin.Context) {
 	apiKey := h.config.GetModelToken()
 
 	writeCatalog := req.WriteCatalog == nil || *req.WriteCatalog
-	tomlBytes, err := config.RenderCodexConfigTOML(codexBaseURL, models, prefs, writeCatalog)
+
+	// Hybrid mode embeds the gateway token in the provider stanza; other modes
+	// keep it in auth.json, so config.toml carries no bearer token.
+	configBearerToken := ""
+	if config.CodexAuthMode(req.AuthMode) == config.CodexAuthHybrid {
+		configBearerToken = apiKey
+	}
+	tomlBytes, err := config.RenderCodexConfigTOML(codexBaseURL, models, prefs, writeCatalog, configBearerToken)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
 			Success: false,
@@ -673,19 +701,26 @@ func (h *Handler) GetCodexConfigPreview(c *gin.Context) {
 		return
 	}
 
-	authBytes, err := json.MarshalIndent(map[string]string{"OPENAI_API_KEY": apiKey}, "", "  ")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
-			Success: false,
-			Message: "Failed to render auth: " + err.Error(),
-		})
-		return
+	// In hybrid mode auth.json keeps the native ChatGPT login (or is left
+	// untouched), so there is no OPENAI_API_KEY to preview here — the UI shows
+	// an explanatory note instead of a token.
+	authJSON := ""
+	if config.CodexAuthMode(req.AuthMode) != config.CodexAuthHybrid {
+		authBytes, err := json.MarshalIndent(map[string]string{"OPENAI_API_KEY": apiKey}, "", "  ")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, CodexConfigPreviewResponse{
+				Success: false,
+				Message: "Failed to render auth: " + err.Error(),
+			})
+			return
+		}
+		authJSON = string(authBytes)
 	}
 
 	resp := CodexConfigPreviewResponse{
 		Success:    true,
 		ConfigToml: string(tomlBytes),
-		AuthJson:   string(authBytes),
+		AuthJson:   authJSON,
 		Models:     models,
 	}
 	if writeCatalog && len(models) > 0 {

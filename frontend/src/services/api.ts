@@ -1108,7 +1108,7 @@ export const api = {
     applyCodexConfig: async (
         preferences?: Record<string, string>,
         writeCatalog?: boolean,
-        authMode?: 'apikey' | 'chatgpt',
+        authMode?: 'apikey' | 'chatgpt' | 'hybrid',
         oauthProviderUuid?: string,
     ): Promise<any> => {
         return uiAPI('/config/apply/codex', {
@@ -1125,7 +1125,7 @@ export const api = {
     getCodexConfigPreview: async (
         preferences?: Record<string, string>,
         writeCatalog?: boolean,
-        authMode?: 'apikey' | 'chatgpt',
+        authMode?: 'apikey' | 'chatgpt' | 'hybrid',
         oauthProviderUuid?: string,
     ): Promise<any> => {
         return uiAPI('/config/preview/codex', {
