@@ -1,4 +1,5 @@
 import {
+    Autocomplete,
     Box,
     Button,
     Chip,
@@ -36,6 +37,7 @@ import {
     isValidTimeRange,
     parseTimeRange,
     serializeTimeRange,
+    timezoneLabel,
     timezoneOptions,
 } from './timeRange';
 
@@ -530,12 +532,16 @@ export const SmartRuleCatalogDialog: React.FC<SmartRuleCatalogDialogProps> = ({
                                                                                 <TextField size="small" label="Start" type="time" value={range.start} onChange={(e) => updateTimeRange(op, { start: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
                                                                                 <TextField size="small" label="End" type="time" value={range.end} onChange={(e) => updateTimeRange(op, { end: e.target.value })} InputLabelProps={{ shrink: true }} fullWidth />
                                                                             </Stack>
-                                                                            <FormControl size="small" fullWidth>
-                                                                                <InputLabel>Timezone</InputLabel>
-                                                                                <Select value={range.timezone} label="Timezone" onChange={(e) => updateTimeRange(op, { timezone: e.target.value })}>
-                                                                                    {timezones.map((timezone) => <MenuItem key={timezone} value={timezone}>{timezone}</MenuItem>)}
-                                                                                </Select>
-                                                                            </FormControl>
+                                                                            <Autocomplete
+                                                                                size="small"
+                                                                                fullWidth
+                                                                                disableClearable
+                                                                                options={timezones.includes(range.timezone) ? timezones : [range.timezone, ...timezones]}
+                                                                                getOptionLabel={timezoneLabel}
+                                                                                value={range.timezone}
+                                                                                onChange={(_e, value) => value && updateTimeRange(op, { timezone: value })}
+                                                                                renderInput={(params) => <TextField {...params} label="Timezone" />}
+                                                                            />
                                                                             <Typography variant="caption" color="text.secondary">
                                                                                 Routing converts the current UTC time into this timezone. Start is included, end is excluded; overnight windows work.
                                                                             </Typography>
