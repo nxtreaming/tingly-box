@@ -3,14 +3,25 @@ import { useMemo } from 'react';
 import { format } from 'date-fns';
 import { formatNumber } from './chartStyles';
 
-// Green color scale for GitHub-style heatmap (like GitHub's contribution graph)
+// Green color scale for GitHub-style heatmap (like GitHub's contribution graph).
+// Level 0 (no activity) is rendered with a theme-aware neutral (see emptyCellBg)
+// so it reads as an empty slot instead of a near-white green — and stays visible
+// in dark mode. The value here is only a fallback.
 const HEATMAP_COLORS = [
-    '#f0fdf4',  // Level 0: No activity (lightest green)
-    '#86efac',  // Level 1: Low (light green)
-    '#4ade80',  // Level 2: Medium (green)
-    '#22c55e',  // Level 3: High (dark green)
-    '#15803d',  // Level 4: Very high (darkest green)
+    '#ebedf0',  // Level 0: No activity (neutral, GitHub-style)
+    '#9be9a8',  // Level 1: Low
+    '#40c463',  // Level 2: Medium
+    '#30a14e',  // Level 3: High
+    '#216e39',  // Level 4: Very high
 ];
+
+// Theme-aware background for the "no activity" cells / legend swatch.
+const emptyCellBg = (theme: { palette: { mode: string } }) =>
+    theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.08)' : '#ebedf0';
+
+// Faint hairline so individual cells stay defined against the card background.
+const cellBorder = (theme: { palette: { mode: string } }) =>
+    `1px solid ${theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(27,31,35,0.06)'}`;
 
 export interface DailyUsage {
     date: string;           // YYYY-MM-DD format
@@ -150,35 +161,23 @@ const defaultColourMap = (value: number, max: number, colorCount: number): numbe
 
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-// Metric component (center-aligned)
-const Metric = ({
-    caption,
-    value,
-}: {
-    caption: string;
-    value: string;
-}) => (
-    <Box
-        sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            minWidth: { xs: 96, sm: 120 },
-        }}
-    >
+// Compact inline stat: "LABEL value" on a single line, to keep the heatmap's
+// summary strip short instead of two rows of large blocks.
+const Stat = ({ label, value }: { label: string; value: string }) => (
+    <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
         <Typography
             sx={{
-                fontSize: '0.75rem',
+                fontSize: '0.6875rem',
                 fontWeight: 600,
                 textTransform: 'uppercase',
-                letterSpacing: '0.5px',
+                letterSpacing: '0.4px',
                 color: 'text.secondary',
-                textAlign: 'center',
+                whiteSpace: 'nowrap',
             }}
         >
-            {caption}
+            {label}
         </Typography>
-        <Typography sx={{ fontSize: '14px', fontWeight: 600 }}>{value}</Typography>
+        <Typography sx={{ fontSize: '0.8125rem', fontWeight: 700, whiteSpace: 'nowrap' }}>{value}</Typography>
     </Box>
 );
 
@@ -186,28 +185,19 @@ export const TokenHeatmap = ({
     data,
     cellSize = 9,
     gap = 2,
-    startDate,
-    endDate,
-    title = '',
 }: TokenHeatmapProps) => {
     // Build lookup maps (data is already filled by parent)
     const {
         dayMap,
-        valueByDate,
         maxValue,
         totalTokens,
-        totalInput,
-        totalOutput,
         activeDays,
         longestStreak,
-        currentStreak,
     } = useMemo(() => {
         const map = new Map<string, DailyUsage>();
         const values = new Map<string, number>();
         let max = 0;
         let total = 0;
-        let input = 0;
-        let output = 0;
         let active = 0;
 
         for (const item of data) {
@@ -215,8 +205,6 @@ export const TokenHeatmap = ({
             values.set(item.date, item.totalTokens);
             if (item.totalTokens > max) max = item.totalTokens;
             total += item.totalTokens;
-            input += item.inputTokens;
-            output += item.outputTokens;
             if (item.totalTokens > 0) active += 1;
         }
 
@@ -226,14 +214,10 @@ export const TokenHeatmap = ({
 
         return {
             dayMap: map,
-            valueByDate: values,
             maxValue: max,
             totalTokens: total,
-            totalInput: input,
-            totalOutput: output,
             activeDays: active,
             longestStreak: streaks.longestStreak,
-            currentStreak: streaks.currentStreak,
         };
     }, [data]);
 
@@ -255,36 +239,52 @@ export const TokenHeatmap = ({
         <Box
             sx={{
                 width: '100%',
-                p: { xs: 0, md: 0.5 },
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 2.5,
+                gap: 1.5,
             }}
         >
-            {/* Header with title and top metrics */}
+            {/* Compact summary strip: key stats on the left, legend on the right,
+                a single row instead of two blocks of large metrics. */}
             <Box
                 sx={{
                     display: 'flex',
                     flexWrap: 'wrap',
                     alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 2,
+                    justifyContent: 'space-between',
+                    columnGap: 2.5,
+                    rowGap: 1,
                 }}
             >
-                <Typography sx={{ fontSize: '14px', fontWeight: 600 }}>{title}</Typography>
-                <Box
-                    sx={{
-                        display: 'grid',
-                        gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, max-content)' },
-                        gap: { xs: 1.5, md: 2 },
-                        justifyContent: 'center',
-                        width: { xs: '100%', md: 'auto' },
-                    }}
-                >
-                    <Metric caption="Input tokens" value={formatTokenTotal(totalInput)} />
-                    <Metric caption="Cache tokens" value={formatTokenTotal(data.reduce((sum, d) => sum + (d.cacheTokens || 0), 0))} />
-                    <Metric caption="Output tokens" value={formatTokenTotal(totalOutput)} />
-                    <Metric caption="Total tokens" value={formatTokenTotal(totalTokens)} />
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: 2.5, rowGap: 0.5 }}>
+                    <Stat label="Total" value={formatTokenTotal(totalTokens)} />
+                    <Stat label="Active" value={`${activeDays}/${allDays.length}`} />
+                    <Stat label="Longest streak" value={`${longestStreak}d`} />
+                    <Stat label="Max/day" value={formatTokenTotal(maxValue)} />
+                </Box>
+
+                {/* Legend */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography sx={{ fontSize: '0.625rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', color: 'text.secondary' }}>
+                        Less
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.375 }}>
+                        {HEATMAP_COLORS.map((color, index) => (
+                            <Box
+                                key={index}
+                                sx={{
+                                    width: 11,
+                                    height: 11,
+                                    backgroundColor: index === 0 ? emptyCellBg : color,
+                                    border: cellBorder,
+                                    borderRadius: '2px',
+                                }}
+                            />
+                        ))}
+                    </Box>
+                    <Typography sx={{ fontSize: '0.625rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', color: 'text.secondary' }}>
+                        More
+                    </Typography>
                 </Box>
             </Box>
 
@@ -459,13 +459,13 @@ export const TokenHeatmap = ({
                                             gridRow: dayIndex + 2,
                                             width: cellSize,
                                             height: cellSize,
-                                            backgroundColor: fill,
-                                            borderRadius: '4px',
-                                            border: 'none',
+                                            backgroundColor: colorIndex === 0 ? emptyCellBg : fill,
+                                            border: cellBorder,
+                                            borderRadius: '3px',
                                             cursor: 'default',
                                             transition: 'transform 0.1s, opacity 0.1s',
                                             '&:hover': {
-                                                transform: 'scale(1.15)',
+                                                transform: 'scale(1.25)',
                                                 opacity: 0.9,
                                                 outline: '1px solid',
                                                 outlineColor: 'text.primary',
@@ -480,67 +480,6 @@ export const TokenHeatmap = ({
                         })
                     )}
                 </Box>
-            </Box>
-
-            {/* Legend */}
-            <Box
-                sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                    justifyContent: 'center',
-                }}
-            >
-                <Typography
-                    sx={{
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        color: 'text.secondary',
-                    }}
-                >
-                    Less
-                </Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    {HEATMAP_COLORS.map((color, index) => (
-                        <Box
-                            key={index}
-                            sx={{
-                                width: cellSize,
-                                height: cellSize,
-                                backgroundColor: color,
-                                borderRadius: '4px',
-                            }}
-                        />
-                    ))}
-                </Box>
-                <Typography
-                    sx={{
-                        fontSize: '10px',
-                        fontWeight: 600,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        color: 'text.secondary',
-                    }}
-                >
-                    More
-                </Typography>
-            </Box>
-
-            {/* Bottom metrics */}
-            <Box
-                sx={{
-                    display: 'grid',
-                    gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
-                    gap: 2,
-                    justifyContent: 'center',
-                }}
-            >
-                <Metric caption="Longest streak" value={`${longestStreak} days`} />
-                <Metric caption="Current streak" value={`${currentStreak} days`} />
-                <Metric caption="Active days" value={`${activeDays} / ${allDays.length}`} />
-                <Metric caption="Max daily" value={formatTokenTotal(maxValue)} />
             </Box>
         </Box>
     );

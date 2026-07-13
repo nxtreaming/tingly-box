@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Box, Paper, Tooltip, Typography } from '@mui/material';
 import { Info as InfoIcon } from '@/components/icons';
 import { format } from 'date-fns';
@@ -36,24 +36,6 @@ interface DashboardHeatmapSectionProps {
 
 export default function DashboardHeatmapSection({ provider, refreshKey = 0 }: DashboardHeatmapSectionProps) {
     const [dailyData, setDailyData] = useState<DailyUsage[]>([]);
-    const [cellSize, setCellSize] = useState(12);
-    const gridContainerRef = useRef<HTMLDivElement>(null);
-
-    // Responsive cell sizing — same heuristic as the former standalone heatmap
-    // page, so the grid keeps its familiar density.
-    useEffect(() => {
-        if (!gridContainerRef.current || dailyData.length === 0) return;
-        const observer = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const width = entry.contentRect.width;
-                const weeks = Math.ceil(dailyData.length / 4);
-                const availableWidth = width - 45 /* day labels */ - 70 /* padding */ - 1 /* gap */;
-                setCellSize(Math.max(9, Math.floor(availableWidth / weeks)));
-            }
-        });
-        observer.observe(gridContainerRef.current);
-        return () => observer.disconnect();
-    }, [dailyData]);
 
     const loadData = useCallback(async (providerFilter: string) => {
         try {
@@ -142,9 +124,9 @@ export default function DashboardHeatmapSection({ provider, refreshKey = 0 }: Da
                 </Box>
             </Box>
 
-            <Box ref={gridContainerRef} sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
                 {dailyData.length > 0 ? (
-                    <TokenHeatmap data={dailyData} cellSize={cellSize} gap={1} />
+                    <TokenHeatmap data={dailyData} cellSize={13} gap={0.5} />
                 ) : (
                     <Box sx={{ py: 6, color: 'text.secondary' }}>
                         <Typography variant="body2">No activity in the last {HEATMAP_DAYS} days.</Typography>
