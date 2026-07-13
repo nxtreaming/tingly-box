@@ -70,15 +70,20 @@ type ApplyCodexConfigRequest struct {
 	Preferences  *config.CodexPrefs `json:"preferences"`
 	WriteCatalog *bool              `json:"writeCatalog"`
 
-	// AuthMode selects how ~/.codex/auth.json is populated. "" / "apikey"
-	// writes the gateway key (existing behavior); "chatgpt" exports the
-	// OAuth tokens of the provider identified by OAuthProviderUUID so codex
-	// CLI talks directly to OpenAI. tingly-box stops managing the tokens
-	// after a chatgpt-mode apply — codex CLI owns refresh from then on.
+	// AuthMode selects how ~/.codex/auth.json and the gateway credential are
+	// wired:
+	//   - "" / "apikey": gateway routing, key written to auth.json (OPENAI_API_KEY).
+	//   - "chatgpt": no gateway; exports the OAuth tokens of OAuthProviderUUID
+	//     to auth.json so codex CLI talks directly to OpenAI. tingly-box stops
+	//     managing the tokens after apply — codex CLI owns refresh from then on.
+	//   - "hybrid": gateway routing WITH the key kept in config.toml's provider
+	//     stanza (experimental_bearer_token), leaving auth.json free to hold a
+	//     native ChatGPT login so Codex App still sees the official account.
 	AuthMode string `json:"authMode,omitempty"`
 
 	// OAuthProviderUUID identifies the Codex OAuth provider whose tokens
-	// should be exported. Required when AuthMode == "chatgpt".
+	// should be exported to auth.json. Required when AuthMode == "chatgpt";
+	// optional when "hybrid" (omit to leave any existing auth.json untouched).
 	OAuthProviderUUID string `json:"oauthProviderUuid,omitempty"`
 }
 

@@ -941,7 +941,9 @@ var codexEnumValues = map[string][]string{
 // providers that may not support OpenAI reasoning-summary extensions.
 // Users who need reasoning summaries can enable them via the Quick Config form.
 func DefaultCodexPrefs() *CodexPrefs {
-	return &CodexPrefs{}
+	// Default reasoning effort to "medium" rather than leaving it unset — a
+	// concrete, sensible default beats deferring to Codex's built-in default.
+	return &CodexPrefs{ModelReasoningEffort: "medium"}
 }
 
 // toConfig converts prefs into a map of native TOML values ready to merge into
@@ -980,7 +982,7 @@ func (p *CodexPrefs) toConfig() map[string]interface{} {
 // This is the backward-compatible version that uses default context windows.
 // For context window support, use ApplyCodexConfigWithContextWindows.
 func ApplyCodexConfig(baseURL string, models []string, prefs *CodexPrefs, writeCatalog bool) (*ApplyResult, error) {
-	return ApplyCodexConfigWithContextWindows(baseURL, models, prefs, writeCatalog, nil)
+	return ApplyCodexConfigWithContextWindows(baseURL, models, prefs, writeCatalog, nil, "")
 }
 
 // ApplyCodexConfigWithContextWindows merges tingly-box Codex settings into ~/.codex/config.toml
@@ -1019,7 +1021,11 @@ func ApplyCodexConfig(baseURL string, models []string, prefs *CodexPrefs, writeC
 //
 // The previous config.toml and catalog (if any) are backed up before being
 // rewritten.
-func ApplyCodexConfigWithContextWindows(baseURL string, models []string, prefs *CodexPrefs, writeCatalog bool, contextWindows map[string]int) (*ApplyResult, error) {
+//
+// bearerToken (hybrid mode) is embedded into the tingly-box provider stanza as
+// experimental_bearer_token; pass "" for the classic gateway path where the key
+// is written to auth.json instead.
+func ApplyCodexConfigWithContextWindows(baseURL string, models []string, prefs *CodexPrefs, writeCatalog bool, contextWindows map[string]int, bearerToken string) (*ApplyResult, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
@@ -1063,7 +1069,7 @@ func ApplyCodexConfigWithContextWindows(baseURL string, models []string, prefs *
 	if len(models) > 0 && writeCatalog {
 		catalogPathForConfig = catalogPath
 	}
-	mergeCodexConfig(existing, baseURL, models, catalogPathForConfig, prefs)
+	mergeCodexConfig(existing, baseURL, models, catalogPathForConfig, prefs, bearerToken)
 
 	out, err := tomlpkg.Marshal(existing)
 	if err != nil {
@@ -1107,7 +1113,7 @@ func ApplyCodexConfigWithContextWindows(baseURL string, models []string, prefs *
 // RenderCodexConfigTOML returns the TOML that would be written to a fresh
 // ~/.codex/config.toml — i.e. the merge applied to an empty starting point.
 // Used by the preview endpoint so the UI can show exactly what's pending.
-func RenderCodexConfigTOML(baseURL string, models []string, prefs *CodexPrefs, writeCatalog bool) ([]byte, error) {
+func RenderCodexConfigTOML(baseURL string, models []string, prefs *CodexPrefs, writeCatalog bool, bearerToken string) ([]byte, error) {
 	catalogPathForConfig := ""
 	if len(models) > 0 && writeCatalog {
 		// Guard against environments where UserHomeDir returns "" with no
@@ -1119,7 +1125,7 @@ func RenderCodexConfigTOML(baseURL string, models []string, prefs *CodexPrefs, w
 		}
 	}
 	cfg := map[string]interface{}{}
-	mergeCodexConfig(cfg, baseURL, models, catalogPathForConfig, prefs)
+	mergeCodexConfig(cfg, baseURL, models, catalogPathForConfig, prefs, bearerToken)
 	return tomlpkg.Marshal(cfg)
 }
 
@@ -1129,7 +1135,14 @@ func RenderCodexConfigTOML(baseURL string, models []string, prefs *CodexPrefs, w
 // catalogPath is the absolute path to write into `model_catalog_json`. Pass
 // "" to leave that key untouched (e.g. when no models are configured — we
 // don't want to point Codex at a file we never wrote).
-func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []string, catalogPath string, prefs *CodexPrefs) {
+//
+// bearerToken, when non-empty, is written into the tingly-box provider stanza
+// as `experimental_bearer_token` (with `requires_openai_auth = false` so Codex
+// doesn't reject the non-`sk-` tingly token). This is the hybrid-mode path: it
+// keeps the gateway credential provider-scoped inside config.toml so
+// ~/.codex/auth.json can retain a native ChatGPT login instead. Pass "" for the
+// classic gateway path where the key lives in auth.json's OPENAI_API_KEY.
+func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []string, catalogPath string, prefs *CodexPrefs, bearerToken string) {
 	// User-tunable, whitelist-validated keys. Applied at the top level (global
 	// default) and stamped into each generated profile so profiles are
 	// self-contained. Converted first so it can never carry a managed key.
@@ -1152,12 +1165,27 @@ func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []strin
 	if providers == nil {
 		providers = map[string]interface{}{}
 	}
-	providers[codexGatewayProviderName] = map[string]interface{}{
-		"name":                  "OpenAI using Tingly Box",
-		"base_url":              baseURL,
-		"preferred_auth_method": "apikey",
-		"wire_api":              "responses",
+	providerStanza := map[string]interface{}{
+		"name":     "OpenAI using Tingly Box",
+		"base_url": baseURL,
+		"wire_api": "responses",
 	}
+	if bearerToken != "" {
+		// Hybrid: provider-scoped credential keeps the gateway token out of
+		// auth.json so a native ChatGPT login can coexist there.
+		// requires_openai_auth=false tells Codex not to source this provider's
+		// credential from auth.json (it comes from the bearer token instead).
+		providerStanza["experimental_bearer_token"] = bearerToken
+		providerStanza["requires_openai_auth"] = false
+	} else {
+		// Gateway (apikey): the token lives in ~/.codex/auth.json's
+		// OPENAI_API_KEY. requires_openai_auth=true is the schema-documented way
+		// to tell Codex to source this provider's credential from auth.json.
+		// (Codex's `preferred_auth_method` field was removed from the config
+		// schema, which is additionalProperties:false — writing it is rejected.)
+		providerStanza["requires_openai_auth"] = true
+	}
+	providers[codexGatewayProviderName] = providerStanza
 	cfg["model_providers"] = providers
 
 	profiles, _ := cfg["profiles"].(map[string]interface{})
@@ -1300,6 +1328,14 @@ const (
 	// tingly-box. tingly-box does NOT refresh these tokens afterwards —
 	// codex CLI owns their lifecycle from that point on.
 	CodexAuthChatGPT CodexAuthMode = "chatgpt"
+	// CodexAuthHybrid keeps requests flowing through the tingly-box gateway
+	// (the gateway token lives in config.toml's provider stanza as
+	// experimental_bearer_token) WHILE preserving a native ChatGPT login in
+	// auth.json so Codex App still recognizes the official account (remote
+	// control, plugins, account display). When ChatGPT tokens are supplied
+	// they are materialized into auth.json; when absent, auth.json is left
+	// untouched so an existing `codex login` survives.
+	CodexAuthHybrid CodexAuthMode = "hybrid"
 )
 
 // ClearCodexGatewayConfig removes tingly-managed top-level keys from
@@ -1407,12 +1443,20 @@ type CodexChatGPTTokens struct {
 //   - CodexAuthChatGPT: writes `tokens` / `last_refresh` / `auth_mode: "chatgpt"`
 //     and clears `OPENAI_API_KEY`. Tokens come from the caller; tingly-box does
 //     not subsequently refresh them.
+//   - CodexAuthHybrid: the gateway credential lives in config.toml (not here),
+//     so auth.json only needs to carry the native ChatGPT login. With tokens
+//     supplied it behaves like CodexAuthChatGPT; with tokens nil it is a no-op
+//     that leaves any existing auth.json (e.g. a prior `codex login`) untouched.
 func ApplyCodexAuth(mode CodexAuthMode, apiKey string, tokens *CodexChatGPTTokens) (*ApplyResult, error) {
+	// Hybrid with no tokens: preserve whatever login already lives in auth.json.
+	if mode == CodexAuthHybrid && tokens == nil {
+		return &ApplyResult{Success: true, Message: "Left ~/.codex/auth.json untouched (kept existing ChatGPT login)"}, nil
+	}
 	// Validate inputs before touching disk so a malformed request can't leave
 	// orphaned backups behind.
 	payload := map[string]interface{}{}
 	switch mode {
-	case CodexAuthChatGPT:
+	case CodexAuthChatGPT, CodexAuthHybrid:
 		if tokens == nil || tokens.AccessToken == "" || tokens.RefreshToken == "" {
 			return &ApplyResult{Message: "ChatGPT auth requires access_token and refresh_token"}, nil
 		}

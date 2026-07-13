@@ -6,6 +6,11 @@
 > typed, editable model/reasoning form, how the model catalog became an
 > explicit toggle, and why the defaults are deliberately conservative for
 > third-party providers.
+>
+> **Any `config.toml` key we emit must validate against Codex's published schema**
+> — <https://developers.openai.com/codex/config-schema.json> (root and
+> `[model_providers.*]` are `additionalProperties: false`). See
+> `.design/codex-auth.md` §7 for the validated field set and re-check commands.
 
 ---
 
