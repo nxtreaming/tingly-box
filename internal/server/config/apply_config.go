@@ -941,7 +941,9 @@ var codexEnumValues = map[string][]string{
 // providers that may not support OpenAI reasoning-summary extensions.
 // Users who need reasoning summaries can enable them via the Quick Config form.
 func DefaultCodexPrefs() *CodexPrefs {
-	return &CodexPrefs{}
+	// Default reasoning effort to "medium" rather than leaving it unset — a
+	// concrete, sensible default beats deferring to Codex's built-in default.
+	return &CodexPrefs{ModelReasoningEffort: "medium"}
 }
 
 // toConfig converts prefs into a map of native TOML values ready to merge into

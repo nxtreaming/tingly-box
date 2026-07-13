@@ -148,7 +148,42 @@ replaces the `OPENAI_API_KEY` Step 2 with a note (the token lives in
 | Frontend | `frontend/src/services/api.ts` | `applyCodexConfig` / `getCodexConfigPreview` accept `'hybrid'` |
 | Tests | `internal/server/config/apply_config_hybrid_test.go` | bearer token present in hybrid / absent in gateway; hybrid auth materialize-or-skip; no `OPENAI_API_KEY` leak |
 
-## 7. Prior art
+## 7. Config schema reference
+
+Codex publishes a machine-readable schema for `config.toml`. Validate any change
+to what we emit against it (editors with the *Even Better TOML* extension check
+it live):
+
+- Reference (prose): <https://developers.openai.com/codex/config-reference>
+- JSON Schema: <https://developers.openai.com/codex/config-schema.json>
+  (both 308-redirect to `learn.chatgpt.com/docs/...`)
+
+Facts that constrain our output (JSON Schema draft-07):
+
+- The **root** object and the **`ModelProviderInfo`** (a `[model_providers.*]`
+  entry) both set `additionalProperties: false` — an unknown key is a hard
+  validation error, not a warning.
+- Valid `[model_providers.*]` fields include `name`, `base_url`, `wire_api`
+  (default `"responses"`), `env_key`, `experimental_bearer_token`,
+  `requires_openai_auth`, `http_headers`, `query_params`, `auth`, … There is
+  **no `preferred_auth_method`** — we used to emit it and it failed validation
+  ("Additional properties are not allowed"). It is gone from both the provider
+  object and the root.
+- `requires_openai_auth` defaults to **`false`** = *"key comes from the `env_key`
+  env var"*; **`true`** = *"key/token comes from `auth.json`"*. Gateway (apikey)
+  mode sets `true` (sources `OPENAI_API_KEY` from `auth.json`); hybrid sets
+  `false` (uses the provider-scoped `experimental_bearer_token`).
+- `model_reasoning_effort` is schema-typed as any non-empty string
+  (`ReasoningEffort`, `minLength: 1`) — values are model-advertised, so our
+  whitelist stays a superset rather than a fixed enum.
+- Still valid (contrary to some doc summaries): top-level `profiles`,
+  `model_supports_reasoning_summaries`, `model_catalog_json`.
+
+To re-check after a Codex release:
+`curl -sL https://developers.openai.com/codex/config-schema.json | jq '.properties | keys'`
+and `jq '.definitions.ModelProviderInfo.properties | keys'`.
+
+## 8. Prior art
 
 - cc-switch — *Codex official auth preservation guide* and Issue #2850 /
   release v3.16.1 ("Codex App Enhancements"): the `experimental_bearer_token` in

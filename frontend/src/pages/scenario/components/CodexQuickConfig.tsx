@@ -24,7 +24,9 @@ export interface CodexPrefs {
 }
 
 export function defaultCodexPrefs(): CodexPrefs {
-    return {};
+    // Position reasoning effort to a concrete default ("medium") instead of
+    // leaving it unset — keep this in sync with Go's DefaultCodexPrefs.
+    return { model_reasoning_effort: 'medium' };
 }
 
 type PrefsKey = keyof CodexPrefs;
