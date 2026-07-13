@@ -5,7 +5,6 @@ import { OpenAI, Anthropic, Claude, OpenCode, Xcode, VSCode, Telegram, Feishu, L
 import {
     SettingsApplications,
     BarChart as IconChartBar,
-    GridView as IconGridDots,
     EventNote as IconCalendarClock,
     CalendarToday as IconCalendar,
     Event as IconCalendarEvent,
@@ -151,8 +150,6 @@ export function useActivityItems(): ActivityItem[] {
                     { path: '/dashboard/7d', label: `7 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
                     { path: '/dashboard/30d', label: `30 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
                     { path: '/dashboard/90d', label: `90 ${t('layout.days')}`, icon: <IconCalendarEvent sx={{ fontSize: 20 }} /> },
-                    { type: 'divider' },
-                    { path: '/overview/90d', label: t('layout.heatmap'), icon: <IconGridDots sx={{ fontSize: 20 }} /> },
                 ],
             },
             ...(isFullEdition && promptMenuItems.length > 0 ? [{

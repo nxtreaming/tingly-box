@@ -20,7 +20,7 @@ import {
     useTheme,
 } from '@mui/material';
 import { Refresh as RefreshIcon, Outbound as CallMadeIcon, ErrorOutline as ErrorOutlineIcon, Token as PaidIcon, Stream as StreamIcon, Autorenew as CachedIcon, FilterOff, ChevronLeft, ChevronRight } from '@/components/icons';
-import { StatCard, DailyTokenHistoryChart, HourlyTokenHistoryChart, ServiceStatsTable, AgentQuickNav, RequestsView, formatNumber } from '@/components/dashboard';
+import { StatCard, DailyTokenHistoryChart, HourlyTokenHistoryChart, ServiceStatsTable, AgentQuickNav, RequestsView, DashboardHeatmapSection, formatNumber } from '@/components/dashboard';
 import type { TimeSeriesData, AggregatedStat, UsageRecord } from '@/components/dashboard';
 import { ToggleButtonGroup, ToggleButton } from '@mui/material';
 import PageHeader from '@/components/PageHeader';
@@ -119,6 +119,8 @@ export default function DashboardPage() {
     const [selectedUser, setSelectedUser] = useState<string>('all');
     const [modelsPage, setModelsPage] = useState(0);
     const [modelsPerPage] = useState(10);
+    // Bumped on manual refresh so the fixed-window activity heatmap refetches too.
+    const [heatmapRefresh, setHeatmapRefresh] = useState(0);
 
     // By-request view state
     const [viewMode, setViewMode] = useState<'summary' | 'requests'>('summary');
@@ -323,6 +325,7 @@ export default function DashboardPage() {
         setRefreshing(true);
         loadFilterOptions();
         loadData(selectedProvider, selectedModel, selectedUser, timeRange);
+        setHeatmapRefresh((n) => n + 1);
     };
 
     // Calculate totals from stats
@@ -914,6 +917,10 @@ export default function DashboardPage() {
 
             {/* Stats Table */}
             <ServiceStatsTable stats={stats} />
+
+            {/* Fixed 180-day activity overview — independent of the range selector
+                above; shares only the Provider filter. */}
+            <DashboardHeatmapSection provider={selectedProvider} refreshKey={heatmapRefresh} />
         </Box>
     );
 }
