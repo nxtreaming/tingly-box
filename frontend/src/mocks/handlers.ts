@@ -2159,13 +2159,15 @@ export const handlers = [
         lines.push('[model_providers.tingly-box]')
         lines.push('name = "OpenAI using Tingly Box"')
         lines.push(`base_url = "${baseUrl}"`)
-        lines.push('preferred_auth_method = "apikey"')
         lines.push('wire_api = "responses"')
         if (authMode === 'hybrid') {
             // Hybrid keeps the gateway token in config.toml so auth.json can hold
             // a native ChatGPT login.
             lines.push(`experimental_bearer_token = "${token}"`)
             lines.push('requires_openai_auth = false')
+        } else {
+            // Gateway: Codex sources the key from auth.json's OPENAI_API_KEY.
+            lines.push('requires_openai_auth = true')
         }
         for (const m of models) {
             lines.push('')

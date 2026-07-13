@@ -37,8 +37,11 @@ func TestRenderCodexConfigTOML_HybridEmbedsBearerToken(t *testing.T) {
 	}
 }
 
-func TestRenderCodexConfigTOML_GatewayOmitsBearerToken(t *testing.T) {
-	// Classic gateway path (bearerToken == "") must not leak the hybrid keys.
+func TestRenderCodexConfigTOML_GatewayProviderShape(t *testing.T) {
+	// Classic gateway path (bearerToken == ""): no hybrid bearer token, the key
+	// is sourced from auth.json (requires_openai_auth=true), and the removed
+	// `preferred_auth_method` field must not reappear (config-schema.json is
+	// additionalProperties:false and rejects it).
 	tomlBytes, err := RenderCodexConfigTOML("http://h/tingly/codex", []string{"tingly-codex"}, DefaultCodexPrefs(), false, "")
 	if err != nil {
 		t.Fatalf("RenderCodexConfigTOML: %v", err)
@@ -52,8 +55,11 @@ func TestRenderCodexConfigTOML_GatewayOmitsBearerToken(t *testing.T) {
 	if _, ok := tb["experimental_bearer_token"]; ok {
 		t.Errorf("gateway config unexpectedly carries experimental_bearer_token: %#v", tb)
 	}
-	if _, ok := tb["requires_openai_auth"]; ok {
-		t.Errorf("gateway config unexpectedly carries requires_openai_auth: %#v", tb)
+	if tb["requires_openai_auth"] != true {
+		t.Errorf("requires_openai_auth = %v, want true (gateway sources key from auth.json)", tb["requires_openai_auth"])
+	}
+	if _, ok := tb["preferred_auth_method"]; ok {
+		t.Errorf("provider carries preferred_auth_method, which is not a valid Codex config-schema field: %#v", tb)
 	}
 }
 

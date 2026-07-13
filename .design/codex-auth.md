@@ -44,11 +44,16 @@ model_provider = "tingly-box"
 [model_providers.tingly-box]
 name = "OpenAI using Tingly Box"
 base_url = "http://127.0.0.1:12580/tingly/codex"
-preferred_auth_method = "apikey"
 wire_api = "responses"
 experimental_bearer_token = "tingly-box-…"   # gateway token, provider-scoped
 requires_openai_auth = false                  # tingly token isn't sk-shaped
 ```
+
+> Gateway (`apikey`) mode instead emits `requires_openai_auth = true` (no bearer
+> token) so Codex sources the provider credential from `auth.json`'s
+> `OPENAI_API_KEY`. Neither mode writes `preferred_auth_method` — it is **not** in
+> Codex's `config-schema.json` (which is `additionalProperties: false`), so
+> writing it fails schema validation ("Additional properties are not allowed").
 
 `auth.json` keeps `{ auth_mode:"chatgpt", tokens:{…} }` (or is left untouched).
 Result: **Codex App still sees the official account; `codex` requests still

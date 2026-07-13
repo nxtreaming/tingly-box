@@ -1164,18 +1164,24 @@ func mergeCodexConfig(cfg map[string]interface{}, baseURL string, models []strin
 		providers = map[string]interface{}{}
 	}
 	providerStanza := map[string]interface{}{
-		"name":                  "OpenAI using Tingly Box",
-		"base_url":              baseURL,
-		"preferred_auth_method": "apikey",
-		"wire_api":              "responses",
+		"name":     "OpenAI using Tingly Box",
+		"base_url": baseURL,
+		"wire_api": "responses",
 	}
 	if bearerToken != "" {
-		// Provider-scoped credential: keeps the gateway token out of auth.json
-		// so a native ChatGPT login can coexist there. requires_openai_auth
-		// stops Codex from demanding an `sk-`-shaped OpenAI key for this
-		// provider.
+		// Hybrid: provider-scoped credential keeps the gateway token out of
+		// auth.json so a native ChatGPT login can coexist there.
+		// requires_openai_auth=false tells Codex not to source this provider's
+		// credential from auth.json (it comes from the bearer token instead).
 		providerStanza["experimental_bearer_token"] = bearerToken
 		providerStanza["requires_openai_auth"] = false
+	} else {
+		// Gateway (apikey): the token lives in ~/.codex/auth.json's
+		// OPENAI_API_KEY. requires_openai_auth=true is the schema-documented way
+		// to tell Codex to source this provider's credential from auth.json.
+		// (Codex's `preferred_auth_method` field was removed from the config
+		// schema, which is additionalProperties:false — writing it is rejected.)
+		providerStanza["requires_openai_auth"] = true
 	}
 	providers[codexGatewayProviderName] = providerStanza
 	cfg["model_providers"] = providers
