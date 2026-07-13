@@ -252,26 +252,8 @@ const CodexQuickConfig: React.FC<CodexQuickConfigProps> = ({ prefs, setPrefs, wr
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
             <Typography variant="body2" color="text.secondary">{uiText.panelHeader}</Typography>
 
-            <Box>
-                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 0.5 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{uiText.sectionTitle}</Typography>
-                    <Typography variant="caption" color="text.secondary">{uiText.sectionHint}</Typography>
-                </Box>
-                <Divider />
-                <Stack divider={<Divider flexItem />}>
-                    {FIELD_STRUCT.map((f) => (
-                        <FieldRow
-                            key={f.key}
-                            field={f}
-                            text={fieldsText[f.key]}
-                            unsetLabel={uiText.unsetLabel}
-                            prefs={prefs}
-                            setPrefs={setPrefs}
-                        />
-                    ))}
-                </Stack>
-            </Box>
-
+            {/* Catalog first — it's the more consequential toggle (it's what makes
+                Codex's /model picker list tingly-served models). */}
             <Box>
                 <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 0.5 }}>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{catalogText.sectionTitle}</Typography>
@@ -304,6 +286,26 @@ const CodexQuickConfig: React.FC<CodexQuickConfigProps> = ({ prefs, setPrefs, wr
                         />
                     </Box>
                 </Box>
+            </Box>
+
+            <Box>
+                <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5, mb: 0.5 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{uiText.sectionTitle}</Typography>
+                    <Typography variant="caption" color="text.secondary">{uiText.sectionHint}</Typography>
+                </Box>
+                <Divider />
+                <Stack divider={<Divider flexItem />}>
+                    {FIELD_STRUCT.map((f) => (
+                        <FieldRow
+                            key={f.key}
+                            field={f}
+                            text={fieldsText[f.key]}
+                            unsetLabel={uiText.unsetLabel}
+                            prefs={prefs}
+                            setPrefs={setPrefs}
+                        />
+                    ))}
+                </Stack>
             </Box>
         </Box>
     );

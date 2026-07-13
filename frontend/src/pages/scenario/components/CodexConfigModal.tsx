@@ -1,6 +1,6 @@
 import { Alert, Box, Button, Checkbox, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, FormControl, FormControlLabel, IconButton, MenuItem, Radio, RadioGroup, Select, Tab, Tabs, Tooltip, Typography } from '@mui/material';
 import React from 'react';
-import { RestartAlt } from '@/components/icons';
+import { InfoOutlined, RestartAlt } from '@/components/icons';
 import CodeBlock from '@/components/CodeBlock';
 import CodexQuickConfig, { type CodexPrefs, defaultCodexPrefs } from './CodexQuickConfig';
 import Context1MChangeBanner from './Context1MChangeBanner';
@@ -353,46 +353,54 @@ EOF`;
                     rather than inside the Authentication selector. */}
                 {showOAuthSelector && (
                     <Box sx={{ mb: 2, px: 0.5 }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                            ChatGPT account
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                            <FormControl size="small" fullWidth sx={{ maxWidth: 420 }}>
-                                <Select
-                                    displayEmpty
-                                    value={selectedOAuthProvider}
-                                    onChange={(e) => setSelectedOAuthProvider(e.target.value as string)}
-                                >
-                                    <MenuItem value="" disabled={authMode === 'chatgpt'}>
-                                        {authMode === 'chatgpt'
-                                            ? (codexOAuthProviders.length === 0
-                                                ? 'No Codex OAuth provider — log in first'
-                                                : 'Select a Codex OAuth provider')
-                                            : 'Keep existing auth.json (don’t modify)'}
-                                    </MenuItem>
-                                    {codexOAuthProviders.map((p) => (
-                                        <MenuItem key={p.uuid} value={p.uuid}>{p.name}</MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                            {authMode === 'hybrid' ? (
-                                <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
-                                    The gateway token is written into <code>config.toml</code>'s provider block
-                                    (<code>experimental_bearer_token</code>). Pick a stored Codex login above to
-                                    (re)write it into <code>auth.json</code>, or leave it as <em>Keep existing</em> to
-                                    not touch the file.
-                                </Alert>
-                            ) : (
-                                <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
-                                    Exports the OAuth tokens to <code>~/.codex/auth.json</code> and removes the
-                                    tingly gateway keys from <code>config.toml</code> so codex CLI talks directly to
-                                    OpenAI. Tingly Box will <strong>not</strong> manage token refresh after this —
-                                    codex CLI owns the token lifecycle from here on.{' '}
-                                    If <code>id_token</code> is missing in the exported file, re-authenticate
-                                    via the OAuth page and apply again.
-                                </Alert>
-                            )}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                            <Typography variant="subtitle2">ChatGPT account</Typography>
+                            <Tooltip
+                                arrow
+                                placement="top"
+                                title={
+                                    <Box sx={{ maxWidth: 320 }}>
+                                        {authMode === 'hybrid' ? (
+                                            <Typography variant="caption">
+                                                The gateway token is written into <code>config.toml</code>'s provider
+                                                block (<code>experimental_bearer_token</code>). Pick a stored Codex
+                                                login to (re)write it into <code>auth.json</code>, or leave it as
+                                                “Keep existing” to not touch the file.
+                                            </Typography>
+                                        ) : (
+                                            <Typography variant="caption">
+                                                Exports the OAuth tokens to <code>~/.codex/auth.json</code> and removes
+                                                the tingly gateway keys from <code>config.toml</code> so codex CLI talks
+                                                directly to OpenAI. Tingly Box will <strong>not</strong> manage token
+                                                refresh after this — codex CLI owns the token lifecycle. If
+                                                <code> id_token</code> is missing in the exported file, re-authenticate
+                                                via the OAuth page and apply again.
+                                            </Typography>
+                                        )}
+                                    </Box>
+                                }
+                            >
+                                <InfoOutlined sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
+                            </Tooltip>
                         </Box>
+                        <FormControl size="small" fullWidth sx={{ maxWidth: 420 }}>
+                            <Select
+                                displayEmpty
+                                value={selectedOAuthProvider}
+                                onChange={(e) => setSelectedOAuthProvider(e.target.value as string)}
+                            >
+                                <MenuItem value="" disabled={authMode === 'chatgpt'}>
+                                    {authMode === 'chatgpt'
+                                        ? (codexOAuthProviders.length === 0
+                                            ? 'No Codex OAuth provider — log in first'
+                                            : 'Select a Codex OAuth provider')
+                                        : 'Keep existing auth.json (don’t modify)'}
+                                </MenuItem>
+                                {codexOAuthProviders.map((p) => (
+                                    <MenuItem key={p.uuid} value={p.uuid}>{p.name}</MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
                     </Box>
                 )}
                 {authMode !== 'chatgpt' && mainTab === 'quick' && (
