@@ -394,30 +394,22 @@ func (h *Handler) ToggleProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// templateFallbackModels returns the embedded template model list for a
-// non-virtual provider, or nil when unavailable. It is the last-resort
-// fallback shared by the read (GetProviderModelsByUUID) and refresh
-// (UpdateProviderModelsByUUID) endpoints: for providers whose /models
-// endpoint is unsupported (e.g. Codex), FetchAndSaveProviderModels resolves
-// to the embedded template without persisting it, so a plain DB read yields
-// nothing and both endpoints must consult the template live to avoid
-// surfacing an empty list.
-func (h *Handler) templateFallbackModels(p *typ.Provider) []string {
-	if p == nil || p.IsVirtual() {
-		return nil
+// modelListExpiry returns the response expiry for a resolved source. VModel
+// lists are static (far future, avoiding a serialised zero time); every other
+// source uses a 1h TTL matching the DB cache.
+func modelListExpiry(source config.ModelListSource) time.Time {
+	if source == config.ModelListSourceVModel {
+		const neverExpires = 20 * 365 * 24 * time.Hour
+		return time.Now().Add(neverExpires)
 	}
-	tm := h.config.GetTemplateManager()
-	if tm == nil {
-		return nil
-	}
-	models, err := tm.GetEmbeddedModelsForProvider(p)
-	if err != nil {
-		return nil
-	}
-	return models
+	return time.Now().Add(1 * time.Hour)
 }
 
-// UpdateProviderModelsByUUID fetches and caches models for the given provider.
+// UpdateProviderModelsByUUID force-refreshes and returns the model list for the
+// given provider (the manual "refresh models" action). It re-queries upstream,
+// falling back to the embedded template just like the read path — so providers
+// whose /models endpoint is unsupported (e.g. Codex) still return their catalog
+// instead of an empty list.
 func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 	uid := c.Param("uuid")
 	if uid == "" {
@@ -425,7 +417,13 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 		return
 	}
 
-	if err := h.config.FetchAndSaveProviderModels(uid); err != nil {
+	resolved, err := h.config.ResolveProviderModels(true, uid)
+	if err == nil && len(resolved.Models) == 0 {
+		// A manual refresh that surfaces nothing is a failure worth reporting,
+		// unlike the display path which tolerates an empty list.
+		err = fmt.Errorf("no models available for provider %s", uid)
+	}
+	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"action":   obs.ActionFetchModels,
 			"success":  false,
@@ -438,36 +436,14 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 		return
 	}
 
-	modelManager := h.config.GetModelManager()
-	models := modelManager.GetModels(uid)
-
-	p, provErr := h.config.GetProviderByUUID(uid)
-
-	// FetchAndSaveProviderModels does not persist template-only results (e.g.
-	// Codex, whose /models endpoint is unsupported), so a DB read can be empty
-	// even on success. Fall back to the embedded template just like the GET
-	// path, otherwise a manual refresh would wipe the list to zero models.
-	source := ModelCacheSourceAPI
-	if len(models) == 0 && provErr == nil {
-		if tmpl := h.templateFallbackModels(p); len(tmpl) > 0 {
-			models = tmpl
-			source = ModelCacheSourceTemplate
-		}
-	}
-
-	// Apply canonical ordering at the serving boundary (see GetProviderModelsByUUID).
-	if provErr == nil {
-		config.SortProviderModels(p, models)
-	}
-
 	logrus.WithFields(logrus.Fields{
 		"action":       obs.ActionFetchModels,
 		"success":      true,
 		"provider":     uid,
-		"models_count": len(models),
-	}).Info(fmt.Sprintf("Successfully fetched %d models for provider %s", len(models), uid))
+		"models_count": len(resolved.Models),
+	}).Info(fmt.Sprintf("Successfully fetched %d models for provider %s", len(resolved.Models), uid))
 
-	providerModels := ProviderModelInfo{Models: models, Source: source}
+	providerModels := ProviderModelInfo{Models: resolved.Models, Source: ModelCacheSource(resolved.Source)}
 
 	if h.quotaManager != nil {
 		ctx := c.Request.Context()
@@ -478,7 +454,7 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 
 	c.JSON(http.StatusOK, ProviderModelsResponse{
 		Success: true,
-		Message: fmt.Sprintf("Successfully fetched %d models for provider %s", len(models), uid),
+		Message: fmt.Sprintf("Successfully fetched %d models for provider %s", len(resolved.Models), uid),
 		Data:    providerModels,
 	})
 }
@@ -491,8 +467,7 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	uid := c.Param("uuid")
 
-	providerModelManager := h.config.GetModelManager()
-	if providerModelManager == nil {
+	if h.config.GetModelManager() == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "Provider model manager not available",
@@ -500,72 +475,16 @@ func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 		return
 	}
 
-	// Step 1: Try DB cache (API-sourced, 1h TTL).
-	models := providerModelManager.GetModels(uid)
-	source := ModelCacheSourceDB
-	// Default to far-future for sources that never expire (VModel); other
-	// sources override this below with their own TTL. Avoids serialising a
-	// zero time.Time ("0001-01-01T00:00:00Z") in the response.
-	const neverExpires = 20 * 365 * 24 * time.Hour
-	expiresAt := time.Now().Add(neverExpires)
-	lastUpdated := ""
-
-	p, provErr := h.config.GetProviderByUUID(uid)
-	isVirtual := provErr == nil && p.IsVirtual()
-
-	if len(models) > 0 {
-		if _, updated, exists := providerModelManager.GetProviderInfo(uid); exists {
-			lastUpdated = updated
-		}
-		expiresAt = time.Now().Add(1 * time.Hour)
-	} else if provErr == nil {
-		if isVirtual {
-			// Step 2a: VModel fallback (static, no cache).
-			if p.VModelDetail != nil {
-				models = p.VModelDetail.Models
-				source = ModelCacheSourceVModel
-			}
-			// VModel lists are static — never expire.
-		} else {
-			// Step 2b: Try Provider API.
-			if apiErr := h.config.FetchAndSaveProviderModels(uid); apiErr == nil {
-				models = providerModelManager.GetModels(uid)
-				if len(models) > 0 {
-					source = ModelCacheSourceAPI
-					expiresAt = time.Now().Add(1 * time.Hour)
-				}
-			}
-		}
-	}
-
-	// Step 3: Template fallback — used only when we still have no models at
-	// all (API failed, unsupported, or returned nothing). The embedded
-	// template is a compile-time snapshot that can still list models the
-	// upstream has since retired, so it must never be merged into a non-empty
-	// real list — doing so would resurrect deprecated models. It is a pure
-	// last-resort fallback. Read live (never persisted) so an improved
-	// embedded list takes effect immediately instead of waiting out a cached
-	// entry's TTL.
-	if provErr == nil && !isVirtual && len(models) == 0 {
-		if templateModels := h.templateFallbackModels(p); len(templateModels) > 0 {
-			models = templateModels
-			source = ModelCacheSourceTemplate
-			expiresAt = time.Now().Add(1 * time.Hour)
-		}
-	}
-
-	// Apply canonical ordering at the serving boundary so the response order
-	// is authoritative regardless of cache source. The frontend relies on this
-	// order and no longer sorts client-side.
-	if provErr == nil {
-		config.SortProviderModels(p, models)
-	}
+	// Resolve through the shared fallback chain (cache → vmodel → api →
+	// template). A resolve error (e.g. provider not found) is non-fatal for the
+	// display path: serve an empty list rather than an error.
+	resolved, _ := h.config.ResolveProviderModels(false, uid)
 
 	providerModels := ProviderModelInfo{
-		Models:      models,
-		Source:      source,
-		ExpiresAt:   expiresAt,
-		LastUpdated: lastUpdated,
+		Models:      resolved.Models,
+		Source:      ModelCacheSource(resolved.Source),
+		ExpiresAt:   modelListExpiry(resolved.Source),
+		LastUpdated: resolved.LastUpdated,
 	}
 
 	// Attach quota only when the provider type is supported; skip silently
