@@ -394,6 +394,29 @@ func (h *Handler) ToggleProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// templateFallbackModels returns the embedded template model list for a
+// non-virtual provider, or nil when unavailable. It is the last-resort
+// fallback shared by the read (GetProviderModelsByUUID) and refresh
+// (UpdateProviderModelsByUUID) endpoints: for providers whose /models
+// endpoint is unsupported (e.g. Codex), FetchAndSaveProviderModels resolves
+// to the embedded template without persisting it, so a plain DB read yields
+// nothing and both endpoints must consult the template live to avoid
+// surfacing an empty list.
+func (h *Handler) templateFallbackModels(p *typ.Provider) []string {
+	if p == nil || p.IsVirtual() {
+		return nil
+	}
+	tm := h.config.GetTemplateManager()
+	if tm == nil {
+		return nil
+	}
+	models, err := tm.GetEmbeddedModelsForProvider(p)
+	if err != nil {
+		return nil
+	}
+	return models
+}
+
 // UpdateProviderModelsByUUID fetches and caches models for the given provider.
 func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 	uid := c.Param("uuid")
@@ -418,8 +441,22 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 	modelManager := h.config.GetModelManager()
 	models := modelManager.GetModels(uid)
 
+	p, provErr := h.config.GetProviderByUUID(uid)
+
+	// FetchAndSaveProviderModels does not persist template-only results (e.g.
+	// Codex, whose /models endpoint is unsupported), so a DB read can be empty
+	// even on success. Fall back to the embedded template just like the GET
+	// path, otherwise a manual refresh would wipe the list to zero models.
+	source := ModelCacheSourceAPI
+	if len(models) == 0 && provErr == nil {
+		if tmpl := h.templateFallbackModels(p); len(tmpl) > 0 {
+			models = tmpl
+			source = ModelCacheSourceTemplate
+		}
+	}
+
 	// Apply canonical ordering at the serving boundary (see GetProviderModelsByUUID).
-	if p, err := h.config.GetProviderByUUID(uid); err == nil {
+	if provErr == nil {
 		config.SortProviderModels(p, models)
 	}
 
@@ -430,7 +467,7 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 		"models_count": len(models),
 	}).Info(fmt.Sprintf("Successfully fetched %d models for provider %s", len(models), uid))
 
-	providerModels := ProviderModelInfo{Models: models}
+	providerModels := ProviderModelInfo{Models: models, Source: source}
 
 	if h.quotaManager != nil {
 		ctx := c.Request.Context()
@@ -510,12 +547,10 @@ func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	// embedded list takes effect immediately instead of waiting out a cached
 	// entry's TTL.
 	if provErr == nil && !isVirtual && len(models) == 0 {
-		if tm := h.config.GetTemplateManager(); tm != nil {
-			if templateModels, err := tm.GetEmbeddedModelsForProvider(p); err == nil && len(templateModels) > 0 {
-				models = templateModels
-				source = ModelCacheSourceTemplate
-				expiresAt = time.Now().Add(1 * time.Hour)
-			}
+		if templateModels := h.templateFallbackModels(p); len(templateModels) > 0 {
+			models = templateModels
+			source = ModelCacheSourceTemplate
+			expiresAt = time.Now().Add(1 * time.Hour)
 		}
 	}
 

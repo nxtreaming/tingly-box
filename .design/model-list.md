@@ -56,7 +56,11 @@ Step 3 的三条硬性约束（`handler.go` 内注释同步）：
 
 ---
 
-## 4. 两个历史 Bug 与教训
+> **读路径与刷新路径共用同一个兜底**：模板兜底逻辑收敛在 `Handler.templateFallbackModels`（`handler.go`），`GetProviderModelsByUUID`（读）和 `UpdateProviderModelsByUUID`（手动刷新）都调用它。见 Bug #3。
+
+---
+
+## 4. 历史 Bug 与教训
 
 ### 4.1 Bug #1：兜底列表无法快速生效
 
@@ -82,6 +86,21 @@ Step 3 的三条硬性约束（`handler.go` 内注释同步）：
 **结论**：**模板绝不并入非空真实列表；上游非空即视为对增删都权威，原样透传。** 相关 helper、`merged` 来源常量、合并测试全部移除（PR 净删 111 行）。
 
 **安全边界由测试钉死**：`TestGetProviderModelsByUUID_ClaudeCode_NonEmptyCache_NotPollutedByTemplate` —— 缓存里一份缺了 `claude-opus-4-5` 的上游列表，接口原样返回，**不会**把模板里的该模型补回来。
+
+### 4.3 Bug #3：Codex 手动刷新返回空列表
+
+**现象**：Codex（issuer `codex`）provider 点"刷新模型列表"后返回 0 个模型，把原本能正常展示的列表清空。
+
+**根因**：`UpdateProviderModelsByUUID`（刷新端点）只做两件事——`FetchAndSaveProviderModels` + `GetModels`（读 DB）。对 Codex：
+- Codex 的 `/models` 端点不支持，`OpenAIClient.ListModels` 直接短路返回 `ErrModelsEndpointNotSupported`（`internal/client/openai.go`，守卫用 `GetIssuer()` 且额外判 `APIBase == CodexAPIBase`）；
+- `FetchAndSaveProviderModels` 清掉该错误、命中模板后 `return nil`（成功）**但不落库**；
+- 于是 `GetModels` 读 DB 得到空 → 刷新端点返回 `models_count: 0`。
+
+读路径（GET）没这个问题，因为它的 Step 3 会**实时**读模板兜底；但刷新路径当初漏了这一步。
+
+> 排查中一个被证伪的岔路：曾怀疑是"旧 provider 记录只设了 `OAuthDetail.ProviderType`、`Issuer` 为空"导致模板匹配（用裸 `.Issuer`）失败。但 provider store 存/取时会用 `GetIssuer()` 归一化（`provider_store.go` 存 `OAuthProviderType = GetIssuer()`、取时写回 `Issuer`），任何经过存储的记录 `Issuer` 都已补齐，所以这条不成立。**先复现再修**避免了误修。
+
+**修复**：把模板兜底抽成 `Handler.templateFallbackModels`，读路径和刷新路径共用；刷新端点在 `GetModels` 为空时也调用它。回归测试 `TestUpdateProviderModelsByUUID_Codex_ReturnsTemplateModels`（修复前失败、修复后通过）。
 
 ---
 
