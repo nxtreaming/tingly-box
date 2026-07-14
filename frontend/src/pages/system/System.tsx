@@ -1,7 +1,7 @@
 import CardGrid from '@/components/CardGrid.tsx';
 import { PageLayout } from '@/components/PageLayout.tsx';
 import UnifiedCard from '@/components/UnifiedCard.tsx';
-import { Logout, Refresh as RefreshIcon, CheckCircle as IconCircleCheck, Cancel as IconCircleX, Info as IconInfoCircle, Lock as IconLock, Star as IconStar, License as IconLicense, GitHub as IconBrandGithub, Translate as IconLanguage, Brush as IconBrush, Language as IconWorld, Check as IconCheck, AccessTime as IconClock } from '@/components/icons';
+import { Logout, Refresh as RefreshIcon, CheckCircle as IconCircleCheck, Cancel as IconCircleX, Info as IconInfoCircle, Lock as IconLock, Star as IconStar, License as IconLicense, GitHub as IconBrandGithub, Translate as IconLanguage, Brush as IconBrush, Check as IconCheck, AccessTime as IconClock } from '@/components/icons';
 import { VersionDisplay } from '@/components/VersionDisplay';
 import { UpdatePanelDialog } from '@/components/UpdatePanelDialog';
 import { Box, Button, CircularProgress, IconButton, InputAdornment, Link, Stack, TextField, Tooltip, Typography, Chip } from '@mui/material';
@@ -223,7 +223,58 @@ const System = () => {
                             </Box>
                         </Box>
 
-                        {/* Language — merged from the standalone Language Settings card */}
+                    </Stack>
+                </UnifiedCard>
+
+                {/* Quick Proxy — dedicated card for the reusable proxy preset */}
+                <UnifiedCard
+                    title={t('system.proxy.globalProxyUrl.label')}
+                    size="full"
+                >
+                    <Stack spacing={1.5}>
+                        <Typography variant="body2" color="text.secondary">
+                            {t('system.proxy.globalProxyUrl.description', { defaultValue: t('system.proxy.globalProxyUrl.helper') })}
+                        </Typography>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                            <TextField
+                                size="small"
+                                fullWidth
+                                value={globalProxyInput}
+                                onChange={(e) => setGlobalProxyInput(e.target.value)}
+                                placeholder="http://127.0.0.1:7890"
+                                sx={{ maxWidth: 480 }}
+                                InputProps={globalProxyUrl && globalProxyInput === globalProxyUrl ? {
+                                    endAdornment: (
+                                        <InputAdornment position="end">
+                                            <Tooltip title={t('common.saved', { defaultValue: 'Saved' })} arrow>
+                                                <IconCheck sx={{ fontSize: 16, color: 'success.main' }} />
+                                            </Tooltip>
+                                        </InputAdornment>
+                                    )
+                                } : undefined}
+                            />
+                            <Button
+                                size="small"
+                                variant="contained"
+                                onClick={saveGlobalProxyUrl}
+                                disabled={proxyUrlSaving || globalProxyInput === globalProxyUrl}
+                                sx={{ whiteSpace: 'nowrap', minWidth: 72 }}
+                            >
+                                {proxyUrlSaving ? <CircularProgress size={14} color="inherit" /> : t('common.save')}
+                            </Button>
+                        </Stack>
+                    </Stack>
+                </UnifiedCard>
+
+                {/* Appearance & Language — user preferences, kept apart from
+                    server state so "Server Status" only answers "is the
+                    gateway healthy?" */}
+                <UnifiedCard
+                    title={t('system.preferences.title')}
+                    size="full"
+                >
+                    <Stack spacing={1.5}>
+                        {/* Language */}
                         <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
                                 <IconLanguage sx={{ fontSize: 14, color: 'text.secondary' }} />
@@ -267,7 +318,7 @@ const System = () => {
                             </Box>
                         </Box>
 
-                        {/* Theme — moved from the activity bar */}
+                        {/* Theme */}
                         <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, gap: 3 }}>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 100 }}>
                                 <IconBrush sx={{ fontSize: 14, color: 'text.secondary' }} />
@@ -304,53 +355,6 @@ const System = () => {
                                 })}
                             </Box>
                         </Box>
-                    </Stack>
-                </UnifiedCard>
-
-                {/* Quick Proxy — dedicated card for the reusable proxy preset */}
-                <UnifiedCard
-                    title={
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                            <IconWorld sx={{ fontSize: 18, color: 'text.secondary' }} />
-                            <Typography variant="subtitle1" fontWeight={600}>
-                                {t('system.proxy.globalProxyUrl.label')}
-                            </Typography>
-                        </Stack>
-                    }
-                    size="full"
-                >
-                    <Stack spacing={1.5}>
-                        <Typography variant="body2" color="text.secondary">
-                            {t('system.proxy.globalProxyUrl.description', { defaultValue: t('system.proxy.globalProxyUrl.helper') })}
-                        </Typography>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                            <TextField
-                                size="small"
-                                fullWidth
-                                value={globalProxyInput}
-                                onChange={(e) => setGlobalProxyInput(e.target.value)}
-                                placeholder="http://127.0.0.1:7890"
-                                sx={{ maxWidth: 480 }}
-                                InputProps={globalProxyUrl && globalProxyInput === globalProxyUrl ? {
-                                    endAdornment: (
-                                        <InputAdornment position="end">
-                                            <Tooltip title={t('common.saved', { defaultValue: 'Saved' })} arrow>
-                                                <IconCheck sx={{ fontSize: 16, color: 'success.main' }} />
-                                            </Tooltip>
-                                        </InputAdornment>
-                                    )
-                                } : undefined}
-                            />
-                            <Button
-                                size="small"
-                                variant="contained"
-                                onClick={saveGlobalProxyUrl}
-                                disabled={proxyUrlSaving || globalProxyInput === globalProxyUrl}
-                                sx={{ whiteSpace: 'nowrap', minWidth: 72 }}
-                            >
-                                {proxyUrlSaving ? <CircularProgress size={14} color="inherit" /> : t('common.save')}
-                            </Button>
-                        </Stack>
                     </Stack>
                 </UnifiedCard>
 
