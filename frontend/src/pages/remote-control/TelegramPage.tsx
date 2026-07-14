@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const TelegramPage = () => {
-    const config = getPlatformGuide('telegram');
+    const config = usePlatformGuide('telegram');
 
     return (
         <PlatformBotPage

@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const QQPage = () => {
-    const config = getPlatformGuide('qq');
+    const config = usePlatformGuide('qq');
 
     return (
         <PlatformBotPage

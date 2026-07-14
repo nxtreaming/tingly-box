@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const DingTalkPage = () => {
-    const config = getPlatformGuide('dingtalk');
+    const config = usePlatformGuide('dingtalk');
 
     return (
         <PlatformBotPage

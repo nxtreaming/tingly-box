@@ -14,6 +14,7 @@ import {
 } from '@/components/icons';
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from '@/services/api';
+import { useTranslation } from 'react-i18next';
 
 interface FeishuQRAuthProps {
     botUUID?: string; // Existing bot UUID for edit mode; omit for new bot flow
@@ -25,6 +26,7 @@ interface FeishuQRAuthProps {
 type QRState = 'idle' | 'loading' | 'show_qr' | 'confirmed' | 'expired' | 'denied' | 'error';
 
 export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, botName, onComplete }) => {
+    const { t } = useTranslation();
     const [state, setState] = useState<QRState>('idle');
     const [qrUrl, setQrUrl] = useState<string>('');
     const [error, setError] = useState<string>('');
@@ -41,7 +43,7 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
 
     const startRegistration = useCallback(async () => {
         if (!effectiveBotUUID) {
-            setError('Bot UUID is required');
+            setError(t('remoteControl.feishuQr.uuidRequired', { defaultValue: 'Bot UUID is required' }));
             setState('error');
             return;
         }
@@ -56,14 +58,14 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                 setQrUrl(response.data.qr_url);
                 setState('show_qr');
             } else {
-                setError(response.error || 'Failed to start one-click registration');
+                setError(response.error || t('remoteControl.feishuQr.startFailed', { defaultValue: 'Failed to start one-click registration' }));
                 setState('error');
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to start one-click registration');
+            setError(err.message || t('remoteControl.feishuQr.startFailed', { defaultValue: 'Failed to start one-click registration' }));
             setState('error');
         }
-    }, [effectiveBotUUID, platform, botName]);
+    }, [effectiveBotUUID, platform, botName, t]);
 
     const pollStatus = useCallback(async (): Promise<boolean> => {
         if (!effectiveBotUUID) return true;
@@ -90,16 +92,16 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                     return true;
                 default:
                     stoppedRef.current = true;
-                    setError(response.error || 'Registration failed');
+                    setError(response.error || t('remoteControl.feishuQr.registrationFailed', { defaultValue: 'Registration failed' }));
                     setState('error');
                     return true;
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to check registration status');
+            setError(err.message || t('remoteControl.feishuQr.statusFailed', { defaultValue: 'Failed to check registration status' }));
             setState('error');
             return true;
         }
-    }, [effectiveBotUUID, onComplete]);
+    }, [effectiveBotUUID, onComplete, t]);
 
     // Start registration when the component mounts
     useEffect(() => {
@@ -141,7 +143,7 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 4 }}>
                         <CircularProgress size={40} />
                         <Typography sx={{ mt: 2 }} color="text.secondary">
-                            Preparing one-click {label} registration...
+                            {t('remoteControl.feishuQr.preparing', { defaultValue: 'Preparing one-click {{label}} registration...', label })}
                         </Typography>
                     </Box>
                 );
@@ -149,7 +151,7 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
             case 'show_qr':
                 return (
                     <Stack spacing={2} alignItems="center">
-                        <Typography variant="h6">Scan to create your {label} app</Typography>
+                        <Typography variant="h6">{t('remoteControl.feishuQr.scanTitle', { defaultValue: 'Scan to create your {{label}} app', label })}</Typography>
                         <Paper sx={{ p: 2, bgcolor: 'background.paper' }}>
                             <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                                 <QRCodeSVG
@@ -162,9 +164,9 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                             </Box>
                         </Paper>
                         <Typography variant="body2" color="text.secondary" align="center">
-                            1. Open {label} on your phone and scan the QR code
+                            {t('remoteControl.feishuQr.step1', { defaultValue: '1. Open {{label}} on your phone and scan the QR code', label })}
                             <br />
-                            2. Confirm authorization — the app, permissions and events are created for you
+                            {t('remoteControl.feishuQr.step2', { defaultValue: '2. Confirm authorization — the app, permissions and events are created for you' })}
                         </Typography>
                         <Button
                             startIcon={<RefreshIcon />}
@@ -172,7 +174,7 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                             variant="outlined"
                             size="small"
                         >
-                            Refresh QR Code
+                            {t('remoteControl.feishuQr.refreshQr', { defaultValue: 'Refresh QR Code' })}
                         </Button>
                     </Stack>
                 );
@@ -182,10 +184,10 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 4 }}>
                         <CheckCircleIcon sx={{ fontSize: 60, color: 'success.main', mb: 2 }} />
                         <Typography variant="h6" color="success.main">
-                            {label} app created!
+                            {t('remoteControl.feishuQr.createdTitle', { defaultValue: '{{label}} app created!', label })}
                         </Typography>
                         <Typography variant="body2" color="text.secondary">
-                            Credentials were saved automatically. Your bot is ready.
+                            {t('remoteControl.feishuQr.createdBody', { defaultValue: 'Credentials were saved automatically. Your bot is ready.' })}
                         </Typography>
                     </Box>
                 );
@@ -194,10 +196,10 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                 return (
                     <Stack spacing={2} alignItems="center">
                         <Alert severity="warning">
-                            The QR code expired. Please get a new one.
+                            {t('remoteControl.feishuQr.expiredWarning', { defaultValue: 'The QR code expired. Please get a new one.' })}
                         </Alert>
                         <Button startIcon={<RefreshIcon />} onClick={startRegistration} variant="contained">
-                            Get New QR Code
+                            {t('remoteControl.feishuQr.getNewQr', { defaultValue: 'Get New QR Code' })}
                         </Button>
                     </Stack>
                 );
@@ -206,10 +208,10 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                 return (
                     <Stack spacing={2} alignItems="center">
                         <Alert severity="warning">
-                            Authorization was declined in {label}.
+                            {t('remoteControl.feishuQr.deniedWarning', { defaultValue: 'Authorization was declined in {{label}}.', label })}
                         </Alert>
                         <Button startIcon={<RefreshIcon />} onClick={startRegistration} variant="contained">
-                            Try Again
+                            {t('remoteControl.feishuQr.tryAgain', { defaultValue: 'Try Again' })}
                         </Button>
                     </Stack>
                 );
@@ -220,11 +222,11 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
                         severity="error"
                         action={
                             <Button color="inherit" size="small" onClick={startRegistration}>
-                                Retry
+                                {t('remoteControl.feishuQr.retry', { defaultValue: 'Retry' })}
                             </Button>
                         }
                     >
-                        {error || `An error occurred during ${label} registration`}
+                        {error || t('remoteControl.feishuQr.errorFallback', { defaultValue: 'An error occurred during {{label}} registration', label })}
                     </Alert>
                 );
 
@@ -236,7 +238,7 @@ export const FeishuQRAuth: React.FC<FeishuQRAuthProps> = ({ botUUID, platform, b
     return (
         <Box sx={{ p: 2 }}>
             <Typography variant="subtitle2" gutterBottom>
-                {label} One-Click App Creation
+                {t('remoteControl.feishuQr.headerLabel', { defaultValue: '{{label}} One-Click App Creation', label })}
             </Typography>
             <Box
                 sx={{

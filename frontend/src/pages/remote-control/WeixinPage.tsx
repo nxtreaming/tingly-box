@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const WeixinPage = () => {
-    const config = getPlatformGuide('weixin');
+    const config = usePlatformGuide('weixin');
 
     return (
         <PlatformBotPage

@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const WeComPage = () => {
-    const config = getPlatformGuide('wecom');
+    const config = usePlatformGuide('wecom');
 
     return (
         <PlatformBotPage

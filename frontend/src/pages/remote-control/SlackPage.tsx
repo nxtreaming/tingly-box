@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const SlackPage = () => {
-    const config = getPlatformGuide('slack');
+    const config = usePlatformGuide('slack');
 
     return (
         <PlatformBotPage

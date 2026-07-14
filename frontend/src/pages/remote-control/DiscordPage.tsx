@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const DiscordPage = () => {
-    const config = getPlatformGuide('discord');
+    const config = usePlatformGuide('discord');
 
     return (
         <PlatformBotPage

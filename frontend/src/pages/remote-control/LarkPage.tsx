@@ -1,8 +1,8 @@
 import PlatformBotPage from './PlatformBotPage';
-import { getPlatformGuide } from '@/constants/platformGuides';
+import { usePlatformGuide } from '@/constants/platformGuides';
 
 const LarkPage = () => {
-    const config = getPlatformGuide('lark');
+    const config = usePlatformGuide('lark');
 
     return (
         <PlatformBotPage
