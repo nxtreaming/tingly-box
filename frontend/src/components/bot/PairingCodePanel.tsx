@@ -125,6 +125,13 @@ const PairingCodePanel: React.FC<Props> = ({ bot }) => {
 
     if (!required) return null;
 
+    // null once the code has lapsed (see formatRemaining); drives the
+    // "expires in {time}" vs "expired" label below.
+    const remaining = expiresAt ? formatRemaining(expiresAt) : null;
+    const expiryLabel = remaining
+        ? t('remoteControl.pairing.expiresIn', { defaultValue: 'expires in {{time}}', time: remaining })
+        : t('remoteControl.pairing.expired', { defaultValue: 'expired' });
+
     return (
         <Box
             sx={{
@@ -161,12 +168,7 @@ const PairingCodePanel: React.FC<Props> = ({ bot }) => {
                     </Typography>
                     {expiresAt && (
                         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                            {(() => {
-                                const remaining = formatRemaining(expiresAt);
-                                return remaining
-                                    ? t('remoteControl.pairing.expiresIn', { defaultValue: 'expires in {{time}}', time: remaining })
-                                    : t('remoteControl.pairing.expired', { defaultValue: 'expired' });
-                            })()}
+                            {expiryLabel}
                         </Typography>
                     )}
                     <Tooltip title={revealed ? t('remoteControl.pairing.hide', { defaultValue: 'Hide' }) : t('remoteControl.pairing.reveal', { defaultValue: 'Reveal' })}>
