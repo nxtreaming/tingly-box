@@ -2035,6 +2035,9 @@ func (c *Config) FetchAndSaveProviderModels(uid string) error {
 	if lister != nil {
 		models, apiErr = lister.ListModels(ctx)
 		if apiErr == nil && len(models) > 0 {
+			// Persist the upstream list verbatim. It is authoritative for both
+			// additions and removals, so the embedded template snapshot must
+			// not be merged in here — that would resurrect retired models.
 			// Apply canonical ordering before persisting; the same sort is
 			// reapplied at the serving boundary so cached order is irrelevant.
 			SortProviderModels(provider, models)

@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/tingly-dev/tingly-box/internal/constant"
-	"github.com/tingly-dev/tingly-box/internal/data/db"
 	"github.com/tingly-dev/tingly-box/internal/dataio"
 	"github.com/tingly-dev/tingly-box/internal/obs"
 	"github.com/tingly-dev/tingly-box/internal/protocol"
@@ -448,7 +447,10 @@ func (h *Handler) UpdateProviderModelsByUUID(c *gin.Context) {
 }
 
 // GetProviderModelsByUUID returns the model list for a provider, falling back
-// through DB cache → VModel static list → provider API → template.
+// through DB cache → VModel static list → provider API → template. The template
+// is a pure last-resort fallback (used only when every earlier source is
+// empty); it is never merged into a non-empty list, since the embedded
+// snapshot can list models the upstream has since retired.
 func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	uid := c.Param("uuid")
 
@@ -471,42 +473,48 @@ func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	expiresAt := time.Now().Add(neverExpires)
 	lastUpdated := ""
 
+	p, provErr := h.config.GetProviderByUUID(uid)
+	isVirtual := provErr == nil && p.IsVirtual()
+
 	if len(models) > 0 {
 		if _, updated, exists := providerModelManager.GetProviderInfo(uid); exists {
 			lastUpdated = updated
 		}
 		expiresAt = time.Now().Add(1 * time.Hour)
-	} else {
-		// Cache miss or stale — proceed to fallback.
-		p, provErr := h.config.GetProviderByUUID(uid)
-		if provErr == nil {
-			if p.IsVirtual() {
-				// Step 2a: VModel fallback (static, no cache).
-				if p.VModelDetail != nil {
-					models = p.VModelDetail.Models
-					source = ModelCacheSourceVModel
+	} else if provErr == nil {
+		if isVirtual {
+			// Step 2a: VModel fallback (static, no cache).
+			if p.VModelDetail != nil {
+				models = p.VModelDetail.Models
+				source = ModelCacheSourceVModel
+			}
+			// VModel lists are static — never expire.
+		} else {
+			// Step 2b: Try Provider API.
+			if apiErr := h.config.FetchAndSaveProviderModels(uid); apiErr == nil {
+				models = providerModelManager.GetModels(uid)
+				if len(models) > 0 {
+					source = ModelCacheSourceAPI
+					expiresAt = time.Now().Add(1 * time.Hour)
 				}
-				// VModel lists are static — never expire.
-			} else {
-				// Step 2b: Try Provider API.
-				if apiErr := h.config.FetchAndSaveProviderModels(uid); apiErr == nil {
-					models = providerModelManager.GetModels(uid)
-					if len(models) > 0 {
-						source = ModelCacheSourceAPI
-						expiresAt = time.Now().Add(1 * time.Hour)
-					}
-				}
+			}
+		}
+	}
 
-				// Step 3: Template fallback (save to DB with 1h TTL).
-				if len(models) == 0 && h.config.GetTemplateManager() != nil {
-					templateModels, tmplErr := h.config.GetTemplateManager().GetEmbeddedModelsForProvider(p)
-					if tmplErr == nil && len(templateModels) > 0 {
-						_ = providerModelManager.SaveModels(p, templateModels, db.ModelSourceTemplate)
-						models = templateModels
-						source = ModelCacheSourceTemplate
-						expiresAt = time.Now().Add(1 * time.Hour)
-					}
-				}
+	// Step 3: Template fallback — used only when we still have no models at
+	// all (API failed, unsupported, or returned nothing). The embedded
+	// template is a compile-time snapshot that can still list models the
+	// upstream has since retired, so it must never be merged into a non-empty
+	// real list — doing so would resurrect deprecated models. It is a pure
+	// last-resort fallback. Read live (never persisted) so an improved
+	// embedded list takes effect immediately instead of waiting out a cached
+	// entry's TTL.
+	if provErr == nil && !isVirtual && len(models) == 0 {
+		if tm := h.config.GetTemplateManager(); tm != nil {
+			if templateModels, err := tm.GetEmbeddedModelsForProvider(p); err == nil && len(templateModels) > 0 {
+				models = templateModels
+				source = ModelCacheSourceTemplate
+				expiresAt = time.Now().Add(1 * time.Hour)
 			}
 		}
 	}
@@ -514,7 +522,7 @@ func (h *Handler) GetProviderModelsByUUID(c *gin.Context) {
 	// Apply canonical ordering at the serving boundary so the response order
 	// is authoritative regardless of cache source. The frontend relies on this
 	// order and no longer sorts client-side.
-	if p, err := h.config.GetProviderByUUID(uid); err == nil {
+	if provErr == nil {
 		config.SortProviderModels(p, models)
 	}
 
