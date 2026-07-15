@@ -157,7 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ sidebarItems, activeActivityLa
                                         },
                                         '&:hover': { backgroundColor: 'primary.main' },
                                         '& .MuiListItemIcon-root': { color: 'primary.contrastText' },
-                                        '& .MuiListItemText-primary': { color: 'primary.contrastText', fontWeight: 600 },
+                                        '& .MuiListItemText-primary': { color: 'primary.contrastText' },
                                     }),
                                     '&:hover': {
                                         backgroundColor: active ? 'primary.main' : 'action.hover',
@@ -174,10 +174,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ sidebarItems, activeActivityLa
                                     primary={item.label}
                                     secondary={item.subtitle}
                                     slotProps={{
-                                        primary: { fontWeight: active ? 600 : 400, variant: 'body2' as const, sx: { lineHeight: 1.3 } },
+                                        primary: { fontWeight: 500, noWrap: true, variant: 'body2' as const, sx: { lineHeight: 1.3 } },
                                         secondary: { variant: 'caption' as const, sx: { fontSize: '0.6875rem', lineHeight: 1.2 } },
                                     }}
                                     sx={{
+                                        minWidth: 0,
                                         '& .MuiListItemText-primary': {
                                             fontSize: '0.875rem',
                                         },
