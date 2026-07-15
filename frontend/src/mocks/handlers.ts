@@ -1687,10 +1687,10 @@ export const handlers = [
                     model: 'claude-sonnet-4-5',
                     scenario: 'claude_code',
                     request_count: 1842,
-                    total_tokens: 9820400,
-                    total_input_tokens: 5210000,
-                    total_output_tokens: 3850000,
-                    cache_input_tokens: 760400,
+                    total_tokens: 25920000,
+                    total_input_tokens: 1140000,
+                    total_output_tokens: 920000,
+                    cache_input_tokens: 23860000,
                     avg_latency_ms: 1240,
                     error_count: 12,
                     error_rate: 0.65,
@@ -1703,10 +1703,10 @@ export const handlers = [
                     model: 'claude-opus-4-5',
                     scenario: 'claude_code',
                     request_count: 420,
-                    total_tokens: 3240000,
-                    total_input_tokens: 1980000,
-                    total_output_tokens: 1100000,
-                    cache_input_tokens: 160000,
+                    total_tokens: 8180000,
+                    total_input_tokens: 620000,
+                    total_output_tokens: 380000,
+                    cache_input_tokens: 7180000,
                     avg_latency_ms: 2100,
                     error_count: 3,
                     error_rate: 0.71,
@@ -1719,10 +1719,10 @@ export const handlers = [
                     model: 'gpt-4o',
                     scenario: 'openai',
                     request_count: 938,
-                    total_tokens: 4120000,
-                    total_input_tokens: 2600000,
-                    total_output_tokens: 1520000,
-                    cache_input_tokens: 0,
+                    total_tokens: 6720000,
+                    total_input_tokens: 890000,
+                    total_output_tokens: 520000,
+                    cache_input_tokens: 5310000,
                     avg_latency_ms: 980,
                     error_count: 8,
                     error_rate: 0.85,
@@ -1735,10 +1735,10 @@ export const handlers = [
                     model: 'gpt-4o-mini',
                     scenario: 'openai',
                     request_count: 2150,
-                    total_tokens: 3280000,
-                    total_input_tokens: 1840000,
-                    total_output_tokens: 1440000,
-                    cache_input_tokens: 0,
+                    total_tokens: 4310000,
+                    total_input_tokens: 390000,
+                    total_output_tokens: 410000,
+                    cache_input_tokens: 3510000,
                     avg_latency_ms: 420,
                     error_count: 5,
                     error_rate: 0.23,
@@ -1751,10 +1751,10 @@ export const handlers = [
                     model: 'deepseek/deepseek-v4-pro',
                     scenario: 'agent',
                     request_count: 312,
-                    total_tokens: 2180000,
-                    total_input_tokens: 1200000,
-                    total_output_tokens: 980000,
-                    cache_input_tokens: 0,
+                    total_tokens: 1350000,
+                    total_input_tokens: 1050000,
+                    total_output_tokens: 120000,
+                    cache_input_tokens: 180000,
                     avg_latency_ms: 3200,
                     error_count: 2,
                     error_rate: 0.64,
@@ -1782,6 +1782,7 @@ export const handlers = [
 
         const generatePoints = (count: number, intervalMs: number, baseTokens = 800000, workdayBias = false) => {
             const origin = startTimeStr ? new Date(startTimeStr) : new Date(now.getTime() - (count - 1) * intervalMs)
+            let cacheNoise = 0
             return Array.from({ length: count }, (_, i) => {
                 const ts = new Date(origin.getTime() + i * intervalMs)
                 // Weekend / off-hours reduction for realistic shape
@@ -1795,9 +1796,18 @@ export const handlers = [
                 const trend = 1 + (i / count) * 0.4  // gradual growth over time
                 const wave = Math.sin(i * 0.4) * 0.35
                 const base = baseTokens * (0.65 + wave + Math.random() * 0.3) * trend * activityFactor
-                const input = Math.round(base * 0.55)
-                const output = Math.round(base * 0.38)
-                const cache = Math.round(base * 0.07)
+                const output = Math.round(base * (0.025 + Math.random() * 0.055))
+                const prompt = Math.max(0, Math.round(base) - output)
+                // A continuous session warms once, then stays in a narrow
+                // high-hit band instead of repeatedly dropping to cold-cache.
+                const warmupPoints = Math.max(2, Math.min(8, Math.round(count * 0.08)))
+                const warmupProgress = Math.min(1, i / warmupPoints)
+                const easedWarmup = 1 - Math.pow(1 - warmupProgress, 2)
+                cacheNoise = cacheNoise * 0.82 + (Math.random() - 0.5) * 0.022
+                const steadyCacheRatio = Math.min(0.985, Math.max(0.9, 0.945 + cacheNoise))
+                const cacheRatio = 0.15 + (steadyCacheRatio - 0.15) * easedWarmup
+                const cache = Math.round(prompt * cacheRatio)
+                const input = prompt - cache
                 return {
                     timestamp: ts.toISOString(),
                     request_count: Math.round((180 + Math.sin(i * 0.4) * 70 + Math.random() * 50) * activityFactor * trend),
@@ -1835,11 +1845,11 @@ export const handlers = [
         const statusFilter = url.searchParams.get('status') || ''
 
         const models = [
-            { provider_name: 'Anthropic', model: 'claude-sonnet-4-5', scenario: 'claude_code', streamed: true },
-            { provider_name: 'Anthropic', model: 'claude-opus-4-5',   scenario: 'claude_code', streamed: true },
-            { provider_name: 'OpenAI',    model: 'gpt-4o',            scenario: 'openai',      streamed: true },
-            { provider_name: 'OpenAI',    model: 'gpt-4o-mini',       scenario: 'openai',      streamed: false },
-            { provider_name: 'OpenRouter', model: 'deepseek/deepseek-v4-pro', scenario: 'agent',   streamed: true },
+            { provider_name: 'Anthropic', model: 'claude-sonnet-4-5', scenario: 'claude_code', streamed: true, cacheHitRatio: 0.97 },
+            { provider_name: 'Anthropic', model: 'claude-opus-4-5',   scenario: 'claude_code', streamed: true, cacheHitRatio: 0.94 },
+            { provider_name: 'OpenAI',    model: 'gpt-4o',            scenario: 'openai',      streamed: true, cacheHitRatio: 0.91 },
+            { provider_name: 'OpenAI',    model: 'gpt-4o-mini',       scenario: 'openai',      streamed: false, cacheHitRatio: 0.90 },
+            { provider_name: 'OpenRouter', model: 'deepseek/deepseek-v4-pro', scenario: 'agent', streamed: true, cacheHitRatio: 0.18 },
         ]
 
         const now = Date.now()
@@ -1850,9 +1860,19 @@ export const handlers = [
         const all = Array.from({ length: total }, (_, i) => {
             const m = models[i % models.length]
             const isError = i % 20 === 0
-            const input = Math.round(800 + Math.random() * 4000)
-            const output = Math.round(200 + Math.random() * 1500)
-            const cache = m.provider_name === 'Anthropic' ? Math.round(Math.random() * 800) : 0
+            const prompt = Math.round(6000 + Math.random() * 42000)
+            const isColdStart = i % 23 === 0
+            const isPartialHit = !isColdStart && i % 13 === 4
+            const cacheRatio = isColdStart
+                ? Math.random() * 0.12
+                : isPartialHit
+                    ? 0.45 + Math.random() * 0.3
+                    : Math.min(0.995, Math.max(0, m.cacheHitRatio + (Math.random() - 0.5) * 0.05))
+            const cache = Math.round(prompt * cacheRatio)
+            const input = prompt - cache
+            const output = isError
+                ? Math.round(Math.random() * 24)
+                : Math.round(80 + Math.random() * Math.min(1200, prompt * 0.045))
             const latency = Math.round(
                 m.model.includes('opus') ? 1500 + Math.random() * 3000
                 : m.model.includes('mini') ? 200 + Math.random() * 600
